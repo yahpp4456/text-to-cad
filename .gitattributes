@@ -22,3 +22,6 @@ docs/public/hero/**/*.glb !filter !diff !merge -text
 **/.*.step/**/*.glb filter=lfs diff=lfs merge=lfs -text
 **/.*.step/topology.bin filter=lfs diff=lfs merge=lfs -text
 **/.*.step/topology.json filter=lfs diff=lfs merge=lfs -text
+# Force LF for shell scripts so core.autocrlf=true (Windows) does not check them
+# out as CRLF, which would break them under Git Bash.
+*.sh text eol=lf
