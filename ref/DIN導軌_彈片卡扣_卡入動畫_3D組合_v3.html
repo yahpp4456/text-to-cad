@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2"/>
+<title>DIN 導軌 + 彈片卡扣固定座 — 卡入動畫 3D 組合</title>
+<style>
+  :root{ --al:#cfd5da; --clip:#3a4148; --dim:#ffc44d; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; height:100%; overflow:hidden;
+    font-family:"Microsoft JhengHei",Arial,sans-serif; background:#11161c; color:#eef2f6; }
+  #app{ position:fixed; inset:0; }
+  canvas{ display:block; touch-action:none; }
+  .panel{ position:fixed; z-index:10; background:rgba(20,26,33,.62);
+    backdrop-filter:blur(9px); -webkit-backdrop-filter:blur(9px);
+    border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:12px 16px;
+    box-shadow:0 8px 30px rgba(0,0,0,.4); max-height:calc(100vh - 28px); overflow:auto; }
+  #ctrl{ top:14px; left:14px; width:322px; }
+  .hd{ display:flex; align-items:center; justify-content:space-between; cursor:pointer; user-select:none; }
+  .hd h1{ font-size:15px; margin:0; font-weight:700; letter-spacing:.3px; }
+  .hd .car{ font-size:12px; color:#9fb0bf; }
+  .panel.collapsed .body{ display:none; }
+  #ctrl .sub{ font-size:11px; color:#9fb0bf; margin:6px 0 10px; line-height:1.55; }
+  .row{ display:flex; align-items:center; gap:8px; margin:8px 0; flex-wrap:wrap; }
+  .row .cap{ font-size:11px; color:#9fb0bf; width:34px; }
+  button{ font:inherit; font-size:12.5px; color:#eef2f6; background:rgba(255,255,255,.08);
+    border:1px solid rgba(255,255,255,.18); border-radius:9px; padding:6px 11px;
+    cursor:pointer; transition:.15s; user-select:none; }
+  button:hover{ background:rgba(255,255,255,.16); }
+  button:active{ transform:translateY(1px); }
+  button.on{ background:rgba(255,196,77,.22); border-color:rgba(255,196,77,.55); }
+  #play{ min-width:96px; font-weight:700; }
+  input[type=range]{ -webkit-appearance:none; appearance:none; flex:1; height:5px;
+    border-radius:4px; background:linear-gradient(90deg,#7c828a,#cfd5da); outline:none; }
+  input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:18px; height:18px;
+    border-radius:50%; background:#fff; border:2px solid #8a929a; cursor:pointer; }
+  input[type=range]::-moz-range-thumb{ width:18px; height:18px; border-radius:50%;
+    background:#fff; border:2px solid #8a929a; cursor:pointer; }
+  .read{ display:grid; grid-template-columns:1fr auto; gap:4px 10px; font-size:12.5px;
+    margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,.1); }
+  .read .k{ color:#9fb0bf; } .read .v{ font-weight:700; font-variant-numeric:tabular-nums; }
+  .status{ display:flex; align-items:center; gap:9px; margin-top:11px; font-size:12px; }
+  #dot{ width:13px; height:13px; border-radius:50%; background:#3ddc84;
+    box-shadow:0 0 10px #3ddc84; flex:none; }
+  #hint{ top:14px; right:14px; font-size:11px; color:#9fb0bf; max-width:190px; line-height:1.6; }
+  @media (max-width:560px){
+    #ctrl{ width:calc(100% - 28px); }
+    #ctrl .sub{ display:none; }
+    #hint{ display:none; }
+    button{ font-size:12px; padding:4px 9px; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="ctrl" class="panel">
+  <div class="hd"><h1>DIN 導軌 + 彈片卡扣固定座</h1><span class="car">▾</span></div>
+  <div class="body">
+    <div class="sub">配置：<b>螺絲端＝固定爪</b>（先掛上翼緣）、<b>外伸端＝彈片</b>；旋下時彈片被導角外撐、越過翼緣回彈卡入<br/>
+      卡扣 41.3×9.3×21.9・4×10 割尾螺絲｜單位 mm</div>
+    <div class="row">
+      <button id="play">▶ 卡入動畫</button>
+      <button id="resetCam">重設視角</button>
+    </div>
+    <div class="row"><span class="cap">進度</span>
+      <input id="sIns" type="range" min="0" max="1" step="0.004" value="1"/>
+    </div>
+    <div class="row"><span class="cap">位置</span>
+      <input id="posX" type="range" min="5" max="95" step="0.5" value="50"/>
+      <span class="v" style="font-size:12px"><span id="rX">50.0</span> mm</span>
+    </div>
+    <div class="row"><span class="cap">視角</span>
+      <button id="vIso">等角</button><button id="vF">前視</button>
+      <button id="vT">俯視</button><button id="vR">端視(斷面)</button>
+    </div>
+    <div class="row"><span class="cap">顯示</span>
+      <button id="bClip" class="on">卡扣</button>
+      <button id="bDim" class="on">標註</button>
+      <button id="bEdge" class="on">輪廓</button>
+      <button id="bWire">線框</button>
+      <button id="bSpin">⟳</button>
+    </div>
+    <div class="read">
+      <span class="k">本體傾角 φ</span><span class="v"><span id="rPhi">0.00</span>°</span>
+      <span class="k">彈臂外撥 δ</span><span class="v"><span id="rDef">0.00</span> mm</span>
+      <span class="k">卡爪咬入 / 卡點咬入</span><span class="v">2.4 / 0.45</span>
+      <span class="k">坐定餘隙 (爪頂↔翼緣底)</span><span class="v">0.20</span>
+      <span class="k">最大外撥 / 回彈於</span><span class="v">0.72 mm / φ≈0.28°</span>
+      <span class="k">溝槽內寬 (跨軌 35.0)</span><span class="v">35.7</span>
+    </div>
+    <div class="status"><span id="dot"></span><span>全行程掃掠 181 樣本零穿模・帶內最小餘隙 0.10</span></div>
+  </div>
+</div>
+
+<div id="hint" class="panel">
+  左鍵拖曳：旋轉<br/>右鍵拖曳：平移<br/>滾輪：縮放<br/>「進度」滑桿可定格卡入過程<br/>建議「端視」看彈片外撥→回彈
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =====================================================================
+   1) 規格 (mm) —— 與 check_clip.js / snap_sweep.js 同一組常數
+   彈片設計：臂板 1.6 厚、槽縫 0.75 與本體分離、根部 y=20 撓曲、
+   下伸釋放尾至 y=2.2；卡點(0.8 突出, 頂面平=止退面) + 導角斜面(壓入面)
+   卡入運動學 (DOF=1, 驅動=安裝進度 s)：
+     φ=(1−s)·4.5°  繞 Q=(6.6,35)（固定爪頂 × 翼緣A外緣）旋下
+     δ(φ) 閉式：導角最外突點需越過翼緣B緣 → 彈臂繞根部 R=(20,−1.15) 外撥
+     卡點頂角過翼緣底(6.78) → δ=0 回彈卡入
+   ===================================================================== */
+const L=100, W=35.0, D=7.5, T=1.0;
+const CH=26.0, LIP=(W-CH)/2;
+const SLOT_L=21.2, SLOT_W=4.8, GAP=14.4, PITCH=SLOT_L+GAP;
+const N=Math.floor((L+GAP)/PITCH), MARGIN=(L-(N*PITCH-GAP))/2;
+const webY0=LIP+T, webY1=W-LIP-T;
+const EPS=0.3, CB=9.3;
+const PHI0=4.5*Math.PI/180, QY=6.6, QZ=0.0, RY=20.0, RZ=36.15, LEVER=13.4;
+
+/* ---- 卡入運動學（與 snap_sweep_v3.js 完全相同；彈片在 z>35 外伸端） ---- */
+function rotP(y,z,cy,cz,a){ const dy=y-cy,dz=z-cz,s=Math.sin(a),c=Math.cos(a);
+  return [cy+dy*c-dz*s, cz+dy*s+dz*c]; }
+function deflect(phi){
+  const tip=rotP(6.6,34.55,QY,QZ,-phi);
+  if(tip[0]<=6.78) return 0;
+  const pl=rotP(5.84,34.355,QY,QZ,-phi);
+  const e=Math.min(1,Math.max(0,(8.10-pl[0])/0.20));
+  return e*e*(3-2*e)*Math.max(0, 35.06-pl[1]);
+}
+
+/* =====================================================================
+   2) Scene / Camera / Lights / Grid
+   ===================================================================== */
+const app=document.getElementById('app');
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x11161c);
+const camera=new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.5, 4000);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xcfe3ff,0x202830,0.9));
+const sun=new THREE.DirectionalLight(0xffffff,1.0);
+sun.position.set(120,180,140);
+sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
+sun.target.position.set(L/2,8,W/2); scene.add(sun.target);
+const sc=sun.shadow.camera; sc.left=-120; sc.right=120; sc.top=110; sc.bottom=-70;
+sc.near=1; sc.far=700; sun.shadow.bias=-0.0004; scene.add(sun);
+const fill=new THREE.DirectionalLight(0xffffff,0.3); fill.position.set(-110,70,-120); scene.add(fill);
+
+const grid=new THREE.GridHelper(300,30,0x3a444f,0x252d35); grid.position.set(L/2,0.02,W/2); scene.add(grid);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(900,900),
+  new THREE.MeshStandardMaterial({color:0x161c23,roughness:1,metalness:0}));
+ground.rotation.x=-Math.PI/2; ground.position.set(L/2,0,W/2); ground.receiveShadow=true; scene.add(ground);
+
+/* =====================================================================
+   3) 材質 / 工具
+   ===================================================================== */
+const matAl   =new THREE.MeshStandardMaterial({color:0xcfd5da,metalness:.7,roughness:.34});
+const matClip =new THREE.MeshStandardMaterial({color:0x3a4148,metalness:.12,roughness:.62});
+const matArm  =new THREE.MeshStandardMaterial({color:0x434b53,metalness:.12,roughness:.58}); // 彈片略亮
+const matScrew=new THREE.MeshStandardMaterial({color:0xb9c0c7,metalness:.85,roughness:.3});
+const matDark =new THREE.MeshStandardMaterial({color:0x14181d,metalness:.2,roughness:.9});
+const edgeMat =new THREE.LineBasicMaterial({color:0x10151a,transparent:true,opacity:.45});
+const edgeList=[];
+function addEdges(mesh,thr){ const e=new THREE.LineSegments(
+  new THREE.EdgesGeometry(mesh.geometry,thr||25), edgeMat); mesh.add(e); edgeList.push(e); return e; }
+function box(w,h,d,mat){ const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
+  m.castShadow=m.receiveShadow=true; return m; }
+const put=(m,x,y,z)=>{ m.position.set(x,y,z); return m; };
+
+/* =====================================================================
+   4) 鋁軌（純帽形 5 件，腹板含 3 真開槽；開口朝上）
+   ===================================================================== */
+const railG=new THREE.Group(); scene.add(railG);
+railG.rotation.set(-Math.PI/2,0,0); railG.position.set(0,EPS,W);
+const shape=new THREE.Shape();
+shape.moveTo(0,webY0); shape.lineTo(L,webY0); shape.lineTo(L,webY1); shape.lineTo(0,webY1); shape.closePath();
+const aS=(SLOT_L-SLOT_W)/2, rS=SLOT_W/2, cyS=W/2;
+const slotCX=[];
+for(let k=0;k<N;k++){
+  const cx=MARGIN+SLOT_L/2+k*PITCH; slotCX.push(cx);
+  const p=new THREE.Path();
+  p.moveTo(cx-aS,cyS-rS); p.lineTo(cx+aS,cyS-rS);
+  p.absarc(cx+aS,cyS,rS,-Math.PI/2,Math.PI/2,false);
+  p.lineTo(cx-aS,cyS+rS);
+  p.absarc(cx-aS,cyS,rS,Math.PI/2,Math.PI*1.5,false);
+  shape.holes.push(p);
+}
+const web=new THREE.Mesh(new THREE.ExtrudeGeometry(shape,{depth:T,bevelEnabled:false,curveSegments:10}),matAl);
+web.castShadow=web.receiveShadow=true; railG.add(web); addEdges(web,25);
+for(const yC of [LIP+T/2, W-LIP-T/2]){ const m=put(box(L,T,D-T,matAl),L/2,yC,(D-T)/2); railG.add(m); addEdges(m); }
+for(const yC of [LIP/2, W-LIP/2]){ const m=put(box(L,LIP,T,matAl),L/2,yC,D-T/2); railG.add(m); addEdges(m); }
+
+/* =====================================================================
+   5) 卡扣（階層：clipG[滑移 x] → clipPivot[繞 Q 旋下 φ] →
+            剛性件 ＋ armPivot[繞臂根 R 外撥 ψ] → 彈片件）
+   ===================================================================== */
+const clipG=new THREE.Group(); clipG.position.set(L/2,0,0); scene.add(clipG);
+const clipPivot=new THREE.Group(); clipPivot.position.set(0,QY,QZ); clipG.add(clipPivot);
+const armPivot=new THREE.Group(); armPivot.position.set(0,RY-QY,RZ-QZ); clipPivot.add(armPivot);
+const rigid=(m,x,y,z)=>{ m.position.set(x,y-QY,z-QZ); clipPivot.add(m); addEdges(m); return m; };
+const armP =(m,x,y,z)=>{ m.position.set(x,y-RY,z-RZ); armPivot.add(m); addEdges(m); return m; };
+
+/* 5.1 剛性側（螺絲端）：本體(z -1.95..34.6) + 臂根連接塊(+z 端) + 固定頰板 + 固定卡爪 */
+rigid(box(CB,16.2,36.55,matClip), 0, 16.0, 16.325);
+rigid(box(CB, 4.1, 2.35,matClip), 0, 22.05,35.775);   // 連接塊 (槽縫上端)
+rigid(box(CB, 5.7, 1.6 ,matClip), 0, 5.05, -1.15);    // 固定頰板 (螺絲端)
+rigid(box(CB, 1.3, 2.75,matClip), 0, 5.95,  1.025);   // 固定卡爪 (咬 2.4, 餘隙 0.2)
+
+/* 5.2 彈片（外伸端 z>35；與本體以 0.75 槽縫分離；根部 y=20 撓曲；釋放尾腳外伸到 41.3） */
+armP(box(CB,17.8,1.6 ,matArm), 0, 11.1, 36.15);       // 臂板 y 2.2..20
+armP(box(CB, 0.6, 0.8,matArm), 0, 6.30, 34.95);       // 卡點 (頂面平=止退面, 突出 0.45 入翼緣下)
+const ramp=box(CB,1.28,0.5,matArm); ramp.rotation.x=-0.675;
+armP(ramp, 0, 5.50, 34.95);                           // 導角斜面 (壓入面)
+armP(box(CB, 2.2, 4.0,matArm), 0, 3.30, 37.35);       // 釋放尾腳 (外伸至 39.35 → 總長 41.3)
+armP(box(CB, 0.4, 1.0,matArm), 0, 4.60, 37.10);       // 防滑紋 x2
+armP(box(CB, 0.4, 1.0,matArm), 0, 4.60, 38.50);
+
+/* 5.3 4×10 割尾螺絲（桿沒入本體；頭/墊圈/十字槽外露） */
+const zS=8;
+const shaft=new THREE.Mesh(new THREE.CylinderGeometry(2,2,10,20),matScrew);
+rigid(shaft,0,19.1,zS);
+const flange=new THREE.Mesh(new THREE.CylinderGeometry(4.3,4.3,0.6,24),matScrew);
+flange.castShadow=true; rigid(flange,0,24.4,zS);
+const head=new THREE.Mesh(new THREE.CylinderGeometry(3.6,3.7,2.2,24),matScrew);
+head.castShadow=true; rigid(head,0,25.8,zS);
+rigid(put(box(5.0,0.5,1.1,matDark),0,0,0),0,26.9,zS);
+rigid(put(box(1.1,0.5,5.0,matDark),0,0,0),0,26.9,zS);
+
+/* 5.4 模窗（視覺特徵, 突出面外 0.2 防共面） */
+const winFace=CB/2-0.05;
+for(const sgn of [1,-1]) for(const [z0,z1,y0,y1] of
+  [[16.0,34.2,16.6,20.6],[11.0,14.5,16.6,20.6],[2.7,4.2,16.6,20.6],
+   [16.0,34.2,10.4,14.9],[8.5,14.5,10.4,14.9]]){
+  const m=box(0.5,y1-y0,z1-z0,matDark); m.castShadow=false;
+  m.position.set(sgn*winFace,(y0+y1)/2-QY,(z0+z1)/2-QZ); clipPivot.add(m);
+}
+
+/* =====================================================================
+   6) 尺寸標註（PMI；depthTest off）
+   ===================================================================== */
+const dimLineMat=new THREE.LineBasicMaterial({color:0xffc44d,transparent:true,depthTest:false});
+const dimSolid=new THREE.MeshBasicMaterial({color:0xffc44d,transparent:true,depthTest:false});
+function seg(a,b){ const g=new THREE.BufferGeometry().setFromPoints([a,b]);
+  const l=new THREE.Line(g,dimLineMat); l.renderOrder=8; return l; }
+function arrowAt(tip,outDir,s){
+  const c=new THREE.Mesh(new THREE.ConeGeometry(s,s*3,10),dimSolid); c.renderOrder=8;
+  c.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),outDir.clone().normalize());
+  c.position.copy(tip).addScaledVector(outDir.clone().normalize(),-s*1.5); return c; }
+function makeLabel(txt,h){
+  const c=document.createElement('canvas'), fs=72;
+  let ctx=c.getContext('2d'); ctx.font='700 '+fs+'px "Microsoft JhengHei",Arial';
+  c.width=Math.ceil(ctx.measureText(txt).width)+30; c.height=fs+26;
+  ctx=c.getContext('2d'); ctx.font='700 '+fs+'px "Microsoft JhengHei",Arial';
+  ctx.textBaseline='middle'; ctx.textAlign='center';
+  ctx.lineWidth=10; ctx.strokeStyle='rgba(10,14,18,.9)';
+  ctx.strokeText(txt,c.width/2,c.height/2); ctx.fillStyle='#ffd34d'; ctx.fillText(txt,c.width/2,c.height/2);
+  const tex=new THREE.CanvasTexture(c); tex.minFilter=THREE.LinearFilter;
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true,depthTest:false}));
+  sp.renderOrder=9; sp.scale.set(h*c.width/c.height,h,1); return sp; }
+function dimInto(grp,off0,p1,p2,offDir,offLen,txt,textH,aw){
+  const g=new THREE.Group(), off=offDir.clone().normalize().multiplyScalar(offLen);
+  const P1=p1.clone().sub(off0), P2=p2.clone().sub(off0);
+  const q1=P1.clone().add(off), q2=P2.clone().add(off);
+  const ovr=offDir.clone().normalize().multiplyScalar(aw*1.6);
+  g.add(seg(P1,q1.clone().add(ovr))); g.add(seg(P2,q2.clone().add(ovr)));
+  g.add(seg(q1,q2));
+  const d=q2.clone().sub(q1).normalize();
+  g.add(arrowAt(q1,d.clone().negate(),aw)); g.add(arrowAt(q2,d,aw));
+  const lab=makeLabel(txt,textH);
+  lab.position.copy(q1).lerp(q2,0.5).add(off.clone().setLength(textH*0.8));
+  g.add(lab); grp.add(g);
+}
+const V=(x,y,z)=>new THREE.Vector3(x,y,z), Z0=new THREE.Vector3(0,0,0);
+const dimG=new THREE.Group(); railG.add(dimG);
+const dimR=(...a)=>dimInto(dimG,Z0,...a);
+dimR(V(0,0,0),V(L,0,0),V(0,-1,0),14,'100',9,2.6);
+dimR(V(0,0,0),V(0,W,0),V(-1,0,0),14,'35.0',9,2.6);
+dimR(V(L,0,0),V(L,0,D),V(1,0,0),12,'7.50',8,2.2);
+const cxm=slotCX[2], xs=cxm-SLOT_L/2, xe=cxm+SLOT_L/2;
+dimR(V(xs,W/2+rS,T),V(xe,W/2+rS,T),V(0,1,0),5.5,'21.2',4.5,1.1);
+dimR(V(xs+3,W/2-rS,T),V(xs+3,W/2+rS,T),V(-1,0,0),5,'4.8',4,1.0);
+const clipDimG=new THREE.Group(); clipPivot.add(clipDimG);
+const QV=new THREE.Vector3(0,QY,QZ);
+const dimC=(...a)=>dimInto(clipDimG,QV,...a);
+dimC(V(0,7.9,-1.95),V(0,7.9,39.35),V(0,1,0),22,'41.30',7,1.8);
+dimC(V(0,2.2,39.35),V(0,24.1,39.35),V(0,0,1),7,'21.90',6,1.6);
+dimC(V(0,7.9,-1.95),V(0,24.1,-1.95),V(0,0,-1),7,'16.20',6,1.6);
+dimC(V(-CB/2,7.9,-1.95),V(CB/2,7.9,-1.95),V(0,0,-1),13,'9.30',6,1.6);
+clipDimG.add(seg(V(0,27.2-QY,zS-QZ),V(0,31-QY,zS+5-QZ)));
+const sLab=makeLabel('4×10 割尾螺絲',4.6); sLab.position.set(0,32.6-QY,zS+7-QZ); clipDimG.add(sLab);
+const aLab=makeLabel('彈片 (壓入時外撥)',4.6); aLab.position.set(0,14-QY,44-QZ); clipDimG.add(aLab);
+clipDimG.add(seg(V(0,12-QY,36.95-QZ),V(0,13.4-QY,41.5-QZ)));
+
+/* =====================================================================
+   7) 卡入動畫更新（閉式；驅動 = 安裝進度 s）
+   ===================================================================== */
+const I=id=>document.getElementById(id);
+const rPhi=I('rPhi'), rDef=I('rDef');
+function update(sIns){
+  const phi=(1-sIns)*PHI0;
+  const d=deflect(phi), psi=Math.asin(Math.min(0.95,d/LEVER));
+  clipPivot.rotation.x=-phi; armPivot.rotation.x=-psi;   // 鏡像配置: 反號
+  rPhi.textContent=(phi*180/Math.PI).toFixed(2);
+  rDef.textContent=d.toFixed(2);
+}
+
+/* =====================================================================
+   8) 自寫 minimal orbit ＋ 視角預設
+   ===================================================================== */
+const target=new THREE.Vector3(L/2, 9, W/2);
+const NARROW=innerWidth<620;
+const HOME={r:NARROW?340:205, az:0.62, pol:1.06};   // 預設看 +z 彈片側
+const sph={...HOME};
+function applyCam(){ const s=Math.sin(sph.pol);
+  camera.position.set(target.x+sph.r*s*Math.sin(sph.az),
+    target.y+sph.r*Math.cos(sph.pol), target.z+sph.r*s*Math.cos(sph.az));
+  camera.lookAt(target); }
+applyCam();
+const dom=renderer.domElement; let drag=0,lx=0,ly=0;
+dom.addEventListener('pointerdown',e=>{drag=e.button===2?2:1; lx=e.clientX; ly=e.clientY;
+  dom.setPointerCapture(e.pointerId);});
+dom.addEventListener('pointermove',e=>{ if(!drag)return;
+  const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
+  if(drag===2){ const s=Math.sin(sph.pol);
+    const fwd=new THREE.Vector3(s*Math.sin(sph.az),Math.cos(sph.pol),s*Math.cos(sph.az));
+    const right=new THREE.Vector3().crossVectors(fwd,new THREE.Vector3(0,1,0)).normalize();
+    const up=new THREE.Vector3().crossVectors(right,fwd).normalize();
+    const k=sph.r*0.0016; target.addScaledVector(right,-dx*k); target.addScaledVector(up,dy*k);
+  } else { sph.az-=dx*0.008; sph.pol=Math.max(0.12,Math.min(Math.PI-0.12,sph.pol-dy*0.008)); }
+  applyCam(); });
+addEventListener('pointerup',()=>drag=0);
+dom.addEventListener('wheel',e=>{ e.preventDefault();
+  sph.r=Math.max(28,Math.min(1200,sph.r*(1+Math.sign(e.deltaY)*0.08))); applyCam();
+},{passive:false});
+dom.addEventListener('contextmenu',e=>e.preventDefault());
+function goView(az,pol){ sph.az=az; sph.pol=pol; applyCam(); }
+I('vIso').addEventListener('click',()=>goView(HOME.az,HOME.pol));
+I('vF').addEventListener('click',()=>goView(0,Math.PI/2));
+I('vT').addEventListener('click',()=>goView(0,0.05));
+I('vR').addEventListener('click',()=>goView(Math.PI/2,Math.PI/2));
+I('resetCam').addEventListener('click',()=>{Object.assign(sph,HOME);
+  target.set(L/2,9,W/2); applyCam();});
+
+/* =====================================================================
+   9) UI / 收合 / ping-pong 迴圈
+   ===================================================================== */
+let spin=false, sIns=1, dir=-1, playing=false, speed=0.4;
+function tgl(btn,on){ btn.classList.toggle('on',on); }
+const sSlider=I('sIns'), playBtn=I('play');
+function setPlay(p){ playing=p; playBtn.textContent=p?'⏸ 暫停':'▶ 卡入動畫'; }
+playBtn.addEventListener('click',()=>setPlay(!playing));
+sSlider.addEventListener('input',()=>{ setPlay(false);
+  sIns=parseFloat(sSlider.value); update(sIns); });
+const posX=I('posX'), rX=I('rX');
+posX.addEventListener('input',()=>{ const x=parseFloat(posX.value);
+  clipG.position.x=x; rX.textContent=x.toFixed(1); });
+I('bClip').addEventListener('click',()=>{ clipG.visible=!clipG.visible; tgl(I('bClip'),clipG.visible); });
+I('bDim').addEventListener('click',()=>{ const v=!dimG.visible;
+  dimG.visible=v; clipDimG.visible=v; tgl(I('bDim'),v); });
+I('bEdge').addEventListener('click',()=>{ const v=!edgeList[0].visible;
+  edgeList.forEach(e=>e.visible=v); tgl(I('bEdge'),v); });
+I('bWire').addEventListener('click',()=>{ const w=!matAl.wireframe;
+  [matAl,matClip,matArm,matScrew].forEach(m=>m.wireframe=w); tgl(I('bWire'),w); });
+I('bSpin').addEventListener('click',()=>{ spin=!spin; tgl(I('bSpin'),spin); });
+(function wireCollapse(){ const p=I('ctrl');
+  p.querySelector('.hd').addEventListener('click',()=>p.classList.toggle('collapsed'));
+  if(innerWidth<560) p.classList.add('collapsed'); })();
+
+let last=performance.now();
+function loop(now){ const dt=(now-last)/1000; last=now;
+  if(playing){ sIns+=dir*speed*dt;
+    if(sIns>=1){sIns=1;dir=-1;} else if(sIns<=0){sIns=0;dir=1;}
+    sSlider.value=sIns; update(sIns); }
+  if(spin){ sph.az+=dt*0.35; applyCam(); }
+  renderer.render(scene,camera); requestAnimationFrame(loop); }
+addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+update(1); requestAnimationFrame(loop);
+</script>
+</body>
+</html>
