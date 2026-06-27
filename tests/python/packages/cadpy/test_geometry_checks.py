@@ -17,12 +17,14 @@ add_repo_path("packages/cadpy/src")
 
 from cadpy.geometry_checks import (  # noqa: E402
     assert_all_valid,
+    assert_motion_clear,
     assert_no_interference,
     assert_valid_solid,
     enumerate_interferences,
     is_valid_solid,
     min_gap,
     overlap_volume,
+    sweep_interference,
 )
 
 
@@ -245,6 +247,49 @@ class InterferenceTests(unittest.TestCase):
             [("a", Box(10, 10, 10)), ("b", Pos(5, 0, 0) * Box(10, 10, 10))]
         )
         self.assertIn("overlap:", report.summary())
+
+
+class MotionSweepTests(unittest.TestCase):
+    """The motion sweep extends interference from one pose to a whole travel.
+    Locked by the injected defect that started it: a part that is clear at BOTH
+    endpoints yet drives THROUGH another mid-travel -- a static gate passes it,
+    only the sweep sees it."""
+
+    @staticmethod
+    def _frame(bx):
+        from build123d import Box, Pos
+
+        return [("A", Box(10, 10, 10)), ("B", Pos(bx, 0, 0) * Box(10, 10, 10))]
+
+    def test_clear_motion_does_not_raise(self) -> None:
+        poses = [(x, self._frame(x)) for x in (40, 30, 20, 15)]  # B sweeps in, never reaches A
+        self.assertEqual(sweep_interference(poses, [("A", "B")]), [])
+        assert_motion_clear(poses, [("A", "B")])  # no raise
+
+    def test_mid_travel_penetration_caught_though_endpoints_clear(self) -> None:
+        # the injected-defect lock: endpoints clear, mid-travel a clash.
+        assert_no_interference(self._frame(-20))   # static endpoints are clean...
+        assert_no_interference(self._frame(20))
+        poses = [(x, self._frame(x)) for x in (-20, -10, 0, 10, 20)]  # x=0 -> full overlap
+        with self.assertRaisesRegex(AssertionError, r"A~B"):
+            assert_motion_clear(poses, [("A", "B")])
+
+    def test_constant_contact_baseline_not_flagged_but_excess_is(self) -> None:
+        # a steady intended grip (B overlaps A by 1 mm all along) must ride the
+        # reference baseline without flagging; only EXTRA overlap is a hit.
+        grip = self._frame(9)                       # 1 mm overlap = 100 mm^3
+        steady = [(i, self._frame(9)) for i in range(3)]
+        self.assertEqual(sweep_interference(steady, [("A", "B")], baseline=grip), [])
+        deeper = [(0, self._frame(9)), (1, self._frame(8))]   # 8 -> 2 mm = 200 mm^3
+        hits = sweep_interference(deeper, [("A", "B")], baseline=grip)
+        self.assertEqual(len(hits), 1)
+        self.assertAlmostEqual(hits[0].excess, 100.0, delta=1.0)
+
+    def test_per_pair_tolerance(self) -> None:
+        # a small overlap below a pair's tolerance is not a hit; above it is.
+        small = [(0, self._frame(9.6))]             # 0.4 mm overlap = 40 mm^3
+        self.assertEqual(sweep_interference(small, [("A", "B")], tol={("A", "B"): 60.0}), [])
+        self.assertEqual(len(sweep_interference(small, [("A", "B")], tol={("A", "B"): 20.0})), 1)
 
 
 if __name__ == "__main__":

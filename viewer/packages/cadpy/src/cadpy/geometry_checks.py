@@ -359,3 +359,147 @@ def assert_no_interference(
         )
         raise AssertionError(f"interference: {len(bad)} undeclared pair(s): {lines}")
     return report
+
+
+# ---------------------------------------------------------------------------
+# Motion sweep (static pose -> whole travel)
+# ---------------------------------------------------------------------------
+# A static assembly passing :func:`assert_no_interference` says nothing about its
+# MOTION: a mechanism can be clear when seated yet drive a part through another
+# mid-travel (the deepest overlap is usually mid-stroke, not at an endpoint).
+# These sweep a sequence of POSED assemblies and flag, per tracked pair, the
+# frames whose overlap EXCEEDS the pair's intended constant contact -- so a grip
+# or a press foot that legitimately touches all along is not mistaken for a clash
+# (declare it via ``baseline``), while a true mid-motion penetration is caught.
+
+
+@dataclass(frozen=True)
+class SweepHit:
+    """One (frame, pair) whose overlap exceeded the pair's allowed baseline."""
+
+    where: Any            # the frame label (e.g. an install fraction or index)
+    a: str
+    b: str
+    overlap: float        # mm^3 at this frame
+    excess: float         # mm^3 above the pair's baseline contact
+
+
+def _name_map(parts: Any) -> dict[str, Any]:
+    """A {name: shape} map from a sweep frame: a dict (returned as-is), a
+    sequence of ``(name, shape)``, or a labeled Compound's children."""
+    if isinstance(parts, dict):
+        return dict(parts)
+    if isinstance(parts, (list, tuple)):
+        return {str(n): s for n, s in parts}
+    children = getattr(parts, "children", None)
+    if children:
+        return {str(getattr(ch, "label", None) or f"part{i}"): ch for i, ch in enumerate(children)}
+    raise TypeError("sweep frame must be a {name: shape} dict, a sequence of (name, shape), or a labeled Compound")
+
+
+def _pair_volume(parts_map: dict[str, Any], a: str, b: str, overlap_tol: float) -> float:
+    """Penetration volume (mm^3) of a pair in one posed frame; a cheap distance
+    pre-check skips the boolean for separated parts."""
+    gap = min_gap(parts_map[a], parts_map[b])
+    if gap > _TOUCH_EPS:
+        return 0.0
+    ov = overlap_volume(parts_map[a], parts_map[b])
+    return ov if ov > overlap_tol else 0.0
+
+
+def _resolve_baseline(baseline, pairs, overlap_tol):
+    out: dict[frozenset, float] = {}
+    if baseline is None:
+        return {frozenset(p): 0.0 for p in pairs}
+    if isinstance(baseline, dict):
+        for p in pairs:
+            out[frozenset(p)] = float(baseline.get(tuple(p), baseline.get((p[1], p[0]), 0.0)))
+        return out
+    ref = _name_map(baseline)  # a reference pose -> its pair overlaps are allowed
+    for a, b in pairs:
+        out[frozenset((a, b))] = _pair_volume(ref, a, b, overlap_tol)
+    return out
+
+
+def _resolve_tol(tol, pairs):
+    if isinstance(tol, dict):
+        default = float(tol.get(None, 0.05))
+        return {frozenset(p): float(tol.get(tuple(p), tol.get((p[1], p[0]), default))) for p in pairs}
+    return {frozenset(p): float(tol) for p in pairs}
+
+
+def sweep_interference(
+    poses: Iterable[tuple[Any, Any]],
+    pairs: Iterable[Sequence[str]],
+    *,
+    baseline: Any = None,
+    tol: Any = 0.05,
+    overlap_tol: float = 1e-3,
+) -> list[SweepHit]:
+    """Sweep posed assemblies; return the (frame, pair) penetrations beyond
+    baseline, worst-excess first (empty when clean).
+
+    Parameters
+    ----------
+    poses:
+        Iterable of ``(where, parts)``. ``where`` labels the frame (an install
+        fraction, an index, ...); ``parts`` is a ``{name: shape}`` dict, a
+        sequence of ``(name, shape)``, or a labeled Compound (see
+        :func:`_name_map`). Consumed once, so a generator is fine.
+    pairs:
+        ``(name_a, name_b)`` pairs to track over the motion.
+    baseline:
+        Allowed constant overlap per pair: ``None`` (all 0), a ``{(a, b): mm^3}``
+        dict, or a single reference ``parts`` pose (e.g. the seated pose) whose
+        pair overlaps become the baselines -- so an intended steady contact (grip,
+        press foot) rides along without being flagged; only overlap ABOVE it
+        counts. Pair order is ignored.
+    tol:
+        Excess (mm^3) above which a frame is a hit: a float (uniform) or a
+        ``{(a, b): float}`` dict (per pair, with key ``None`` as the fallback).
+
+    Cost is O(pairs x frames) exact kernel queries; intended for the small
+    assemblies and modest sample counts this skill produces.
+    """
+    pairs = [tuple(p) for p in pairs]
+    base = _resolve_baseline(baseline, pairs, overlap_tol)
+    tols = _resolve_tol(tol, pairs)
+    hits: list[SweepHit] = []
+    for where, parts in poses:
+        pmap = _name_map(parts)
+        for a, b in pairs:
+            key = frozenset((a, b))
+            ov = _pair_volume(pmap, a, b, overlap_tol)
+            excess = ov - base[key]
+            if excess > tols[key]:
+                hits.append(SweepHit(where, a, b, ov, excess))
+    hits.sort(key=lambda h: h.excess, reverse=True)
+    return hits
+
+
+def assert_motion_clear(
+    poses: Iterable[tuple[Any, Any]],
+    pairs: Iterable[Sequence[str]],
+    *,
+    baseline: Any = None,
+    tol: Any = 0.05,
+    overlap_tol: float = 1e-3,
+    label: str = "motion sweep",
+) -> None:
+    """Acceptance gate over a MOTION: raise ``AssertionError`` if any tracked pair
+    penetrates beyond its baseline anywhere along ``poses``.
+
+    The static :func:`assert_no_interference` checks one pose; this extends it to
+    the whole travel, where the deepest overlap usually is. Use it inside a
+    generator's ``check_geometry`` after the static checks, driving ``poses`` from
+    the same kinematics the animation sidecar uses, so a STEP is refused unless
+    the motion is penetration-free too.
+    """
+    hits = sweep_interference(poses, pairs, baseline=baseline, tol=tol, overlap_tol=overlap_tol)
+    if hits:
+        worst = hits[0]
+        lines = "; ".join(f"{h.a}~{h.b}(+{h.excess:.2f}mm^3 @ {h.where})" for h in hits[:4])
+        raise AssertionError(
+            f"{label}: {len(hits)} pair-frame penetration(s) beyond baseline; "
+            f"worst {worst.a}~{worst.b} +{worst.excess:.2f}mm^3 at {worst.where} ({lines})"
+        )
