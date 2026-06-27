@@ -114,6 +114,12 @@ mech-mcp 的閘門能力,OCP(text-to-cad 已依賴)**幾乎都有對應 API,只�
 
 **建議落點**:`step-parts/references/` 補「選型後果與標準孔位」知識。**ROI:中**。
 
+> **✅ 已升級為可執行碼(2026-06-28)**:⑦ 不再只是 knowledge md。選型推理 + 參數化代用件 + 規格庫已落地為 **`cadpy.parts`** 子模組(見 `ref/parts-catalog-and-sizing-plan.md`):
+> - 五個 family `{cylinder, deep_groove_bearing, linear_guide, ball_screw, stepper_motor}` 各有 `specs/<f>.json`(每列帶 `source`+`confidence` 的誠實契約)、`select_<f>(...)`(回最小可用標準件 + 報而不擋的 margin,無解 raise `NoFittingPart`)、與簡化 generator(`check_geometry` 上鎖)。
+> - 與 step.parts 的分工:step.parts 給「真實廠商件精確幾何」(L2,連網、agent 決策點);`cadpy.parts` 給「選型推理 + 沒命中時的代用件」(L1/L3)。兩者是同一 resolver 的兩層。
+> - **dogfood**:`models/rack_pinion_rotary_actuator`(消費 `select_cylinder`)與整合 capstone `models/motorized_linear_stage`(一次消費 ball_screw/linear_guide/bearing/stepper 四 family)都以 **全行程 motion sweep**(L-4)上鎖,證明選出的件能在真機構裡組起來且運動不穿模。Phase 1 換缸時,catalog 件的真實包絡(SC32 body_dia 42)比原本手寫佔位件(R15)大、會撞到托架——這正是「換 select+generate 件後必須重跑消費端 gate」的實證(由 `tests/python/packages/cadpy/test_parts_models.py` 鎖住)。
+> - 這也**稀釋了 ⑤(互動式合成)的必要性**:選型推理已可執行,不必先靠互動問答才能定尺寸。
+
 ---
 
 ## 四、範圍內可補的具體技術缺口
@@ -161,7 +167,8 @@ mech-mcp 的 `C3.1 驗證雙軌`:**設計軌**(margin 0.3mm,傳動角等「報�
 | **P1** | ① 沙盒即出圖授權(repair-loop 升級成驗收契約) | `cad` skill | 中 | 高 |
 | **P1** | ② 組合件「全枚舉」干涉(生成即納管精神) | `packages/cadpy` | 中 | 高 |
 | **P1** | ⑤ 機構合成互動決策(先問再設計) | `cad` 進階模式 / 新 skill | 中 | 高(新能力) |
-| **P2** | ⑥⑦ C1–C10 + 查證卡/型態學 KB | `cad` / `step-parts` references | 低 | 中 |
+| **P2** | ⑥ C1–C10 + 型態學 KB | `cad` / `step-parts` references | 低 | 中 |
+| ~~P2~~ ✅ | ⑦ 選型推理 + 代用件(已從 KB 升級為可執行 `cadpy.parts`,2026-06-28) | `packages/cadpy/parts` | 中 | 中 |
 | **P2** | ⑩ 驗證雙軌 + 交接注記 | inspection reference | 低 | 中 |
 | **P3** | ⑧ 2D 工程圖 HLR | `dxf` / 新 skill | 中–高 | 視需求 |
 | **P3** | ⑨ 閉式運動學庫 | `packages/cadjs` | 中 | 視需求 |
