@@ -58,6 +58,24 @@ def check_geometry(shape):           # the pipeline runs this before writing the
 
 A real assembly is full of INTENDED contact — a shaft in a bore, meshing gear teeth, a press fit — so `assert_no_interference` fails only on overlap between pairs NOT in `allow`; declare the intended pairs and a true unintended clash still fails. Near-misses (a positive gap below a requested `clearance`) are reported, not blocked. These are geometric-validity checks only — they make no structural, tolerance, or certification claim (see "Do not claim" below).
 
+### Mechanism motion sweep
+
+A static check passes the SEATED pose but says nothing about the travel — for a moving mechanism the deepest overlap is usually mid-stroke, and a snapshot of the final pose misses it too. `assert_motion_clear(poses, pairs, *, baseline=..., tol=...)` sweeps the motion and refuses the STEP if any tracked pair penetrates beyond its baseline anywhere along the path:
+
+```python
+from cadpy.geometry_checks import assert_no_interference, assert_motion_clear
+
+def check_geometry(shape):
+    assert_no_interference(shape, allow=INTENDED_CONTACT)         # the seated pose
+    assert_motion_clear(                                          # ...then the whole stroke
+        ((f, pose(f)) for f in frames),     # drive poses from the SAME kinematics as the .step.js sidecar
+        [("clip", "rail"), ("clip", "gripper")],  # track moving-part-vs-tooling pairs too, not just vs the rail
+        baseline=pose(seated),              # seated overlaps are the allowed steady contact (a grip, a press foot)
+    )
+```
+
+Two failure modes this exists for (lesson L-4): the deepest clash is mid-travel, not at the seated endpoint the static check sees; and a sweep only catches the pairs you list — checking clip-vs-rail but not clip-vs-gripper hides a real clash. Pass the seated pose as `baseline` so steady intended contact rides along without being flagged (only EXCESS overlap is a defect); use a per-pair `tol` dict when rigid tooling on a rolling part leaves a tiny tilt-mismatch a compliant gripper would absorb.
+
 ## Reference discovery
 
 Compact facts and planes:
