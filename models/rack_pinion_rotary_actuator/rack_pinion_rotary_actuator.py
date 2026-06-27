@@ -1,19 +1,27 @@
 """Rack-and-pinion rotary actuator: a vertical cylinder drives a vertical rack
 that meshes a pinion, swinging a mounted platform from 0 to 90 degrees.
 
+The driving cylinder is no longer a hand-written box: it is SELECTED for the
+duty (``select_cylinder``) and GENERATED as a simplified standard part
+(``cadpy.parts.pneumatic_cylinder``), so its bore/rod/body come from the catalog
+reasoning layer, not from eyeballed numbers. The selection provenance
+(model/source/confidence/margin) is recorded in CYL_SPEC below.
+
 Coordinate convention
 - Units: millimeters.
 - Origin: base footprint center, base bottom on z = 0.
 - +Z: up / cylinder stroke direction.
 - Pinion axis: world +Y, passing through (PINION_X, 0, PINION_Z).
 - Static pose modeled here = fully retracted, platform horizontal (swing = 0).
-  Motion (rack/rod rise, pinion/platform swing) is authored in the
-  .rack_pinion_rotary_actuator.step.js sidecar for CAD Viewer.
+
+One normalized DOF (swing in [0, 1]) drives everything; kin()/pose() are the
+single source of truth reused by the static STEP, the check_geometry motion
+sweep, and the .rack_pinion_rotary_actuator.step.js sidecar, so all three stay
+kinematically identical.
 
 The pinion pitch radius and the 90 deg swing fix the rack stroke exactly:
     STROKE_90 = PINION_PITCH_R * (pi / 2)   # arc length = R * angle
-The sidecar reuses the same relation so rack travel and pinion rotation stay
-kinematically consistent rather than eyeballed.
+which is the rod travel the cylinder must deliver (req_stroke).
 """
 
 from __future__ import annotations
@@ -29,6 +37,7 @@ from build123d import (
     Rot,
 )
 from cadpy.assembly import AssemblyHelper
+from cadpy.parts import pneumatic_cylinder, select_cylinder
 
 # --- Primary parameters ---------------------------------------------------
 BASE_LEN_X = 70.0
@@ -37,13 +46,6 @@ BASE_T = 8.0
 BASE_CENTER_X = -10.0
 BASE_HOLE_D = 5.0
 BASE_HOLE_INSET = 9.0
-
-CYL_OUTER_R = 15.0
-CYL_LEN = 40.0
-CYL_BORE_R = 6.0
-CYL_X = 0.0
-ROD_R = 5.0
-ROD_BOTTOM_Z = 14.0
 
 PINION_X = -22.0
 PINION_Z = 78.0
@@ -57,15 +59,72 @@ SHAFT_R = 3.0
 SHAFT_Y_BACK = -16.0   # into the support bracket (-Y)
 SHAFT_Y_FRONT = 30.0   # out to the platform (+Y)
 
-# Rack: backing bar on +X side of the pitch line, block teeth pointing -X
-# toward the pinion, with a small backlash gap so the static pose does not
-# show tooth interference.
+# Derived motion constant: the rod travel that yields a 90 deg swing.
+STROKE_90 = PINION_PITCH_R * (math.pi / 2.0)
+
+# --- Driving cylinder: SELECTED for the duty, then GENERATED ---------------
+# A modest tabletop platform load; the smallest standard bore that delivers it
+# at 6 bar with the required stroke is chosen. req_stroke is the actual rod
+# travel (STROKE_90), NOT the series' stroke_max -- the generated part is cut to
+# the application stroke so the rod cannot over-travel during the sweep.
+CYL_LOAD_N = 150.0
+CYL_PRESSURE_BAR = 6.0
+REQ_STROKE = STROKE_90
+CYL_SPEC = select_cylinder(
+    load_N=CYL_LOAD_N, pressure_bar=CYL_PRESSURE_BAR, stroke_mm=REQ_STROKE
+)
+# Cylinder is mounted upright on the base, offset +X so its (selected) body
+# diameter clears the pinion support bracket; the rod drives the rack from below.
+CYL_X = 9.0
+CYL_BASE_Z = BASE_T
+
+
+def _placed_cylinder():
+    """Generated cylinder at FULL extension, placed at the mount.
+
+    Returns (body, rod) where body is static and rod is the rigid piston at its
+    topmost (fully extended) position; pose() slides the rod back down by the
+    retracted amount. Built fully extended so the rigid rod is long enough to stay
+    engaged in the barrel across the whole stroke.
+    """
+    cyl = pneumatic_cylinder(
+        bore=CYL_SPEC["bore"],
+        stroke=REQ_STROKE,
+        extension=REQ_STROKE,
+        rod_dia=CYL_SPEC["rod_dia"],
+        body_dia=CYL_SPEC["body_dia"],
+    )
+    body = cyl.children[0].translate((CYL_X, 0.0, CYL_BASE_Z))
+    rod = cyl.children[1].translate((CYL_X, 0.0, CYL_BASE_Z))
+    body.label = "cylinder_body"
+    rod.label = "piston_rod"
+    return body, rod
+
+
+_CYL_BODY, _CYL_ROD_EXTENDED = _placed_cylinder()
+# Rod top at full extension == rack bottom at full swing; subtract the stroke to
+# get the seated rack bottom (where the retracted rod top sits).
+BODY_TOP_Z = _CYL_BODY.bounding_box().max.Z
+RACK_BOTTOM_Z = BODY_TOP_Z  # seated: rack rests on the retracted rod top
+
+# Rack: backing bar on +X side of the pitch line, block teeth pointing -X toward
+# the pinion. RACK_BACKLASH only pulls the tooth tips back a touch; it does NOT
+# open a static clearance -- the BLOCK teeth still interpenetrate ~34 mm^3 at the
+# seated pose (and 34-41 mm^3 across the whole swing, ~1/4 of one tooth). That is
+# a block-tooth artifact of the approximation, not real involute contact; it is a
+# genuine gear mesh, so it is allow-listed as INTENDED_CONTACT and ridden along by
+# the seated motion-sweep baseline. The mesh is not interference-free; it is
+# declared intended. (Real involute teeth would roll without this overlap.)
 RACK_BACKLASH = 0.5
 RACK_TIP_X = (PINION_X + PINION_TIP_R) - RACK_BACKLASH   # front of rack teeth
 RACK_TOOTH_DEPTH = 4.0
 RACK_BACK_THICK = 8.0
 RACK_WID_Y = 12.0
-RACK_BOTTOM_Z = 52.0
+# Rack sits on the -Y side of the pinion (which spans y in [-6, 6]); the driven
+# platform is mounted on the +Y side. Offsetting the rack -Y keeps it meshing the
+# pinion (overlap y in [-6, 0]) while fully clearing the rotating platform, so the
+# swing sweep has no rack~platform clash.
+RACK_Y_CENTER = -6.0
 RACK_LEN_Z = 60.0
 RACK_TEETH_PITCH = 2.0 * math.pi * PINION_PITCH_R / PINION_TEETH
 
@@ -76,9 +135,6 @@ PLATFORM_LEN_X = 58.0
 PLATFORM_WID_Y = 40.0
 PLATFORM_THICK_Z = 6.0
 PLATFORM_Y_CENTER = 22.0
-
-# Derived motion constant (documented for the sidecar).
-STROKE_90 = PINION_PITCH_R * (math.pi / 2.0)
 
 
 def make_base():
@@ -94,29 +150,13 @@ def make_base():
     return plate
 
 
-def make_cylinder_body():
-    z_center = BASE_T + CYL_LEN / 2.0
-    body = Pos(CYL_X, 0.0, z_center) * Cylinder(CYL_OUTER_R, CYL_LEN)
-    # Hollow bore from the top, leaving a closed bottom cap.
-    bore = Pos(CYL_X, 0.0, z_center + 1.0) * Cylinder(CYL_BORE_R, CYL_LEN - 4.0)
-    return body - bore
-
-
-def make_piston_rod():
-    rod_top_z = RACK_BOTTOM_Z
-    length = rod_top_z - ROD_BOTTOM_Z
-    z_center = (ROD_BOTTOM_Z + rod_top_z) / 2.0
-    rod = Pos(CYL_X, 0.0, z_center) * Cylinder(ROD_R, length)
-    # Clevis pad where the rod meets the rack.
-    pad = Pos(CYL_X, 0.0, rod_top_z - 2.0) * Box(2.0 * ROD_R + 4.0, RACK_WID_Y, 6.0)
-    return rod + pad
-
-
 def make_rack():
     back_min_x = RACK_TIP_X + RACK_TOOTH_DEPTH
     back_center_x = back_min_x + RACK_BACK_THICK / 2.0
     z_center = RACK_BOTTOM_Z + RACK_LEN_Z / 2.0
-    rack = Pos(back_center_x, 0.0, z_center) * Box(RACK_BACK_THICK, RACK_WID_Y, RACK_LEN_Z)
+    rack = Pos(back_center_x, RACK_Y_CENTER, z_center) * Box(
+        RACK_BACK_THICK, RACK_WID_Y, RACK_LEN_Z
+    )
 
     # Block teeth along the -X face, spaced at the meshing circular pitch,
     # covering the pinion height across the full stroke.
@@ -126,7 +166,7 @@ def make_rack():
     n = int((teeth_z1 - teeth_z0) / RACK_TEETH_PITCH)
     for i in range(n + 1):
         z = teeth_z0 + i * RACK_TEETH_PITCH
-        tooth = Pos(tooth_center_x, 0.0, z) * Box(
+        tooth = Pos(tooth_center_x, RACK_Y_CENTER, z) * Box(
             RACK_TOOTH_DEPTH, RACK_WID_Y, TOOTH_CIRC_W
         )
         rack = rack + tooth
@@ -200,26 +240,133 @@ def make_platform():
     return table + hub
 
 
+# ===========================================================================
+# Kinematics -- one source of truth for static / sweep / sidecar
+# ===========================================================================
+SWING_AXIS = Axis((PINION_X, 0.0, PINION_Z), (0.0, 1.0, 0.0))
+
+
+def kin(swing):
+    """Return (travel_mm, angle_deg) for a normalized swing in [0, 1]."""
+    travel = swing * STROKE_90
+    angle = -swing * 90.0
+    return travel, angle
+
+
+def _base_parts():
+    """Seated (swing=0) geometry of every named part."""
+    return [
+        ("base", make_base()),
+        ("support_bracket", make_support_bracket()),
+        ("cylinder_body", _CYL_BODY),
+        ("piston_rod", _CYL_ROD_EXTENDED),
+        ("rack", make_rack()),
+        ("pinion", make_pinion()),
+        ("platform", make_platform()),
+    ]
+
+
+def _move(name, shape, swing):
+    travel, angle = kin(swing)
+    if name == "rack":
+        return shape.translate((0.0, 0.0, travel))
+    if name == "piston_rod":
+        # rod is built fully extended; slide it down by the not-yet-extended amount
+        return shape.translate((0.0, 0.0, travel - STROKE_90))
+    if name in ("pinion", "platform"):
+        return shape.rotate(SWING_AXIS, angle)
+    return shape  # base, support_bracket, cylinder_body are static
+
+
+def pose(swing):
+    """Every part posed at a swing sample -> list of (name, shape)."""
+    return [(n, _move(n, s, swing)) for n, s in _base_parts()]
+
+
+# Intended contact at the seated pose (declared to the static gate): the rod
+# rides in the barrel bore (volume overlap), the rod pushes the rack (a coincident
+# face contact -- a compression drive, not interpenetration), the rack meshes the
+# pinion, and the platform hub rides the pinion shaft. (rack~platform is NOT a
+# contact: the rack runs on the -Y side, the platform on +Y.)
+INTENDED_CONTACT = [
+    ("cylinder_body", "piston_rod"),
+    ("piston_rod", "rack"),
+    ("rack", "pinion"),
+    ("pinion", "platform"),
+]
+
+# Pairs whose clearance is swept over the whole stroke. The rack/pinion mesh is
+# the real dogfood: the SELECTED cylinder's rod drives the rack through a rolling
+# gear mesh, which must stay penetration-free beyond the seated backlash.
+_SWEEP_PAIRS = [
+    ("rack", "pinion"),
+    ("rack", "platform"),
+    ("rack", "support_bracket"),
+    ("piston_rod", "cylinder_body"),
+    ("piston_rod", "rack"),
+]
+
+# The block-tooth mesh is a geometric approximation of an involute gear: its
+# block corners dig a few mm^3 past the seated engagement near the pitch point as
+# they roll (true involute teeth would not). A dense sweep caps that sliver at
+# ~6.2 mm^3, so the mesh pair gets a small allowance (analogous to the DIN-rail
+# station's tooling tolerance); every other pair stays strict.
+_MESH_TOL = 8.0
+_SWEEP_TOL = {None: 0.05, ("rack", "pinion"): _MESH_TOL}
+
+
+def _swing_poses(samples=24):
+    for i in range(samples + 1):
+        s = i / samples
+        yield s, pose(s)
+
+
+def check_geometry(shape):
+    """Acceptance gate: static validity + interference, THEN the whole-stroke
+    motion sweep. The seated pose is the baseline, so the rod-in-bore and gear
+    backlash contacts ride along; only EXCESS overlap from the swing is a defect.
+    This is the dogfood: a cylinder picked by select_cylinder must drive the real
+    mechanism penetration-free, not just sit in it."""
+    from cadpy.geometry_checks import (
+        assert_all_valid,
+        assert_motion_clear,
+        assert_no_interference,
+    )
+
+    assert_all_valid(shape, label="part")
+    assert_no_interference(shape, allow=INTENDED_CONTACT)
+    assert_motion_clear(
+        _swing_poses(),
+        _SWEEP_PAIRS,
+        baseline=pose(0.0),  # seated reference -> its contacts are allowed
+        tol=_SWEEP_TOL,
+        label="swing sweep",
+    )
+
+
 def gen_step():
     asm = AssemblyHelper("rack_pinion_rotary_actuator")
-    asm.add(make_base(), "base")
-    asm.add(make_support_bracket(), "support_bracket")
-    asm.add(make_cylinder_body(), "cylinder_body")
-    asm.add(make_piston_rod(), "piston_rod")
-    asm.add(make_rack(), "rack")
-    asm.add(make_pinion(), "pinion")
-    asm.add(make_platform(), "platform")
+    for name, shape in pose(0.0):  # seated
+        asm.add(shape, name)
 
-    # Documented motion datums (source-of-truth for the sidecar kinematics).
-    asm.revolute_frame(
-        asm.children[-2],  # pinion
-        "swing_axis",
-        Axis((PINION_X, 0.0, PINION_Z), (0.0, 1.0, 0.0)),
-    )
+    # Documented motion datum (source-of-truth for the sidecar kinematics).
+    asm.revolute_frame(asm.children[-2], "swing_axis", SWING_AXIS)
     return asm.build()
 
 
 if __name__ == "__main__":
+    from cadpy.geometry_checks import sweep_interference
+
     shape = gen_step()
     print("built:", shape.label, "children:", len(shape.children))
+    print("cylinder:", CYL_SPEC["model"],
+          "bore", CYL_SPEC["bore"], "rod", CYL_SPEC["rod_dia"],
+          "margin %.2f" % CYL_SPEC["selected_for"]["margin"],
+          "source/conf:", CYL_SPEC["source"][:30], CYL_SPEC["confidence"])
     print("stroke for 90 deg (mm):", round(STROKE_90, 4))
+    hits = sweep_interference(_swing_poses(), _SWEEP_PAIRS, baseline=pose(0.0))
+    print(f"motion sweep hits beyond baseline: {len(hits)}")
+    for h in hits[:6]:
+        print("  hit:", h.a, h.b, "excess %.2f" % h.excess, "@ swing", h.where)
+    check_geometry(shape)
+    print("geometry + motion-sweep checks: passed")

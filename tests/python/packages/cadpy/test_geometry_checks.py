@@ -55,14 +55,13 @@ def _load_rack_pinion():
     return module.gen_step()
 
 
-# rack_pinion's intended contacts: bracket-on-barrel, rod-in-bore, rod-drives-
-# rack, gear mesh, hub-on-shaft. These are real and must be declared, not flagged.
+# rack_pinion's intended VOLUME overlaps at the seated pose: rod-in-bore, gear
+# mesh, and hub-on-shaft. (The selected cylinder is offset to clear the bracket,
+# and the rod pushes the rack as a coincident face contact -- gap 0, no volume --
+# so neither shows up as an overlap here.) These are real and must be declared.
 RACK_PINION_INTENDED = [
-    ("support_bracket", "cylinder_body"),
     ("cylinder_body", "piston_rod"),
-    ("piston_rod", "rack"),
     ("rack", "pinion"),
-    ("rack", "platform"),
     ("pinion", "platform"),
 ]
 
