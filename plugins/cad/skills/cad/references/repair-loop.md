@@ -11,6 +11,15 @@ Read this file when generation, export, inspection, positioning, snapshot review
 5. Rerun any dependent validation checks.
 6. Report remaining risk or deliberate deviations.
 
+## Acceptance contract
+
+The loop terminates only when both gates are green together — they are used together, not one instead of the other:
+
+- **Deterministic checks** decide pass/fail on what they encode: the `refs --facts --planes --positioning` baseline, every spec-driven `measure`/`align`/`frame`/`diff`, B-rep validity (`cadpy.geometry_checks.assert_valid_solid`), and, for assemblies, part-pair interference (`cadpy.geometry_checks.assert_no_interference` with an intended-contact allow-list).
+- **Mandatory snapshot review** catches the semantic errors the deterministic checks did not encode (`snapshot-review.md`).
+
+Until both are green, the work is not done. If a check cannot be satisfied, report it as an open item (see `## Reporting failed repairs`) rather than declaring completion. A generator can enforce its own checks at write time by defining `check_geometry(shape)`: the pipeline runs it before the STEP is written and refuses to write on a raise. When a defect slips past both gates and is then fixed, institutionalize it as a durable check via `lessons.md` so it cannot silently return.
+
 ## Failure classes and fixes
 
 ### Source import or syntax failure

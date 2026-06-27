@@ -38,7 +38,25 @@ Pass selector refs as `#...` tokens. The STEP/CAD file path or entry target is a
 1. Generation completed and the STEP/STP file exists.
 2. `refs --facts --planes --positioning` confirms scale, labels, major planes, and placement-ready references. Run this for every generated artifact.
 3. Spec-driven checks: `measure` for every user-specified dimension, offset, or clearance; `align` for interfaces that should be flush or centered; `frame` for orientation and occurrence-placement expectations; `diff` for modifications that could affect unrelated geometry.
-4. Snapshot the primary STEP/STP per `snapshot-review.md`, then convert every visual concern into a deterministic geometry check before it becomes a validation claim.
+4. Shape-level kernel checks via `cadpy.geometry_checks`: `assert_valid_solid` for every solid (a valid B-rep, by `BRepCheck_Analyzer`) and, for assemblies, `assert_no_interference` (precise pairwise minimum gap and penetration volume). This is the deterministic counterpart to interference you would otherwise only eyeball in a snapshot.
+5. Snapshot the primary STEP/STP per `snapshot-review.md`, then convert every visual concern into a deterministic geometry check before it becomes a validation claim.
+
+## Shape-level geometry checks
+
+`cadpy.geometry_checks` runs deterministic checks on the real OCCT solids (not the exported manifest), so they belong inside a generator's `gen_step()` or its `check_geometry(shape)` hook:
+
+```python
+from cadpy.geometry_checks import assert_valid_solid, assert_no_interference
+
+def check_geometry(shape):           # the pipeline runs this before writing the STEP
+    assert_valid_solid(shape, label="actuator")
+    assert_no_interference(
+        shape,                        # a build123d assembly Compound
+        allow=[("piston_rod", "rack"), ("rack", "pinion")],  # declared intended contact
+    )
+```
+
+A real assembly is full of INTENDED contact — a shaft in a bore, meshing gear teeth, a press fit — so `assert_no_interference` fails only on overlap between pairs NOT in `allow`; declare the intended pairs and a true unintended clash still fails. Near-misses (a positive gap below a requested `clearance`) are reported, not blocked. These are geometric-validity checks only — they make no structural, tolerance, or certification claim (see "Do not claim" below).
 
 ## Reference discovery
 

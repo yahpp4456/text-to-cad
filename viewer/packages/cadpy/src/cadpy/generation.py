@@ -1073,6 +1073,39 @@ def run_script_generator(
         )
 
 
+def _run_geometry_acceptance_check(
+    module: object,
+    payload: object,
+    *,
+    script_path: Path,
+    logger: CliLogger,
+) -> None:
+    """Opt-in shape-level acceptance gate (a generator's own emit authority).
+
+    If a generator module defines ``check_geometry(shape)``, run it on the
+    generator's payload BEFORE any STEP/GLB is written. The author raises
+    (typically via ``cadpy.geometry_checks.assert_valid_solid`` /
+    ``assert_no_interference``) to refuse the write, so a geometry defect never
+    reaches disk. Generators without the hook are unaffected — the gate is
+    opt-in, never silently imposed.
+
+    ``payload`` is ``gen_step``'s raw return: a build123d Shape, a list of
+    parts, or an envelope dict — all three are accepted by the
+    ``cadpy.geometry_checks`` helpers.
+    """
+    check = getattr(module, "check_geometry", None)
+    if check is None:
+        return
+    if not callable(check):
+        raise TypeError(
+            f"{_display_path(script_path)} check_geometry must be callable, "
+            f"got {type(check).__name__}"
+        )
+    with logger.timed(f"check_geometry {_display_path(script_path)}"):
+        check(payload)
+    logger.debug(f"check_geometry passed: {_display_path(script_path)}")
+
+
 def _run_script_generator_inner(
     spec: EntrySpec,
     generator_name: str,
@@ -1092,6 +1125,9 @@ def _run_script_generator_inner(
         raw_payload = generator()
 
     if generator_name == "gen_step":
+        _run_geometry_acceptance_check(
+            module, raw_payload, script_path=spec.script_path, logger=logger
+        )
         envelope = _normalize_step_payload(raw_payload, script_path=spec.script_path)
         if spec.step_path is None:
             raise RuntimeError(f"{spec.source_ref} has no configured STEP output")
