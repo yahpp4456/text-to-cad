@@ -1,0 +1,72 @@
+[
+  {
+    "series": "NEMA stepper",
+    "model": "NEMA11",
+    "nema": 11,
+    "face": 28.2,
+    "body_len": 45,
+    "shaft_dia": 5,
+    "shaft_len": 20,
+    "pilot_dia": 22,
+    "pilot_len": 1.5,
+    "holding_torque_Nm": 0.1,
+    "source": "NEMA ICS 16 frame 11 nominal (face 28.2 exact; body_len/shaft/torque representative, motor-specific)",
+    "confidence": "med"
+  },
+  {
+    "series": "NEMA stepper",
+    "model": "NEMA17-34",
+    "nema": 17,
+    "face": 42.3,
+    "body_len": 34,
+    "shaft_dia": 5,
+    "shaft_len": 22,
+    "pilot_dia": 22,
+    "pilot_len": 2,
+    "holding_torque_Nm": 0.22,
+    "source": "NEMA frame 17 nominal (face 42.3 exact; 34 mm stack; holding torque ~0.22 Nm representative, motor-specific)",
+    "confidence": "med"
+  },
+  {
+    "series": "NEMA stepper",
+    "model": "NEMA17-40",
+    "nema": 17,
+    "face": 42.3,
+    "body_len": 40,
+    "shaft_dia": 5,
+    "shaft_len": 24,
+    "pilot_dia": 22,
+    "pilot_len": 2,
+    "holding_torque_Nm": 0.36,
+    "source": "NEMA frame 17 nominal (face 42.3 exact; 40 mm stack; holding torque ~0.36 Nm representative, motor-specific)",
+    "confidence": "med"
+  },
+  {
+    "series": "NEMA stepper",
+    "model": "NEMA17-48",
+    "nema": 17,
+    "face": 42.3,
+    "body_len": 48,
+    "shaft_dia": 5,
+    "shaft_len": 24,
+    "pilot_dia": 22,
+    "pilot_len": 2,
+    "holding_torque_Nm": 0.45,
+    "source": "NEMA frame 17 nominal (face 42.3 exact; 48 mm stack; holding torque ~0.45 Nm representative, motor-specific)",
+    "confidence": "med"
+  },
+  {
+    "series": "NEMA stepper",
+    "model": "NEMA23-56",
+    "nema": 23,
+    "face": 56.4,
+    "body_len": 56,
+    "shaft_dia": 6.35,
+    "shaft_len": 21,
+    "pilot_dia": 38.1,
+    "pilot_len": 1.6,
+    "holding_torque_Nm": 1.26,
+    "source": "NEMA frame 23 nominal (face 56.4 exact; 56 mm stack; holding torque ~1.26 Nm representative, motor-specific)",
+    "confidence": "med"
+  }
+]

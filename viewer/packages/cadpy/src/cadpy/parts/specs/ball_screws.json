@@ -1,0 +1,54 @@
+[
+  {
+    "series": "rolled ball screw",
+    "model": "1605",
+    "screw_dia": 16,
+    "lead": 5,
+    "root_dia": 13.2,
+    "nut_dia": 28,
+    "nut_len": 40,
+    "grade": "C7",
+    "C_dynamic_N": 6000,
+    "source": "Rolled ball screw 16x5 nominal (dia/lead standard; root_dia/nut dims & C ~6 kN reconstructed)",
+    "confidence": "med"
+  },
+  {
+    "series": "rolled ball screw",
+    "model": "1610",
+    "screw_dia": 16,
+    "lead": 10,
+    "root_dia": 13.5,
+    "nut_dia": 28,
+    "nut_len": 45,
+    "grade": "C7",
+    "C_dynamic_N": 7000,
+    "source": "Rolled ball screw 16x10 nominal (dia/lead standard; root_dia/nut dims & C ~7 kN reconstructed)",
+    "confidence": "med"
+  },
+  {
+    "series": "rolled ball screw",
+    "model": "2005",
+    "screw_dia": 20,
+    "lead": 5,
+    "root_dia": 17.0,
+    "nut_dia": 36,
+    "nut_len": 44,
+    "grade": "C7",
+    "C_dynamic_N": 9000,
+    "source": "Rolled ball screw 20x5 nominal (dia/lead standard; root_dia/nut dims & C ~9 kN reconstructed)",
+    "confidence": "med"
+  },
+  {
+    "series": "rolled ball screw",
+    "model": "2010",
+    "screw_dia": 20,
+    "lead": 10,
+    "root_dia": 17.0,
+    "nut_dia": 36,
+    "nut_len": 50,
+    "grade": "C7",
+    "C_dynamic_N": 11000,
+    "source": "Rolled ball screw 20x10 nominal (dia/lead standard; root_dia/nut dims & C ~11 kN reconstructed)",
+    "confidence": "med"
+  }
+]

@@ -1,0 +1,54 @@
+[
+  {
+    "series": "Airtac SC",
+    "model": "SC32",
+    "bore": 32,
+    "rod_dia": 12,
+    "body_dia": 42,
+    "stroke_min": 10,
+    "stroke_max": 500,
+    "port": "G1/8",
+    "mount": "foot",
+    "source": "Airtac SC series nominal (bore/rod standard ISO 6432/15552 line; body_dia & stroke range reconstructed, not verified to a datasheet revision)",
+    "confidence": "med"
+  },
+  {
+    "series": "Airtac SC",
+    "model": "SC40",
+    "bore": 40,
+    "rod_dia": 16,
+    "body_dia": 52,
+    "stroke_min": 10,
+    "stroke_max": 500,
+    "port": "G1/4",
+    "mount": "foot",
+    "source": "Airtac SC series nominal (bore/rod standard; body_dia & stroke range reconstructed, not verified to a datasheet revision)",
+    "confidence": "med"
+  },
+  {
+    "series": "Airtac SC",
+    "model": "SC50",
+    "bore": 50,
+    "rod_dia": 20,
+    "body_dia": 65,
+    "stroke_min": 25,
+    "stroke_max": 800,
+    "port": "G1/4",
+    "mount": "foot",
+    "source": "Airtac SC series nominal (bore/rod standard; body_dia & stroke range reconstructed, not verified to a datasheet revision)",
+    "confidence": "med"
+  },
+  {
+    "series": "Airtac SC",
+    "model": "SC63",
+    "bore": 63,
+    "rod_dia": 20,
+    "body_dia": 82,
+    "stroke_min": 25,
+    "stroke_max": 800,
+    "port": "G3/8",
+    "mount": "foot",
+    "source": "Airtac SC series nominal (bore/rod standard; body_dia & stroke range reconstructed, not verified to a datasheet revision)",
+    "confidence": "med"
+  }
+]

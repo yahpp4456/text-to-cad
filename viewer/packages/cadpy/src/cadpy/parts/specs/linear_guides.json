@@ -1,0 +1,50 @@
+[
+  {
+    "series": "HIWIN MGN",
+    "model": "MGN9C",
+    "rail_width": 9,
+    "rail_height": 6.5,
+    "block_width": 20,
+    "block_height": 10,
+    "block_len": 38,
+    "C_dynamic_N": 1370,
+    "source": "HIWIN MGN9C standard carriage nominal (rail 9 / height 6.5 standard; block dims & C ~1.37 kN reconstructed; block_len/C kept to one carriage variant)",
+    "confidence": "med"
+  },
+  {
+    "series": "HIWIN MGN",
+    "model": "MGN12C",
+    "rail_width": 12,
+    "rail_height": 8,
+    "block_width": 27,
+    "block_height": 13,
+    "block_len": 45,
+    "C_dynamic_N": 2650,
+    "source": "HIWIN MGN12C standard carriage nominal (rail 12 / height 8 standard; block dims & C ~2.65 kN reconstructed; block_len/C kept to one carriage variant)",
+    "confidence": "med"
+  },
+  {
+    "series": "HIWIN MGN",
+    "model": "MGN15C",
+    "rail_width": 15,
+    "rail_height": 10,
+    "block_width": 32,
+    "block_height": 16,
+    "block_len": 57,
+    "C_dynamic_N": 4900,
+    "source": "HIWIN MGN15C standard carriage nominal (rail 15 / height 10 standard; block dims & C ~4.9 kN reconstructed; block_len/C kept to one carriage variant)",
+    "confidence": "med"
+  },
+  {
+    "series": "HIWIN HGH",
+    "model": "HGH20CA",
+    "rail_width": 20,
+    "rail_height": 17.5,
+    "block_width": 44,
+    "block_height": 30,
+    "block_len": 77,
+    "C_dynamic_N": 17750,
+    "source": "HIWIN HGH20CA standard carriage nominal (rail 20 standard; rail_height/block dims & C ~17.75 kN reconstructed)",
+    "confidence": "med"
+  }
+]

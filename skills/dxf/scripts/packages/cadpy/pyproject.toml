@@ -21,3 +21,4 @@ include = ["cadpy*"]
 
 [tool.setuptools.package-data]
 cadpy = ["py.typed"]
+"cadpy.parts" = ["specs/*.json"]

@@ -1,0 +1,42 @@
+[
+  {
+    "series": "deep-groove ball bearing",
+    "model": "608",
+    "bore": 8,
+    "od": 22,
+    "width": 7,
+    "C_dynamic_N": 3400,
+    "source": "ISO 15 / 608 series nominal (bore/OD/width = 8x22x7 exact; C dynamic rating ~3.4 kN approximate, manufacturer-dependent)",
+    "confidence": "high"
+  },
+  {
+    "series": "deep-groove ball bearing",
+    "model": "6000",
+    "bore": 10,
+    "od": 26,
+    "width": 8,
+    "C_dynamic_N": 4750,
+    "source": "ISO 15 / 6000 series nominal (10x26x8 exact; C ~4.75 kN approximate, manufacturer-dependent)",
+    "confidence": "high"
+  },
+  {
+    "series": "deep-groove ball bearing",
+    "model": "6200",
+    "bore": 10,
+    "od": 30,
+    "width": 9,
+    "C_dynamic_N": 5070,
+    "source": "ISO 15 / 6200 series nominal (10x30x9 exact; C ~5.07 kN approximate, manufacturer-dependent)",
+    "confidence": "high"
+  },
+  {
+    "series": "deep-groove ball bearing",
+    "model": "6204",
+    "bore": 20,
+    "od": 47,
+    "width": 14,
+    "C_dynamic_N": 12700,
+    "source": "ISO 15 / 6204 series nominal (20x47x14 exact; C ~12.7 kN approximate, manufacturer-dependent)",
+    "confidence": "high"
+  }
+]
