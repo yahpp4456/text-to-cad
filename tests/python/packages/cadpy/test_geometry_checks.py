@@ -56,14 +56,14 @@ def _load_rack_pinion():
 
 
 # rack_pinion's intended VOLUME overlaps at the seated pose: rod-in-bore, the
-# coupler clamping the rod end AND the rack bottom (the real rod->rack connector),
-# gear mesh, and hub-on-shaft. (The rod and rack do not touch directly -- the
-# coupler bridges them -- so there is no piston_rod~rack overlap.) All real, all
-# must be declared.
+# clevis PIN through the rod end and through the rack's clevis socket (the real
+# pin-mediated rod->rack drive: rod->pin->rack), gear mesh, and hub-on-shaft. The
+# rod and rack do NOT interpenetrate -- the rod sits in a clearance socket bore, so
+# there is no piston_rod~rack overlap; only the small pin contacts are declared.
 RACK_PINION_INTENDED = [
     ("cylinder_body", "piston_rod"),
-    ("piston_rod", "coupler"),
-    ("coupler", "rack"),
+    ("piston_rod", "clevis_pin"),
+    ("clevis_pin", "rack"),
     ("rack", "pinion"),
     ("pinion", "platform"),
 ]

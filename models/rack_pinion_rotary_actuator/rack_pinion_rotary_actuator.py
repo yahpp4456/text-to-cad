@@ -75,12 +75,12 @@ CYL_SPEC = select_cylinder(
 )
 # Cylinder mounted upright on the base, offset +X so its (selected) body diameter
 # clears the pinion support bracket, and offset to the rack's -Y centerline so the
-# rod, coupler and rack all sit on -Y and never reach the +Y platform mid-swing.
+# rod, clevis and rack all sit on -Y and never reach the +Y platform mid-swing.
 CYL_X = 9.0
 CYL_Y = -6.0          # = RACK_Y_CENTER, so the rod is coaxial-in-Y with the rack
 CYL_BASE_Z = BASE_T
 # The rod always protrudes this far above the barrel even fully retracted, exposing
-# a rod end that the coupler clamps to the rack (a real cylinder presents one).
+# a rod end that seats into the rack's clevis socket (a real cylinder presents one).
 ROD_PROTRUDE = 6.0
 
 
@@ -109,21 +109,23 @@ def _placed_cylinder():
 
 _CYL_BODY, _CYL_ROD_EXTENDED = _placed_cylinder()
 BODY_TOP_Z = _CYL_BODY.bounding_box().max.Z          # ~46.05
-# Seated retracted rod end sits ROD_PROTRUDE above the body top; the coupler ties
-# that end to the rack bottom. The rack bottom must stay at/below the lowest tooth
-# (teeth start at PINION_Z - 22 = 56), so it sits in the gap above the body, a hair
-# above the rod end (the rod and rack do not touch -- the coupler bridges them).
-ROD_TOP_SEATED = BODY_TOP_Z + ROD_PROTRUDE           # ~52.05
-RACK_BOTTOM_Z = 53.0
+ROD_TOP_SEATED = BODY_TOP_Z + ROD_PROTRUDE           # ~52.05, the exposed rod end
+RACK_BOTTOM_Z = 53.0  # stays at/below the lowest tooth (teeth start at 56)
 
-# --- Coupler: the rod-to-rack connector -----------------------------------
-# A clamp block that captures the exposed rod end AND the rack bottom (both are
-# declared INTENDED contact), so the rod actually drives the rack through a part,
-# not by resting against it. It rides in the gap between the body top and the rack,
-# entirely on the -Y side, and translates with the rod+rack group.
-COUPLER_Z0, COUPLER_Z1 = 48.0, 58.0
-COUPLER_X0, COUPLER_X1 = -4.0, 16.0
-COUPLER_Y0, COUPLER_Y1 = -12.0, 0.0
+# --- Rod-to-rack connection: a clevis socket on the rack + a clevis pin -----
+# The rod is NOT glued to the rack. The rack grows an integral clevis socket at its
+# bottom (two ears straddling the rod) with a CLEARANCE bore the rod end sits in
+# (slip fit -> no volume overlap with the rack). A clevis pin runs through both ears
+# and the rod, so the drive load passes ROD -> PIN -> RACK (pin-mediated): the only
+# declared overlaps are pin~rod and pin~rack (small shaft-in-bore fastener
+# contacts), never a block-on-block interpenetration. The socket + pin ride with
+# the rod+rack group.
+SOCKET_X0, SOCKET_X1 = 0.0, 18.0     # spans the rack back out past the rod (two ears)
+SOCKET_Y0, SOCKET_Y1 = -12.0, 0.0
+SOCKET_Z0, SOCKET_Z1 = 47.0, RACK_BOTTOM_Z   # hangs below the rack back, fuses at z=53
+SOCKET_BORE_R = CYL_SPEC["rod_dia"] / 2.0 + 0.3   # clearance bore for the rod end
+CLEVIS_PIN_R = 1.6
+CLEVIS_PIN_Z = 49.5                  # mid-socket, crossing the rod and both ears
 
 # Rack: backing bar on +X side of the pitch line, block teeth pointing -X toward
 # the pinion. RACK_BACKLASH only pulls the tooth tips back a touch; it does NOT
@@ -188,6 +190,18 @@ def make_rack():
             RACK_TOOTH_DEPTH, RACK_WID_Y, TOOTH_CIRC_W
         )
         rack = rack + tooth
+
+    # Integral clevis socket hanging off the rack bottom: a block reaching out to
+    # the rod, with a CLEARANCE bore the rod end seats into (slip fit, no overlap)
+    # and clearance holes for the clevis pin's ears. Fuses to the back bar at the
+    # shared z = RACK_BOTTOM_Z face.
+    socket = Pos(
+        (SOCKET_X0 + SOCKET_X1) / 2.0, CYL_Y, (SOCKET_Z0 + SOCKET_Z1) / 2.0
+    ) * Box(SOCKET_X1 - SOCKET_X0, SOCKET_Y1 - SOCKET_Y0, SOCKET_Z1 - SOCKET_Z0)
+    rod_bore = Pos(CYL_X, CYL_Y, (SOCKET_Z0 + SOCKET_Z1) / 2.0) * Cylinder(
+        SOCKET_BORE_R, (SOCKET_Z1 - SOCKET_Z0) + 2.0
+    )
+    rack = rack + (socket - rod_bore)
     return rack
 
 
@@ -258,16 +272,13 @@ def make_platform():
     return table + hub
 
 
-def make_coupler():
-    """Clamp block tying the exposed rod end to the rack bottom. It captures both
-    (declared intended contact), sits in the gap above the cylinder body, and rides
-    the rod+rack group -- this is the connector, not a resting contact."""
-    return Pos(
-        (COUPLER_X0 + COUPLER_X1) / 2.0,
-        (COUPLER_Y0 + COUPLER_Y1) / 2.0,
-        (COUPLER_Z0 + COUPLER_Z1) / 2.0,
-    ) * Box(
-        COUPLER_X1 - COUPLER_X0, COUPLER_Y1 - COUPLER_Y0, COUPLER_Z1 - COUPLER_Z0
+def make_clevis_pin():
+    """The pin that ties the rod into the rack's clevis socket. A cross-cylinder
+    along X through both socket ears and the rod end, so the drive load passes
+    rod -> pin -> rack. Its only contacts are pin~rod and pin~rack (small fastener
+    overlaps) -- the rod and rack themselves never interpenetrate."""
+    return Pos(CYL_X, CYL_Y, CLEVIS_PIN_Z) * Rot(0.0, 90.0, 0.0) * Cylinder(
+        CLEVIS_PIN_R, (SOCKET_X1 - SOCKET_X0) + 4.0
     )
 
 
@@ -291,7 +302,7 @@ def _base_parts():
         ("support_bracket", make_support_bracket()),
         ("cylinder_body", _CYL_BODY),
         ("piston_rod", _CYL_ROD_EXTENDED),
-        ("coupler", make_coupler()),
+        ("clevis_pin", make_clevis_pin()),
         ("rack", make_rack()),
         ("pinion", make_pinion()),
         ("platform", make_platform()),
@@ -300,12 +311,12 @@ def _base_parts():
 
 def _move(name, shape, swing):
     travel, angle = kin(swing)
-    if name in ("rack", "coupler"):
-        # rack and its coupler rise rigidly together with the rod
+    if name in ("rack", "clevis_pin"):
+        # rack, its clevis pin and the rod rise rigidly together
         return shape.translate((0.0, 0.0, travel))
     if name == "piston_rod":
         # rod is built fully extended; slide it down by the not-yet-extended amount
-        # (net: rod, coupler and rack move as one rigid group by `travel`)
+        # (net: rod, pin and rack move as one rigid group by `travel`)
         return shape.translate((0.0, 0.0, travel - STROKE_90))
     if name in ("pinion", "platform"):
         return shape.rotate(SWING_AXIS, angle)
@@ -318,33 +329,32 @@ def pose(swing):
 
 
 # Intended contact at the seated pose (declared to the static gate): the rod rides
-# in the barrel bore, the COUPLER clamps both the exposed rod end and the rack
-# bottom (the real rod->rack connection), the rack meshes the pinion, and the
-# platform hub rides the pinion shaft. The rod and rack do NOT touch directly (the
-# coupler bridges a small gap); rack~platform is not a contact (rack on -Y,
-# platform on +Y).
+# in the barrel bore, the CLEVIS PIN bridges the rod end and the rack clevis socket
+# (the real rod->rack drive: rod->pin->rack), the rack meshes the pinion, and the
+# platform hub rides the pinion shaft. The rod and rack do NOT interpenetrate -- the
+# rod sits in the socket's clearance bore (slip fit) and only the pin makes contact.
+# rack~platform is not a contact (rack on -Y, platform on +Y).
 INTENDED_CONTACT = [
     ("cylinder_body", "piston_rod"),
-    ("coupler", "piston_rod"),
-    ("coupler", "rack"),
+    ("clevis_pin", "piston_rod"),
+    ("clevis_pin", "rack"),
     ("rack", "pinion"),
     ("pinion", "platform"),
 ]
 
 # Pairs swept over the whole stroke. The rack/pinion mesh is the dogfood (the
-# selected cylinder's rod drives the rack through a rolling mesh); the coupler-vs-
-# static-structure pairs guard that the new connector clears the body/bracket/
-# platform as the rod+coupler+rack group rises.
+# selected cylinder's rod drives the rack through a rolling mesh); the pin-vs-rod/
+# rack pairs guard the pinned joint, and the rod-vs-rack guard confirms the rod and
+# rack never interpenetrate as the rod+pin+rack group rises.
 _SWEEP_PAIRS = [
     ("rack", "pinion"),
     ("rack", "platform"),
     ("rack", "support_bracket"),
     ("piston_rod", "cylinder_body"),
-    ("coupler", "piston_rod"),
-    ("coupler", "rack"),
-    ("coupler", "cylinder_body"),
-    ("coupler", "support_bracket"),
-    ("coupler", "platform"),
+    ("piston_rod", "rack"),
+    ("clevis_pin", "piston_rod"),
+    ("clevis_pin", "rack"),
+    ("rack", "cylinder_body"),
 ]
 
 # The block-tooth mesh is a geometric approximation of an involute gear: its
