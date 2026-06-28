@@ -186,3 +186,57 @@
 3. 設計第 4 節所有狀態的視覺。
 4. 設計三種迭代入口（文字 / 點選幾何 / 參數滑桿）如何收斂成版本。
 5. 提供 empty state（idle）與第一次使用的引導。
+6. 設計「物件屬性面板 / 規格摘要 / BOM / 2D 圖層圖例」——依第 10 節的屬性資料模型，並區分「對使用者顯示」與「內部不顯示」的欄位。
+
+---
+
+## 10. 圖面物件屬性（Object Properties / Data Model）
+
+> 這節列出**一個 CAD 物件 / 一張圖面實際攜帶的屬性**，給設計者用來設計「屬性面板、規格摘要、BOM、標註、2D 圖層圖例、版本溯源」。
+> 欄位名以系統實際輸出為準（非臆測）。
+> **重要分流**：屬性分「★ 應顯示給使用者」與「⚙ 內部機制用、不該當屬性顯示」兩種——後者是「點選面/邊」「3D 渲染」背後的管線，設計時當作機制、不要塞進屬性面板。
+
+### 10.1 物件階層（屬性面板的樹狀骨架）
+組合件 → 零件 (occurrence) → 形狀 (shape) → 面 / 邊 / 頂點。
+
+- ★ `name`（使用者命名）、`sourceName`（源碼命名）、`path`（階層路徑）、`parentId`（父層）、`kind`（solid / sheet）
+- ⚙ `id`（#o1.2 選擇器 id）、`transform`（4×4 矩陣）、`shapeStart/faceStart/edgeStart` 等索引、`ordinal`
+
+### 10.2 整體物理屬性（規格摘要 / 標題欄）
+- ★ `bbox`（外形尺寸 X×Y×Z，可換算「長寬高」）、`volume`（體積）、`area`（表面積）、`center`（重心位置）
+- ★ 統計：`shapeCount` / `faceCount` / `edgeCount` / `vertexCount`、是否實心 (solid) / watertight
+- ⚠ **沒有的**：`mass`（質量，需密度才能算）、`material`（生成件無材質）、公差 / 表面處理——見 10.8 缺口
+
+### 10.3 面屬性（點選面 → 標註 / 倒角 / 帶入對話）
+- ★ `surfaceType`（plane / cylinder / sphere / cone / torus / bezier…）、`area`（mm²）、`normal`（法向量）、`center`、`params`（如圓柱半徑 radius、軸 axis、原點 origin）
+- ⚙ `flags`（DEGENERATE / SEAM / BOUNDARY）、`relevance`、`triangleStart/Count`
+
+### 10.4 邊屬性（點選邊 → 倒角 / 圓角 / 標註）
+- ★ `curveType`（line / circle / ellipse / parabola / hyperbola / bezier…）、`length`（mm）、`params`（半徑、中心、長短軸…）、`dihedralDeg`（二面角）、`continuity`（C0/G1/C1…）、`visibilityClass`（feature / tangent / seam / boundary…）
+- ⚙ `segmentStart/Count`、`surfaceHalfEdgeStart/Count`、`flags`
+
+### 10.5 裝配關係屬性（組合樹 / 配對清單）
+- ★ `label`、`type` / `relation`（coincident / parallel / perpendicular / fixed…）、`parameters`（距離 / 角度）、固定端 vs 移動端
+- ⚙ mate `id`（#m1）、端點詳細座標
+
+### 10.6 標準件 / BOM 屬性（BOM 表 / 零件卡）
+- ★ `series`、`model`、`standard`（如 ISO 4762）、`category`、`family`、`material`、關鍵尺寸（bore / rod_dia / thread / lengthMm…）、`source`（來源）、`confidence`（low/med/high）
+- ★ 下載溯源：`stepUrl`、`sha256`
+
+### 10.7 2D 圖面（DXF）屬性（2D 視圖 / 雷切圖層圖例）
+- ★ `layer`（圖層名）、`kind`（cut 切割 / bend 折彎，由圖層自動判定）、實體型別（LINE / ARC / CIRCLE / LWPOLYLINE）、單位（mm，1:1）、整體 bbox、各型別實體計數
+- 幾何：line 的 start/end、arc 的 center/radius/角度、circle 的 center/radius
+
+### 10.8 來源 / 版本 / 驗證屬性（版本時間軸 / 溯源 / 信任）
+- ★ 溯源：`generator`、`sourcePath`、`sourceHash`、`generatedAt`、檔案 `outputs`（path + kind: step/stl/glb…）、生成 `status`（running / finished）
+- ★ 驗證結果（呼應 Stage 5）：watertight、自交、零件干涉、運動掃掠干涉、網格品質——逐項 ✓/✗ 與原因
+
+### 10.9 ⚠ 目前 pipeline 缺少的屬性（設計時要決策）
+這些是工程圖常見、但系統**現在沒有穩定提供**的屬性。設計時請決定「這版不放 / 留欄位待補 / 標示 N/A」：
+- **質量 (mass)**：只有體積，需材質密度才能算。
+- **材質 (material)**：**只有標準件有**，自己生成的零件無。
+- **公差 / 配合 / GD&T**：非一等公民，目前不存在於屬性中。
+- **表面處理 / 粗糙度**：無。
+- **數量 (qty) / 件號 (item no.)**：BOM 需要，目前無彙總層。
+
+> 設計建議：屬性面板分「**幾何衍生（一定有，可信）**」與「**工程標註（可能缺，標 N/A 或留待補）**」兩組，避免讓使用者誤以為缺的欄位是 AI 漏算。
