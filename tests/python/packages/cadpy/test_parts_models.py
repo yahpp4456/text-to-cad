@@ -40,19 +40,24 @@ class RackPinionGateTests(unittest.TestCase):
         self.assertIn("margin", spec["selected_for"])
         self.assertGreater(spec["selected_for"]["margin"], 1.0)
 
-    def test_rod_is_pinned_to_rack_without_interpenetration(self):
-        # The rod drives the rack through a pin-mediated clevis: the clevis pin must
-        # overlap BOTH the rod end and the rack (small fastener contacts), while the
-        # rod and rack themselves must NOT interpenetrate (no glued-block overlap) --
-        # the rod sits in the socket's clearance bore.
+    def test_joints_are_pin_mediated_without_interpenetration(self):
+        # Both driven joints are pin-mediated, not glued blocks. The clevis pin must
+        # overlap the rod end AND the rack while the rod and rack themselves do NOT
+        # interpenetrate; the hub dowel must overlap the pinion (shaft) AND the
+        # platform (hub) while the gear and platform do NOT interpenetrate.
         from cadpy.geometry_checks import enumerate_interferences
 
         overlaps = {
             frozenset((p.a, p.b)) for p in enumerate_interferences(self.m.gen_step()).overlaps
         }
+        # rod -> clevis pin -> rack
         self.assertIn(frozenset(("piston_rod", "clevis_pin")), overlaps)
         self.assertIn(frozenset(("clevis_pin", "rack")), overlaps)
         self.assertNotIn(frozenset(("piston_rod", "rack")), overlaps)
+        # pinion -> hub dowel -> platform
+        self.assertIn(frozenset(("pinion", "hub_pin")), overlaps)
+        self.assertIn(frozenset(("hub_pin", "platform")), overlaps)
+        self.assertNotIn(frozenset(("pinion", "platform")), overlaps)
 
     def test_full_assembly_check_geometry_passes(self):
         self.m.check_geometry(self.m.gen_step())  # validity + interference + sweep

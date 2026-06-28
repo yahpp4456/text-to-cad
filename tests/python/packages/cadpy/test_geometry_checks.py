@@ -55,17 +55,19 @@ def _load_rack_pinion():
     return module.gen_step()
 
 
-# rack_pinion's intended VOLUME overlaps at the seated pose: rod-in-bore, the
-# clevis PIN through the rod end and through the rack's clevis socket (the real
-# pin-mediated rod->rack drive: rod->pin->rack), gear mesh, and hub-on-shaft. The
-# rod and rack do NOT interpenetrate -- the rod sits in a clearance socket bore, so
-# there is no piston_rod~rack overlap; only the small pin contacts are declared.
+# rack_pinion's intended VOLUME overlaps at the seated pose, all pin-mediated or
+# shaft-in-bore (no glued blocks): rod-in-barrel; the clevis pin through the rod end
+# and the rack's clevis socket (rod->pin->rack); the gear mesh; and the hub dowel
+# through the pinion shaft and the platform hub (pinion->pin->platform). The rod and
+# rack do NOT interpenetrate (rod in a clearance socket bore), and the gear and
+# platform do NOT interpenetrate (platform rides the shaft in a clearance bore).
 RACK_PINION_INTENDED = [
     ("cylinder_body", "piston_rod"),
     ("piston_rod", "clevis_pin"),
     ("clevis_pin", "rack"),
     ("rack", "pinion"),
-    ("pinion", "platform"),
+    ("pinion", "hub_pin"),
+    ("hub_pin", "platform"),
 ]
 
 

@@ -36,7 +36,8 @@ const rackPinionRotaryActuator = {
       clevis_pin: { ref: "#o1.5", label: "Clevis pin", description: "Pins the rod end into the rack's clevis socket; rises with them." },
       rack: { ref: "#o1.6", label: "Rack", description: "Vertical toothed bar (with clevis socket) driven by the cylinder." },
       pinion: { ref: "#o1.7", label: "Pinion", description: "Converts rack travel into rotation about +Y." },
-      platform: { ref: "#o1.8", label: "Platform", description: "Tilts 0-90 deg with the pinion." }
+      platform: { ref: "#o1.8", label: "Platform", description: "Mounted on the pinion shaft; tilts 0-90 deg." },
+      hub_pin: { ref: "#o1.9", label: "Hub dowel", description: "Pins the platform hub to the pinion shaft; rotates with them." }
     },
     parameters: {
       swing: {
@@ -74,10 +75,11 @@ const rackPinionRotaryActuator = {
     effects.transform("clevis_pin", lift);
     effects.transform("rack", lift);
 
-    // Pinion and platform share the same rotation about the pinion axis.
+    // Pinion, platform and the hub dowel share the same rotation about the axis.
     const rotate = { rotate: { axis: SWING_AXIS, origin: SWING_ORIGIN, angleDeg } };
     effects.transform("pinion", { transforms: [rotate] });
     effects.transform("platform", { transforms: [rotate] });
+    effects.transform("hub_pin", { transforms: [rotate] });
   }
 };
 

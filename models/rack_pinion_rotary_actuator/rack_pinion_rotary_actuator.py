@@ -151,10 +151,27 @@ RACK_TEETH_PITCH = 2.0 * math.pi * PINION_PITCH_R / PINION_TEETH
 SUPPORT_PLATE_THICK_Y = 8.0
 SUPPORT_Y_CENTER = -12.0
 
+# Platform mounts on the pinion OUTPUT SHAFT, outboard of the gear body and raised
+# above the shaft on a hub, so neither the table nor the hub touches the gear or the
+# shaft barrel; a dowel pin fixes the hub to the shaft (pin-mediated, like the rod
+# clevis). The gear (y in [-6, 6]) gets a clear margin.
 PLATFORM_LEN_X = 58.0
 PLATFORM_WID_Y = 40.0
 PLATFORM_THICK_Z = 6.0
-PLATFORM_Y_CENTER = 22.0
+PLATFORM_Y0 = 10.0                 # inboard edge, clear of the gear half-width (6)
+PLATFORM_Z0 = 86.0                 # table underside, above the shaft barrel (top ~81)
+HUB_X_HALF = 7.0
+HUB_Y0, HUB_Y1 = 10.0, 26.0        # hub rides the shaft, clear of the gear
+HUB_Z0 = 74.0                      # wraps below the shaft, up to the table underside
+HUB_BORE_R = SHAFT_R + 0.3         # clearance bore on the shaft (slip fit, no overlap)
+HUB_PIN_R = 1.5
+HUB_PIN_Y = (HUB_Y0 + HUB_Y1) / 2.0   # mid-hub, where the dowel crosses the shaft
+
+
+def _box(x0, x1, y0, y1, z0, z1):
+    return Pos((x0 + x1) / 2.0, (y0 + y1) / 2.0, (z0 + z1) / 2.0) * Box(
+        x1 - x0, y1 - y0, z1 - z0
+    )
 
 
 def make_base():
@@ -254,22 +271,23 @@ def make_support_bracket():
 
 
 def make_platform():
-    # Table extends +X from the pinion axis (the inner short edge sits over the
-    # pivot), top face up at the retracted pose.
-    table_center_x = PINION_X + PLATFORM_LEN_X / 2.0
-    table_center_z = PINION_Z + PLATFORM_THICK_Z / 2.0
-    table = Pos(table_center_x, PLATFORM_Y_CENTER, table_center_z) * Box(
-        PLATFORM_LEN_X, PLATFORM_WID_Y, PLATFORM_THICK_Z
+    # Table raised above the pivot on a hub clamped to the pinion output shaft,
+    # OUTBOARD of the gear. The hub's clearance bore rides the shaft (slip fit, no
+    # overlap) and a dowel (make_hub_pin) fixes them; the table sits above the shaft
+    # barrel. So the platform never interpenetrates the gear or the shaft -- only the
+    # dowel makes contact. Tilts up with the pinion.
+    table = _box(
+        PINION_X, PINION_X + PLATFORM_LEN_X,
+        PLATFORM_Y0, PLATFORM_Y0 + PLATFORM_WID_Y,
+        PLATFORM_Z0, PLATFORM_Z0 + PLATFORM_THICK_Z,
     )
-    # Hub clamping onto the shaft just inboard of the table.
-    hub = Pos(PINION_X, PLATFORM_Y_CENTER - PLATFORM_WID_Y / 2.0 + 8.0, PINION_Z + 1.0) * Box(
-        14.0, 18.0, 14.0
+    hub = _box(
+        PINION_X - HUB_X_HALF, PINION_X + HUB_X_HALF, HUB_Y0, HUB_Y1, HUB_Z0, PLATFORM_Z0
     )
-    hub_bore = Location((PINION_X, PLATFORM_Y_CENTER - PLATFORM_WID_Y / 2.0 + 8.0, PINION_Z)) * Rot(
-        -90.0, 0.0, 0.0
-    ) * Cylinder(SHAFT_R + 0.2, 20.0)
-    hub = hub - hub_bore
-    return table + hub
+    hub_bore = Location((PINION_X, HUB_PIN_Y, PINION_Z)) * Rot(-90.0, 0.0, 0.0) * Cylinder(
+        HUB_BORE_R, (HUB_Y1 - HUB_Y0) + 4.0
+    )
+    return table + (hub - hub_bore)
 
 
 def make_clevis_pin():
@@ -279,6 +297,15 @@ def make_clevis_pin():
     overlaps) -- the rod and rack themselves never interpenetrate."""
     return Pos(CYL_X, CYL_Y, CLEVIS_PIN_Z) * Rot(0.0, 90.0, 0.0) * Cylinder(
         CLEVIS_PIN_R, (SOCKET_X1 - SOCKET_X0) + 4.0
+    )
+
+
+def make_hub_pin():
+    """Vertical dowel through the platform hub and the pinion shaft, fixing them so
+    they rotate together. Its only contacts are pin~pinion (shaft) and pin~platform
+    (hub) -- small fastener overlaps; the gear and platform never interpenetrate."""
+    return Pos(PINION_X, HUB_PIN_Y, (HUB_Z0 + PLATFORM_Z0) / 2.0) * Cylinder(
+        HUB_PIN_R, (PLATFORM_Z0 - HUB_Z0) + 2.0
     )
 
 
@@ -306,6 +333,7 @@ def _base_parts():
         ("rack", make_rack()),
         ("pinion", make_pinion()),
         ("platform", make_platform()),
+        ("hub_pin", make_hub_pin()),
     ]
 
 
@@ -318,7 +346,8 @@ def _move(name, shape, swing):
         # rod is built fully extended; slide it down by the not-yet-extended amount
         # (net: rod, pin and rack move as one rigid group by `travel`)
         return shape.translate((0.0, 0.0, travel - STROKE_90))
-    if name in ("pinion", "platform"):
+    if name in ("pinion", "platform", "hub_pin"):
+        # pinion, platform and the dowel that fixes them rotate together
         return shape.rotate(SWING_AXIS, angle)
     return shape  # base, support_bracket, cylinder_body are static
 
@@ -339,7 +368,8 @@ INTENDED_CONTACT = [
     ("clevis_pin", "piston_rod"),
     ("clevis_pin", "rack"),
     ("rack", "pinion"),
-    ("pinion", "platform"),
+    ("hub_pin", "pinion"),
+    ("hub_pin", "platform"),
 ]
 
 # Pairs swept over the whole stroke. The rack/pinion mesh is the dogfood (the
@@ -355,6 +385,10 @@ _SWEEP_PAIRS = [
     ("clevis_pin", "piston_rod"),
     ("clevis_pin", "rack"),
     ("rack", "cylinder_body"),
+    ("pinion", "platform"),
+    ("hub_pin", "pinion"),
+    ("hub_pin", "platform"),
+    ("platform", "rack"),
 ]
 
 # The block-tooth mesh is a geometric approximation of an involute gear: its
