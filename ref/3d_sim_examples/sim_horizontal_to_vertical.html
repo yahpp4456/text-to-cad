@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2"/>
+<title>水平汽缸 → 連桿 → 垂直位移 — 3D 動作模擬</title>
+<style>
+  :root{ --frame:#9aa0a6; --crank:#1D9E75; --cyl:#D85A30; --rod:#cfd4da; --coupler:#E0A52E; --slider:#3f7fd1; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; height:100%; overflow:hidden;
+    font-family:"Microsoft JhengHei",Arial,sans-serif; background:#9fb0bd; color:#eef2f6; }
+  #app{ position:fixed; inset:0; }
+  canvas{ display:block; touch-action:none; }
+  .panel{ position:fixed; z-index:10; background:rgba(20,26,33,.62);
+    backdrop-filter:blur(9px); -webkit-backdrop-filter:blur(9px);
+    border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:14px 16px;
+    box-shadow:0 8px 30px rgba(0,0,0,.4); }
+  #ctrl{ top:14px; left:14px; width:300px; }
+  #ctrl h1{ font-size:15px; margin:0 0 4px; font-weight:700; letter-spacing:.3px; }
+  #ctrl .sub{ font-size:11px; color:#9fb0bf; margin-bottom:12px; line-height:1.5; }
+  .row{ display:flex; align-items:center; gap:10px; margin:10px 0; }
+  button{ font:inherit; color:#eef2f6; background:rgba(255,255,255,.08);
+    border:1px solid rgba(255,255,255,.18); border-radius:9px; padding:8px 12px;
+    cursor:pointer; transition:.15s; user-select:none; }
+  button:hover{ background:rgba(255,255,255,.16); }
+  button:active{ transform:translateY(1px); }
+  #play{ min-width:78px; font-weight:700; }
+  input[type=range]{ -webkit-appearance:none; appearance:none; flex:1; height:5px;
+    border-radius:4px; background:linear-gradient(90deg,var(--cyl),#f0d18a); outline:none; }
+  input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:18px; height:18px;
+    border-radius:50%; background:#fff; border:2px solid var(--cyl); cursor:pointer; }
+  input[type=range]::-moz-range-thumb{ width:18px; height:18px; border-radius:50%;
+    background:#fff; border:2px solid var(--cyl); cursor:pointer; }
+  .lab{ font-size:11px; color:#9fb0bf; width:34px; }
+  .read{ display:grid; grid-template-columns:1fr auto; gap:5px 10px; font-size:13px;
+    margin-top:10px; padding-top:12px; border-top:1px solid rgba(255,255,255,.1); }
+  .read .k{ color:#9fb0bf; } .read .v{ font-weight:700; font-variant-numeric:tabular-nums; }
+  .status{ display:flex; align-items:center; gap:9px; margin-top:12px; font-size:12.5px; }
+  #dot{ width:14px; height:14px; border-radius:50%; background:#3ddc84;
+    box-shadow:0 0 10px #3ddc84; transition:.2s; }
+  #legend{ bottom:14px; left:14px; font-size:12px; }
+  #legend .t{ font-weight:700; margin-bottom:8px; font-size:12px; color:#cdd6df; }
+  .lg{ display:flex; align-items:center; gap:8px; margin:5px 0; }
+  .sw{ width:15px; height:15px; border-radius:4px; border:1px solid rgba(255,255,255,.25); }
+  #hint{ top:14px; right:14px; font-size:11px; color:#9fb0bf; max-width:185px; line-height:1.6; }
+  @media (max-width:560px){ #ctrl{ width:calc(100% - 28px); } #hint{ display:none; } #legend{ font-size:11px; } }
+  /* ===== v3 §7 手機/直式 UI 硬規則（§10.9 可重用片段） ===== */
+  .panel{ max-height:calc(100vh - 28px); overflow:auto; }
+  .hd{ display:flex; align-items:center; justify-content:space-between; gap:10px;
+       cursor:pointer; user-select:none; }
+  .hd .chev{ font-size:11px; color:#9fb0bf; transition:transform .15s; }
+  .panel.collapsed .body{ display:none; }
+  .panel.collapsed .chev{ transform:rotate(-90deg); }
+  @media (max-width:560px){
+    #ctrl .sub{ display:none; }
+    button{ font-size:12px; padding:5px 9px; }
+    #ctrl{ max-height:48vh; } #legend{ max-height:38vh; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="ctrl" class="panel">
+  <div class="hd"><h1>水平汽缸 → 連桿 → 垂直位移</h1><span class="chev">▾</span></div>
+  <div class="sub">機構：滑塊曲柄＋鐘形曲柄（知識庫 §2-1 / §2-4）<br/>汽缸＝AirTAC MAL25（ATOM-CYL）｜導引＝HIWIN HGH15（ATOM-LMG）<br/>DOF = 1 ｜ 驅動變數＝曲柄角 θ</div>
+  <div class="row">
+    <button id="play">▶ 播放</button>
+    <button id="resetCam">重設視角</button>
+  </div>
+  <div class="row"><span class="lab">θ</span>
+    <input id="slider" type="range" min="0" max="35" step="0.1" value="0"/></div>
+  <div class="body">
+    <div class="read">
+    <span class="k">曲柄角 θ</span><span class="v"><span id="rTheta">0.0</span>°</span>
+    <span class="k">缸桿行程</span><span class="v"><span id="rStroke">0.00</span> mm</span>
+    <span class="k">垂直位移</span><span class="v"><span id="rLift">0.0</span> mm</span>
+    <span class="k">傳動角 μ</span><span class="v"><span id="rMu">59.8</span>°</span>
+  </div>
+  <div class="status"><span id="dot"></span><span id="sTxt">傳動角順暢 (μ ≥ 45°)</span></div>
+  </div>
+</div>
+
+<div id="legend" class="panel">
+  <div class="hd"><div class="t" style="margin-bottom:0">圖例</div><span class="chev">▾</span></div>
+  <div class="body">
+  <div class="lg"><span class="sw" style="background:var(--cyl)"></span>汽缸 MAL25 (ATOM-CYL，固定水平推)</div>
+  <div class="lg"><span class="sw" style="background:var(--coupler)"></span>連桿 coupler (雙圓套)</div>
+  <div class="lg"><span class="sw" style="background:var(--crank)"></span>鐘形曲柄 (繞固定樞軸)</div>
+  <div class="lg"><span class="sw" style="background:var(--slider)"></span>垂直滑塊 (輸出)</div>
+  <div class="lg"><span class="sw" style="background:#c8ced4"></span>叉耳 / 銷 / 扣環</div>
+  <div class="lg"><span class="sw" style="background:var(--frame)"></span>機架 / HGH15 滑軌 (ATOM-LMG) / 鉸鏈座</div>
+  </div>
+</div>
+
+<div id="hint" class="panel">
+  左鍵拖曳：旋轉<br/>右鍵拖曳：平移<br/>滾輪：縮放<br/>拖滑桿即定格該角度
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =====================================================================
+   1) 純運動學 (與 Node 驗證同一組 pin；單位 = mm)
+      水平汽缸 -> coupler -> 鐘形曲柄(繞固定 B) -> 輸出臂 tip -> 垂直滑塊
+   ===================================================================== */
+const B={x:40,y:70}, HCYL=30, R=46, L=40, XBAR=95;
+const ZB=14, ZM=40, ZC=ZM;          // ZB=汽缸後平面(z1..27), ZM=動鏈前平面(z29.5起); 完全 Z 分層避免干涉(§6.1)
+const ALPHA0=-120*Math.PI/180, BETA0=ALPHA0+Math.PI/2;
+const THETA_MAX=35*Math.PI/180;
+const Ap=t=>({x:B.x+R*Math.cos(ALPHA0+t), y:B.y+R*Math.sin(ALPHA0+t)});      // 輸入臂端銷 A
+const Cp=t=>{const a=Ap(t),dy=a.y-HCYL; return {x:a.x-Math.sqrt(Math.max(0,L*L-dy*dy)),y:HCYL};}; // 桿端銷 C(水平缸軸)
+const Tip=t=>({x:B.x+R*Math.cos(BETA0+t), y:B.y+R*Math.sin(BETA0+t)});       // 輸出臂端 tip(進垂直滑塊槽)
+const rodLen=t=>Cp(t).x-XBAR;  const ROD0=rodLen(0);
+const muDeg=t=>{const a=Ap(t),c=Cp(t);                                       // 傳動角@A: coupler vs 輸入臂
+  const ax=B.x-a.x,ay=B.y-a.y,bx=c.x-a.x,by=c.y-a.y;
+  let cs=(ax*bx+ay*by)/(Math.hypot(ax,ay)*Math.hypot(bx,by));
+  cs=Math.max(-1,Math.min(1,cs)); let d=Math.acos(cs)*180/Math.PI; return d>90?180-d:d;};
+const LIFT0=Tip(0).y;
+const SLOT_X=Tip(0).x;          // 垂直滑塊本體 x(導軌中心); tip 在水平槽內左右滑
+
+/* =====================================================================
+   2) 場景 / 相機 / 燈光 / 地面
+   ===================================================================== */
+const app=document.getElementById('app');
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x9fb0bd);   // §5.6
+const camera=new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 1, 4000);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.outputEncoding=THREE.sRGBEncoding;
+renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.12;
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xffffff,0x9aa4ad,1.1));   // §5.6
+const sun=new THREE.DirectionalLight(0xffffff,1.0); sun.position.set(120,210,170);
+sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
+const sc=sun.shadow.camera; sc.left=-120; sc.right=200; sc.top=200; sc.bottom=-60; sc.near=1; sc.far=760;
+sun.shadow.bias=-0.0004; scene.add(sun);
+const fill=new THREE.DirectionalLight(0xffffff,0.28); fill.position.set(-110,90,-120); scene.add(fill);
+
+const grid=new THREE.GridHelper(620,62,0x7c8893,0x6e7a85); grid.position.set(55,0.02,25); scene.add(grid);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(960,960),
+  new THREE.MeshStandardMaterial({color:0x8b97a1,roughness:1,metalness:0}));
+ground.rotation.x=-Math.PI/2; ground.position.set(55,0,25); ground.receiveShadow=true; scene.add(ground);
+
+/* =====================================================================
+   3) 材質 ＋ 建模工具 (§5.6)
+   ===================================================================== */
+const matFrame  =new THREE.MeshStandardMaterial({color:0x9aa0a6,metalness:.55,roughness:.6});
+const matCrank  =new THREE.MeshStandardMaterial({color:0x1D9E75,metalness:.45,roughness:.45});
+const matCrankHi=new THREE.MeshStandardMaterial({color:0x2bbf8f,metalness:.5,roughness:.4});
+const matCyl    =new THREE.MeshStandardMaterial({color:0xD85A30,metalness:.6,roughness:.38});
+const matCylDk  =new THREE.MeshStandardMaterial({color:0xae4724,metalness:.6,roughness:.4});
+const matRod    =new THREE.MeshStandardMaterial({color:0xdfe3e8,metalness:.95,roughness:.16});
+const matCoupler=new THREE.MeshStandardMaterial({color:0xE0A52E,metalness:.55,roughness:.4});
+const matSlider =new THREE.MeshStandardMaterial({color:0x3f7fd1,metalness:.5,roughness:.45});
+const matSliderHi=new THREE.MeshStandardMaterial({color:0x5b97e0,metalness:.5,roughness:.4});
+const matClevis =new THREE.MeshStandardMaterial({color:0xb9c0c7,metalness:.82,roughness:.3});
+const matPin    =new THREE.MeshStandardMaterial({color:0x515963,metalness:.92,roughness:.26});
+const matClip   =new THREE.MeshStandardMaterial({color:0xd7dde2,metalness:.95,roughness:.2});
+const matHole   =new THREE.MeshStandardMaterial({color:0x12161b,metalness:.3,roughness:.9});
+const matPort   =new THREE.MeshStandardMaterial({color:0x8a6a2a,metalness:.6,roughness:.4});
+
+function box(w,h,d,mat){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
+  m.castShadow=true; m.receiveShadow=true; return m;}
+function cylX(r,len,mat,seg){const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,seg||28),mat);
+  m.rotation.z=-Math.PI/2; m.castShadow=true; m.receiveShadow=true; return m;}      // 軸沿 X
+function cylZ(r,len,mat,seg){const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,seg||24),mat);
+  m.rotation.x=Math.PI/2; m.castShadow=true; m.receiveShadow=true; return m;}        // 軸沿 Z
+function cylY(r,len,mat,seg){const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,seg||20),mat);
+  m.castShadow=true; return m;}                                                      // 軸沿 Y
+function roundedRectShape(w,h,r,cx,cy){
+  const x=cx-w/2, y=cy-h/2; const s=new THREE.Shape();
+  s.moveTo(x+r,y);
+  s.lineTo(x+w-r,y); s.absarc(x+w-r,y+r,r,-Math.PI/2,0,false);
+  s.lineTo(x+w,y+h-r); s.absarc(x+w-r,y+h-r,r,0,Math.PI/2,false);
+  s.lineTo(x+r,y+h);   s.absarc(x+r,y+h-r,r,Math.PI/2,Math.PI,false);
+  s.lineTo(x,y+r);     s.absarc(x+r,y+r,r,Math.PI,Math.PI*1.5,false);
+  return s;
+}
+// 緊貼銷的圓頭夾片一對(沿Z在±zc)；不外伸叉,背板由母件負責(§5.1 防灰團)
+function clevisTabs(mat,r,t,zc){
+  r=r||7; t=t||5; zc=zc||8; const g=new THREE.Group();
+  for(const z of [zc,-zc]){
+    const tab=cylZ(r,t,mat,26); tab.position.set(0,0,z); g.add(tab);
+    const csk=cylZ(3.2,t+0.4,matHole,18); csk.position.set(0,0,z); g.add(csk);
+  }
+  return g;
+}
+// clevis 銷：銷桿 + 扁銷頭(+Z,倒角) + 扣環(−Z)；兩端露出
+function makePin(rsh,span,matS,matC){
+  const g=new THREE.Group(), sl=span+8;
+  g.add(cylZ(rsh,sl,matS,22));
+  const head=cylZ(rsh*1.5,3.0,matS,24); head.position.z=sl/2-0.4; g.add(head);
+  const ch=new THREE.Mesh(new THREE.CylinderGeometry(rsh,rsh*1.5,1.5,24),matS);
+  ch.rotation.x=Math.PI/2; ch.position.z=sl/2-1.9; g.add(ch);
+  const clip=new THREE.Mesh(new THREE.TorusGeometry(rsh*1.15,0.9,8,22),matC);
+  clip.position.z=-(sl/2-2.4); clip.castShadow=true; g.add(clip);
+  return g;
+}
+
+/* =====================================================================
+   4) 機架 (固定) — 底板(沉孔) / 缸後支座 / 缸夾 / 曲柄樞軸雙耳 / 垂直導軌柱
+   ===================================================================== */
+const frame=new THREE.Group(); scene.add(frame);
+const base=box(170,8,62,matFrame); base.position.set(55,4,ZM-5); frame.add(base);
+[[ -18,ZM-22],[-18,ZM+18],[120,ZM-22],[120,ZM+18]].forEach(([x,z])=>{ const h=cylY(2.4,9,matHole);
+  h.position.set(x,5,z); frame.add(h); });
+// 汽缸後支座 + 缸夾(在右側,缸朝 -X 推) — 位於後平面 ZB
+const rearPost=box(14,40,28,matFrame); rearPost.position.set(96,24,ZB); frame.add(rearPost);
+const clampPed=box(16,34,28,matFrame); clampPed.position.set(70,21,ZB); frame.add(clampPed);
+const clampRing=cylX(15.5,9,matFrame,30); clampRing.position.set(70,HCYL,ZB); frame.add(clampRing);
+// 鐘形曲柄樞軸 B = YOKE 雙耳(z=ZM±9),中間 z34.5..45.5 讓綠臂通過; 各耳由立柱撐到底板
+const earZ=[ZM-9, ZM+9];
+earZ.forEach(z=>{
+  const col=box(14,B.y-8,6,matFrame); col.position.set(B.x,(B.y-8)/2,z); frame.add(col); // 立柱
+  const lug=box(14,18,6,matFrame); lug.position.set(B.x,B.y-2,z); frame.add(lug);          // 耳上端
+  const cap=cylZ(8,6,matFrame,20);  cap.position.set(B.x,B.y,z);   frame.add(cap);          // 銷座
+});
+const pinB=makePin(4,ZM*2-2*ZB+30,matPin,matClip); pinB.position.set(B.x,B.y,ZM); frame.add(pinB); // 銷貫穿雙耳
+// 垂直導引 — HIWIN HGH15 線性滑軌（原子件 ATOM-LMG）＋滑塊；裝在輸出滑塊 +X 側（同 ZM 平面）
+// 卡值 HGH15CA：滑塊 H28×W34×L61.4、軌 WR15×HR15、滑塊頂孔 26×26 4-M4
+const guideX=SLOT_X;
+const RAIL_X=guideX+30;                          // 滑軌中心（+X 側）
+const lmRail=box(15,96,15,matFrame); lmRail.position.set(RAIL_X, 58, ZM); frame.add(lmRail);   // HGH15 軌 WR15×HR15(沿Y)
+const lmCol =box(12,100,30,matFrame); lmCol.position.set(RAIL_X+15, 55, ZM); frame.add(lmCol); // 立柱撐軌
+for(let y=24;y<98;y+=20){ const rb=cylX(2.4,16,matPin,14); rb.position.set(RAIL_X+6,y,ZM); frame.add(rb); } // 軌孔栓示意
+
+/* =====================================================================
+   5) 汽缸 (固定，水平，朝 -X 推) — 缸體 + 端蓋 + 4拉桿 + 桿封 + 望遠鏡桿
+      缸體中心在 x≈70, 桿向 -X 伸出至 C
+   ===================================================================== */
+const CYLC=70;                                   // 缸體中心 x
+const CYL_D=25, CYL_OD=1.18*CYL_D;               // AirTAC MAL25（ATOM-CYL）；d=10、F推@0.5MPa≈245N；桿行程~27mm→取行程30
+const barrel =cylX(CYL_OD/2,44,matCyl,36);     barrel.position.set(CYLC,HCYL,ZB); scene.add(barrel);
+const rearCap=cylX(CYL_OD*0.56,9,matCylDk,36); rearCap.position.set(CYLC+24,HCYL,ZB); scene.add(rearCap);
+const headCap=cylX(CYL_OD*0.56,9,matCylDk,36); headCap.position.set(CYLC-22,HCYL,ZB); scene.add(headCap);
+const gland  =cylX(7,5,matCylDk,24);           gland.position.set(CYLC-27,HCYL,ZB);   scene.add(gland);
+// 兩端頂部氣口（MAL 圓體進排氣）
+[CYLC+18,CYLC-16].forEach(x=>{ const port=cylY(2.2,7,matPort,16);
+  port.position.set(x,HCYL+CYL_OD*0.5+1.5,ZB); scene.add(port); });
+const rod=cylX(5,1,matRod,24); rod.position.set(0,HCYL,ZB); scene.add(rod);  // 活塞桿 d=10（卡值，半徑5不變）；沿 -X 伸出
+
+/* =====================================================================
+   6) 連桿 coupler (雙圓套 + 細桿身) + 桿端 clevis + 銷C
+   ===================================================================== */
+const coupler=new THREE.Group(); scene.add(coupler);
+const eyeC=cylZ(6,9,matCoupler,26); eyeC.position.set(-L/2,0,0); coupler.add(eyeC);
+const eyeA=cylZ(6,9,matCoupler,26); eyeA.position.set( L/2,0,0); coupler.add(eyeA);
+coupler.add(box(L-9,7,7,matCoupler));
+const shankT=box(L-9,2.2,9,matCoupler); shankT.position.set(0, 4.0,0); coupler.add(shankT);
+const shankB=box(L-9,2.2,9,matCoupler); shankB.position.set(0,-4.0,0); coupler.add(shankB);
+// 桿端 clevis：橋接件,從後平面 ZB(接缸桿)斜跨到前平面 ZM(夾住 coupler eyeC);整組逐格定位於 C
+const ZSTEP=ZM-ZB;                                   // 後→前平面落差
+const rodFork=new THREE.Group(); scene.add(rodFork);
+const rfNeck=cylX(6,8,matRod,20);    rfNeck.position.set(13,0,ZB-ZM); rodFork.add(rfNeck); // 接缸桿螺肩(後平面,group原點在ZM故 z偏 -ZSTEP)
+const rfBridge=box(10,15,ZSTEP+8,matClevis); rfBridge.position.set(8,0,-ZSTEP/2); rodFork.add(rfBridge); // Z橋接本體
+const rfBody=box(9,17,18,matClevis); rfBody.position.set(8,0,0); rodFork.add(rfBody);       // 前平面叉耳本體(背板)
+rodFork.add(clevisTabs(matClevis));                  // 夾片在前平面 ZM 夾 coupler
+const pinCG=makePin(3,24,matPin,matClip); scene.add(pinCG);
+
+/* =====================================================================
+   7) 鐘形曲柄樞軸階層 (繞固定 B；輸入臂+輸出臂一起轉) §4.3
+   ===================================================================== */
+const crankPivot=new THREE.Group(); crankPivot.position.set(B.x,B.y,ZC); scene.add(crankPivot);
+// 中央輪轂
+crankPivot.add(cylZ(11,16,matCrank,28));
+crankPivot.add(cylZ(4.2,18,matHole,18));   // 軸孔暗面
+// 輸入臂(指向 ALPHA0) — 圓角厚臂 + 端部圓套
+function armSlab(len,baseAngle,mat){
+  const g=new THREE.Group();
+  const slabGeo=new THREE.ExtrudeGeometry(roundedRectShape(len,15,7,len/2,0),
+    {depth:11,bevelEnabled:true,bevelThickness:0.8,bevelSize:1.0,bevelSegments:2,steps:1});
+  const slab=new THREE.Mesh(slabGeo,mat); slab.position.z=-5.5;
+  slab.castShadow=true; slab.receiveShadow=true; g.add(slab);
+  const eye=cylZ(7.5,13,mat,26); eye.position.set(len,0,0); g.add(eye);
+  const bore=cylZ(3.4,15,matHole,18); bore.position.set(len,0,0); g.add(bore);
+  g.rotation.z=baseAngle; return g;
+}
+crankPivot.add(armSlab(R,ALPHA0,matCrank));   // 輸入臂(接 coupler 的 A)
+crankPivot.add(armSlab(R,BETA0,matCrankHi));  // 輸出臂(接垂直滑塊的 tip)
+// A 端夾片+銷(夾 coupler eyeA) — 掛在 pivot 下,隨曲柄轉
+const aTabs=clevisTabs(matClevis); aTabs.position.set(R*Math.cos(ALPHA0),R*Math.sin(ALPHA0),0); aTabs.rotation.z=ALPHA0; crankPivot.add(aTabs);
+const pinAG=makePin(3,24,matPin,matClip); pinAG.position.set(R*Math.cos(ALPHA0),R*Math.sin(ALPHA0),0); crankPivot.add(pinAG);
+// tip 端滾子銷(進垂直滑塊水平槽) — 掛在 pivot 下
+const tipRoller=cylZ(5.5,30,matPin,24); tipRoller.position.set(R*Math.cos(BETA0),R*Math.sin(BETA0),0); crankPivot.add(tipRoller);
+
+/* =====================================================================
+   8) 垂直滑塊 (輸出) — 圓角面板 + 水平槽(暗件) + 導軌套 + 安裝孔
+      只沿 Y 動;水平槽吸收 tip 的 X 漂移 (蘇格蘭軛式純垂直輸出)
+   ===================================================================== */
+const slider=new THREE.Group(); scene.add(slider);
+const sbGeo=new THREE.ExtrudeGeometry(roundedRectShape(34,40,6,0,0),
+  {depth:12,bevelEnabled:true,bevelThickness:0.9,bevelSize:1.1,bevelSegments:2,steps:1});
+const sbody=new THREE.Mesh(sbGeo,matSlider); sbody.position.z=-6; sbody.castShadow=true; sbody.receiveShadow=true; slider.add(sbody);
+// 水平槽(暗件,讓 tip 滾子可左右滑)
+const slot=box(40,13,16,matHole); slot.position.set(0,0,0); slider.add(slot);
+// 滑塊右緣(+X)安裝凸耳，鎖到 HGH15 滑塊
+const mntEar=box(10,30,30,matSliderHi); mntEar.position.set(17,0,0); slider.add(mntEar);
+// 頂面安裝平台 + 沉頭孔 + 定位凸台(輸出介面,裝負載)
+const topPlate=box(40,7,40,matSlider); topPlate.position.set(0,26,0); slider.add(topPlate);
+const reg=cylY(7,5,matSliderHi); reg.position.set(0,32,0); slider.add(reg);
+const regBore=cylY(3.4,7,matHole); regBore.position.set(0,32,0); slider.add(regBore);
+[[12,12],[12,-12],[-12,12],[-12,-12]].forEach(([x,z])=>{
+  const cb=cylY(3.2,3,matHole); cb.position.set(x,28,z); slider.add(cb);
+  const th=cylY(1.8,10,matHole); th.position.set(x,24,z); slider.add(th); });
+
+/* HGH15 滑塊（carriage，原子件 ATOM-LMG，隨輸出滑塊同步上下） */
+const lmBlock=new THREE.Group(); scene.add(lmBlock);
+const blkBody=box(28,61.4,34,matClevis); lmBlock.add(blkBody);                 // H28×L61.4×W34（卡值）
+const blkChf =box(22,58,28,matClevis);  blkChf.position.x=-3; lmBlock.add(blkChf); // 倒角感
+[[13,13],[13,-13],[-13,13],[-13,-13]].forEach(([y,z])=>{                       // 頂面(−X) 4-M4 孔 26×26
+  const h=cylX(1.8,8,matHole,14); h.position.set(-14,y,z); lmBlock.add(h); });
+
+/* =====================================================================
+   9) 輸出頂面 lift-path (運動範圍指示, 虛線)
+   ===================================================================== */
+const liftPts=[];
+for(let i=0;i<=40;i++){const t=THETA_MAX*i/40; liftPts.push(new THREE.Vector3(guideX,Tip(t).y+29,ZC));}
+const liftLine=new THREE.Line(new THREE.BufferGeometry().setFromPoints(liftPts),
+  new THREE.LineDashedMaterial({color:0x8fa6b6,dashSize:3,gapSize:2.4}));
+liftLine.computeLineDistances(); scene.add(liftLine);
+
+/* =====================================================================
+   10) update(θ) — 唯一驅動：閉式代入
+   ===================================================================== */
+const I=id=>document.getElementById(id);
+function update(theta){
+  crankPivot.rotation.z=theta;                         // 曲柄正轉(CCW),輸出臂上抬
+  const a=Ap(theta), c=Cp(theta), tp=Tip(theta), rl=rodLen(theta);
+  // 望遠鏡桿(固定水平,朝 -X) — 桿從 XBAR 向 C 伸 ; rl<0 表 -X 方向長度
+  const visLen=Math.abs(rl);
+  rod.scale.y=visLen; rod.position.set((c.x + (CYLC-26))/2, HCYL, ZB); // 桿在後平面(缸軸)
+  rodFork.position.set(c.x,HCYL,ZM);                   // 桿端 clevis 原點在前平面(橋接件回接後平面桿)
+  coupler.position.set((c.x+a.x)/2,(c.y+a.y)/2,ZM);    // 連桿:中點+轉向 -> 兩套落在 C/A (前平面)
+  coupler.rotation.z=Math.atan2(a.y-c.y,a.x-c.x);
+  pinCG.position.set(c.x,c.y,ZM);
+  slider.position.set(guideX, tp.y, ZM);               // 垂直滑塊只沿 Y;槽吸收 tip.x 漂移
+  lmBlock.position.set(RAIL_X-4, tp.y, ZM);            // HGH15 滑塊隨輸出同步上下
+  const mu=muDeg(theta);
+  I('rTheta').textContent=(theta*180/Math.PI).toFixed(1);
+  I('rStroke').textContent=(rl-ROD0).toFixed(2);
+  I('rLift').textContent=(tp.y-LIFT0).toFixed(1);
+  I('rMu').textContent=mu.toFixed(1);
+  const dot=I('dot'),txt=I('sTxt'); let col,msg;
+  if(mu<30){col='#e5484d';msg='接近卡死 (μ < 30°)';}
+  else if(mu<45){col='#f5a524';msg='傳動角偏低 (30–45°)';}
+  else{col='#3ddc84';msg='傳動角順暢 (μ ≥ 45°)';}
+  dot.style.background=col; dot.style.boxShadow='0 0 10px '+col; txt.textContent=msg;
+}
+
+/* =====================================================================
+   11) 自寫 minimal orbit
+   ===================================================================== */
+const target=new THREE.Vector3(55,52,25);
+const NARROW=innerWidth<620||innerWidth<innerHeight;
+const HOME={r:NARROW?345:255,az:-0.7,pol:1.1}; const sph={...HOME};
+function applyCam(){const s=Math.sin(sph.pol);
+  camera.position.set(target.x+sph.r*s*Math.sin(sph.az),
+    target.y+sph.r*Math.cos(sph.pol), target.z+sph.r*s*Math.cos(sph.az));
+  camera.lookAt(target);}
+applyCam();
+const dom=renderer.domElement; let drag=0,lx=0,ly=0;
+dom.addEventListener('pointerdown',e=>{if(e.button===1)e.preventDefault(); drag=e.button===2?2:1; lx=e.clientX; ly=e.clientY;
+  dom.setPointerCapture(e.pointerId);});
+dom.addEventListener('pointermove',e=>{ if(!drag)return;
+  const dx=e.clientX-lx,dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
+  if(drag===2){ const s=Math.sin(sph.pol);
+    const fwd=new THREE.Vector3(s*Math.sin(sph.az),Math.cos(sph.pol),s*Math.cos(sph.az));
+    const right=new THREE.Vector3().crossVectors(fwd,new THREE.Vector3(0,1,0)).normalize();
+    const up=new THREE.Vector3().crossVectors(right,fwd).normalize();
+    const k=sph.r*0.0016; target.addScaledVector(right,dx*k); target.addScaledVector(up,dy*k);
+  } else { sph.az-=dx*0.008; sph.pol=Math.max(0.12,Math.min(Math.PI-0.12,sph.pol-dy*0.008)); }
+  applyCam();
+});
+addEventListener('pointerup',()=>drag=0);
+dom.addEventListener('wheel',e=>{e.preventDefault();
+  sph.r=Math.max(80,Math.min(680,sph.r*(1+Math.sign(e.deltaY)*0.08))); applyCam();
+},{passive:false});
+dom.addEventListener('contextmenu',e=>e.preventDefault());
+
+/* =====================================================================
+   12) UI ＋ ping-pong 迴圈
+   ===================================================================== */
+let theta=0,dir=1,playing=false,speed=0.55,last=performance.now();
+const slider_el=I('slider'),playBtn=I('play');
+function setPlay(p){playing=p; playBtn.textContent=p?'⏸ 暫停':'▶ 播放';}
+playBtn.addEventListener('click',()=>setPlay(!playing));
+I('resetCam').addEventListener('click',()=>{Object.assign(sph,HOME); target.set(55,52,25); applyCam();});
+slider_el.addEventListener('input',()=>{setPlay(false);
+  theta=parseFloat(slider_el.value)*Math.PI/180; update(theta);});
+function loop(now){const dt=(now-last)/1000; last=now;
+  if(playing){ theta+=dir*speed*dt;
+    if(theta>=THETA_MAX){theta=THETA_MAX;dir=-1;} else if(theta<=0){theta=0;dir=1;}
+    slider_el.value=(theta*180/Math.PI).toFixed(1); update(theta); }
+  renderer.render(scene,camera); requestAnimationFrame(loop);
+}
+/* ===== v3 §7/§10.9 手機 UI：可收合面板＋窄螢幕預設收起 ===== */
+function wireCollapse(id){const p=document.getElementById(id);
+  p.querySelector('.hd').addEventListener('click',()=>p.classList.toggle('collapsed'));}
+['ctrl','legend'].forEach(wireCollapse);
+if(innerWidth<560){['ctrl','legend'].forEach(id=>document.getElementById(id).classList.add('collapsed'));}
+/* ===== sRGB + ACES 渲染管線：材質色一次轉 linear，與圖例 hex 對齊（不動幾何） ===== */
+{const ms=new Set(); scene.traverse(o=>{if(o.isMesh){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>ms.add(m));}});
+ ms.forEach(m=>{if(m.color)m.color.convertSRGBToLinear();});
+ if(scene.background&&scene.background.isColor)scene.background.convertSRGBToLinear();}
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight);});
+update(0); requestAnimationFrame(loop);
+</script>
+</body>
+</html>

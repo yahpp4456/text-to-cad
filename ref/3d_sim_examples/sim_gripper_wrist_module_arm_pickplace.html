@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2"/>
+<title>手臂端夾爪轉向模組 — 夾取・90° 翻轉・任意孔位插入 ｜ 3D 動作模擬</title>
+<style>
+  :root{ --frame:#9aa0a6; --out:#1D9E75; --act:#D85A30; --grip:#b9c0c7; --fin:#3a4350; --rod:#dfe3e8; --robot:#7d858d; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; height:100%; overflow:hidden;
+    font-family:"Microsoft JhengHei",Arial,sans-serif; background:#9fb0bd; color:#eef2f6; }
+  #app{ position:fixed; inset:0; } canvas{ display:block; touch-action:none; }
+  .panel{ position:fixed; z-index:10; background:rgba(20,26,33,.62);
+    backdrop-filter:blur(9px); -webkit-backdrop-filter:blur(9px);
+    border:1px solid rgba(255,255,255,.12); border-radius:14px; padding:14px 16px;
+    box-shadow:0 8px 30px rgba(0,0,0,.4); max-height:calc(100vh - 28px); overflow:auto; }
+  #ctrl{ top:14px; left:14px; width:318px; }
+  #ctrl h1{ font-size:14.5px; margin:0 0 4px; font-weight:700; letter-spacing:.3px; }
+  #ctrl .sub{ font-size:11px; color:#9fb0bf; margin-bottom:10px; line-height:1.5; }
+  .row{ display:flex; align-items:center; gap:10px; margin:9px 0; }
+  button{ font:inherit; color:#eef2f6; background:rgba(255,255,255,.08);
+    border:1px solid rgba(255,255,255,.18); border-radius:9px; padding:8px 12px;
+    cursor:pointer; transition:.15s; user-select:none; }
+  button:hover{ background:rgba(255,255,255,.16); } button:active{ transform:translateY(1px); }
+  #play{ min-width:96px; font-weight:700; }
+  input[type=range]{ -webkit-appearance:none; appearance:none; flex:1; height:5px; border-radius:4px; outline:none; }
+  #sTheta{ background:linear-gradient(90deg,var(--act),#f0b48a); }
+  #sGrip { background:linear-gradient(90deg,#5a6b80,#b9c0c7); }
+  input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:18px; height:18px;
+    border-radius:50%; background:#fff; cursor:pointer; }
+  #sTheta::-webkit-slider-thumb{ border:2px solid var(--act); }
+  #sGrip::-webkit-slider-thumb{ border:2px solid var(--grip); }
+  input[type=range]::-moz-range-thumb{ width:18px; height:18px; border-radius:50%; background:#fff; cursor:pointer; }
+  .lab{ font-size:11px; color:#9fb0bf; width:58px; } .lab b{ color:#dfe6ec; }
+  .read{ display:grid; grid-template-columns:1fr auto; gap:5px 10px; font-size:13px;
+    margin-top:10px; padding-top:12px; border-top:1px solid rgba(255,255,255,.1); }
+  .read .k{ color:#9fb0bf; } .read .v{ font-weight:700; font-variant-numeric:tabular-nums; }
+  .status{ display:flex; align-items:center; gap:9px; margin-top:12px; font-size:12.5px; }
+  #dot{ width:14px; height:14px; border-radius:50%; background:#3ddc84; box-shadow:0 0 10px #3ddc84; transition:.2s; }
+  #legend{ bottom:14px; left:14px; font-size:12px; }
+  #legend .t{ font-weight:700; font-size:12px; color:#cdd6df; }
+  .lg{ display:flex; align-items:center; gap:8px; margin:5px 0; }
+  .sw{ width:15px; height:15px; border-radius:4px; border:1px solid rgba(255,255,255,.25); }
+  #hint{ top:14px; right:14px; font-size:11px; color:#9fb0bf; max-width:200px; line-height:1.6; }
+  .hd{ display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer; user-select:none; }
+  .hd .chev{ font-size:11px; color:#9fb0bf; transition:transform .15s; }
+  .panel.collapsed .body{ display:none; } .panel.collapsed .chev{ transform:rotate(-90deg); }
+  @media (max-width:560px){
+    #ctrl{ width:calc(100% - 28px); max-height:48vh; } #hint{ display:none; }
+    #legend{ font-size:11px; max-height:38vh; } #ctrl .sub{ display:none; }
+    button{ font-size:12px; padding:5px 9px; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="ctrl" class="panel">
+  <div class="hd"><h1>手臂端夾爪轉向模組 — 夾取 → 90° 翻轉 → 插孔</h1><span class="chev">▾</span></div>
+  <div class="sub">設計範圍 = 法蘭以下模組，DOF = 2（總綱 C4.0 零耦合序列疊接）<br/>
+    驅動1 θ：腕部迴轉缸直驅托架（直驅，無傳動角問題）<br/>
+    驅動2 g：平行氣爪指距（托架局部座標，與 θ 零耦合）<br/>
+    機器手臂＝載具示意（僅模擬移動，孔位可任意，插入由手臂鉛直下降完成）<br/><span style="color:#f0b48a">腕部迴轉缸·平行氣爪·齒輪齒條：無原子件卡，自設計幾何</span></div>
+  <div class="row">
+    <button id="play">▶ 自動流程</button>
+    <button id="resetCam">重設視角</button>
+  </div>
+  <div class="row"><span class="lab"><b>θ</b> 翻轉角</span>
+    <input id="sTheta" type="range" min="0" max="90" step="0.2" value="0"/></div>
+  <div class="row"><span class="lab"><b>g</b> 半指距</span>
+    <input id="sGrip" type="range" min="4.05" max="6.5" step="0.02" value="6.5"/></div>
+  <div class="body">
+    <div class="read">
+      <span class="k">流程階段</span><span class="v" id="rPhase">待機</span>
+      <span class="k">翻轉角 θ</span><span class="v"><span id="rTheta">0.0</span>°</span>
+      <span class="k">指片間距 2g</span><span class="v"><span id="rGrip">13.0</span> mm</span>
+      <span class="k">腕軸 W（手臂定位）</span><span class="v" id="rW">(70, 150)</span>
+      <span class="k">直棒狀態</span><span class="v" id="rRod">V 座上</span>
+      <span class="k">插入徑向餘隙</span><span class="v" id="rClr">—</span>
+    </div>
+    <div class="status"><span id="dot"></span><span id="sTxt">兩級皆線性／直驅 — 無傳動角風險</span></div>
+  </div>
+</div>
+
+<div id="legend" class="panel">
+  <div class="hd"><div class="t">圖例</div><span class="chev">▾</span></div>
+  <div class="body">
+    <div class="lg"><span class="sw" style="background:var(--robot)"></span>機器手臂末節＋法蘭（示意，僅模擬移動）</div>
+    <div class="lg"><span class="sw" style="background:var(--act)"></span>腕部迴轉缸（齒輪齒條式，驅動 θ）·無卡自設計</div>
+    <div class="lg"><span class="sw" style="background:var(--out)"></span>迴轉托架（轉向機構輸出件）</div>
+    <div class="lg"><span class="sw" style="background:var(--grip)"></span>平行氣爪本體（驅動 g）·無卡自設計</div>
+    <div class="lg"><span class="sw" style="background:var(--fin)"></span>夾爪指片（沿 Z 開合）</div>
+    <div class="lg"><span class="sw" style="background:var(--rod)"></span>直棒 Ø8（工件）</div>
+    <div class="lg"><span class="sw" style="background:var(--frame)"></span>桌面／V 座／孔座（孔位可任意佈置）</div>
+  </div>
+</div>
+
+<div id="hint" class="panel">
+  左鍵拖曳：旋轉<br/>右鍵拖曳：平移<br/>滾輪：縮放<br/>
+  滑桿可獨立操作 θ／g（拖動即暫停）；綠虛線弧＝翻轉時棒端包絡（隨手臂移動）
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =====================================================================
+   手臂端「腕部 90° 轉向＋平行夾爪」模組 3D 動作模擬
+   設計範圍（C4.0 拆解）：本體 DOF=2 零耦合序列疊接
+     驅動1 θ : 迴轉缸直驅腕部托架 0→90°(CCW, rotation.z=+θ)，棒 水平→鉛直
+     驅動2 g : 平行氣爪半指距 6.5→4.05（托架局部座標，與 θ 零耦合）
+   機器手臂＝規定軌跡載具（僅模擬移動）；插入＝手臂鉛直下降 → 孔位可任意
+   幾何與 verify_wrist_module.js 共用同一組座標（C2/C3）；閘門已全過
+   Z 分層（C8）：氣爪/棒 z23–47 ／ 托架 z47–55 ／ 迴轉缸/吊裝 z56–79
+   ===================================================================== */
+'use strict';
+const D2R=Math.PI/180;
+// ---- 模組幾何（mount 局部，原點=腕軸 W；= 驗證腳本） ----
+const G_L={x:0,y:-66};
+const ROD_R=4, ROD_LEN=60, ROD_HALF=30;
+const G_OPEN=6.5, G_CLOSED=4.05;
+const BODY_L={cy:-34};
+const ZMID=35;
+// 場景
+const SEAT={cx:70, rodY:30};
+const VL=[46,54], VR=[86,94], V_PED_TOP=21.5, V_TOP=27.2, V_APEX=SEAT.rodY-ROD_R/Math.cos(45*D2R);
+const HOLE={cx:180, top:50, x0:168, x1:192, boreR:6, depth:16};
+const INS_TIP_Y=HOLE.top-10;
+// 載具軌跡＋時序（= 驗證腳本）
+const ease=u=>u*u*(3-2*u), lerp=(a,b,u)=>a+(b-a)*u;
+const W_HOME={x:70,y:150};
+const PH=[
+ [0.00,0.05,'待機',        u=>({x:70,y:150}),                        u=>0,          u=>G_OPEN],
+ [0.05,0.14,'手臂下降取料', u=>({x:70,y:lerp(150,96,ease(u))}),        u=>0,          u=>G_OPEN],
+ [0.14,0.22,'夾取（g 閉合）',u=>({x:70,y:96}),                         u=>0,          u=>lerp(G_OPEN,G_CLOSED,ease(u))],
+ [0.22,0.30,'手臂提升',     u=>({x:70,y:lerp(96,126,ease(u))}),        u=>0,          u=>G_CLOSED],
+ [0.30,0.44,'腕部 90° 翻轉',u=>({x:70,y:126}),                        u=>90*ease(u), u=>G_CLOSED],
+ [0.44,0.54,'手臂平移至孔位',u=>({x:lerp(70,114,ease(u)),y:126}),       u=>90,         u=>G_CLOSED],
+ [0.54,0.64,'手臂下降插入', u=>({x:114,y:lerp(126,70,ease(u))}),       u=>90,         u=>G_CLOSED],
+ [0.64,0.72,'釋放（g 張開）',u=>({x:114,y:70}),                        u=>90,         u=>lerp(G_CLOSED,G_OPEN,ease(u))],
+ [0.72,0.80,'手臂提升退出', u=>({x:114,y:lerp(70,126,ease(u))}),       u=>90,         u=>G_OPEN],
+ [0.80,0.97,'返程復位',     u=>({x:lerp(114,70,ease(u)),y:lerp(126,150,ease(u))}), u=>90*(1-ease(u)), u=>G_OPEN],
+ [0.97,1.00,'循環重置',     u=>({x:70,y:150}),                        u=>0,          u=>G_OPEN],
+];
+// ---- 渲染基礎 ----
+const app=document.getElementById('app');
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x9fb0bd);   // §5.6
+const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,1,2500);
+scene.add(new THREE.HemisphereLight(0xffffff,0x9aa4ad,1.1));   // §5.6
+const sun=new THREE.DirectionalLight(0xffffff,1.0); sun.position.set(220,330,180);
+sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
+Object.assign(sun.shadow.camera,{left:-220,right:220,top:280,bottom:-60,near:60,far:900});
+scene.add(sun);
+scene.add(new THREE.GridHelper(640,32,0x7c8893,0x6e7a85));   // §5.6 亮灰格線
+// ---- 材質 / 工具 ----
+const M=(c,m,r)=>new THREE.MeshStandardMaterial({color:c,metalness:m,roughness:r});
+const matFrame=M(0x9aa0a6,.55,.6), matOut=M(0x1D9E75,.45,.45), matOutHi=M(0x2bbf8f,.45,.4),
+  matAct=M(0xD85A30,.6,.38), matActDk=M(0xae4724,.6,.4), matGrip=M(0xb9c0c7,.82,.3),
+  matFin=M(0x3a4350,.5,.55), matRod=M(0xdfe3e8,.95,.16), matPin=M(0x515963,.92,.26),
+  matClip=M(0xd7dde2,.95,.2), matHole=M(0x12161b,.3,.9), matPad=M(0x6b7686,.4,.7),
+  matRobot=M(0x7d858d,.5,.55), matRobotDk=M(0x5e666e,.5,.55);
+function box(w,h,d,mat){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
+  m.castShadow=m.receiveShadow=true; return m;}
+function cylX(r,len,mat,seg){const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,seg||28),mat);
+  m.rotation.z=-Math.PI/2; m.castShadow=m.receiveShadow=true; return m;}
+function cylZ(r,len,mat,seg){const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,seg||24),mat);
+  m.rotation.x=Math.PI/2; m.castShadow=m.receiveShadow=true; return m;}
+function cylY(r,len,mat,seg){const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,seg||20),mat);
+  m.castShadow=m.receiveShadow=true; return m;}
+function roundedRectShape(w,h,r,cx,cy){
+  const x=cx-w/2,y=cy-h/2,s=new THREE.Shape();
+  s.moveTo(x+r,y); s.lineTo(x+w-r,y); s.absarc(x+w-r,y+r,r,-Math.PI/2,0,false);
+  s.lineTo(x+w,y+h-r); s.absarc(x+w-r,y+h-r,r,0,Math.PI/2,false);
+  s.lineTo(x+r,y+h); s.absarc(x+r,y+h-r,r,Math.PI/2,Math.PI,false);
+  s.lineTo(x,y+r); s.absarc(x+r,y+r,r,Math.PI,Math.PI*1.5,false); return s;}
+function extrude(shape,depth,mat,bev){
+  const m=new THREE.Mesh(new THREE.ExtrudeGeometry(shape,{depth:depth,bevelEnabled:true,
+    bevelThickness:bev||.8,bevelSize:bev||.8,bevelSegments:2,steps:1}),mat);
+  m.castShadow=m.receiveShadow=true; return m;}
+// ---- 固定治具 ----
+(function buildScene(){
+  const base=box(310,10,90,matFrame); base.position.set(110,5,45); scene.add(base);
+  [[-30,12],[-30,78],[250,12],[250,78]].forEach(([x,z])=>{
+    const h=cylY(4.2,1.4,matHole,18); h.position.set(x,10.4,z); scene.add(h);});
+  // V 座 ×2（90°V）
+  function vBlock(x0,x1){
+    const cx=(x0+x1)/2,w=x1-x0;
+    const ped=box(w,V_PED_TOP-10,14,matFrame); ped.position.set(cx,10+(V_PED_TOP-10)/2,ZMID); scene.add(ped);
+    const top=box(w,3.2,14,matFrame); top.position.set(cx,V_PED_TOP+1.0,ZMID); scene.add(top);
+    for(const sgn of [1,-1]){
+      const sl=box(w,2.6,7,matFrame); sl.rotation.x=sgn*Math.PI/4;
+      sl.position.set(cx, V_APEX+2.6, ZMID+sgn*2.6); scene.add(sl); }
+  }
+  vBlock(VL[0],VL[1]); vBlock(VR[0],VR[1]);
+  // 孔座（孔位可任意，本示範一處）
+  const blk=box(24,40,20,matFrame); blk.position.set(HOLE.cx,30,ZMID); scene.add(blk);
+  const bore=cylY(HOLE.boreR,HOLE.depth+0.6,matHole,26); bore.position.set(HOLE.cx,HOLE.top-HOLE.depth/2+0.3,ZMID); scene.add(bore);
+  const cham=new THREE.Mesh(new THREE.CylinderGeometry(7.6,HOLE.boreR,1.4,26),matHole);
+  cham.position.set(HOLE.cx,HOLE.top+0.6,ZMID); cham.castShadow=true; scene.add(cham);
+  [[174,16],[186,16],[174,44],[186,44]].forEach(([x,y])=>{
+    const s=cylZ(1.8,1,matHole,12); s.position.set(x,y,45.6); scene.add(s);});
+  // 孔軸虛線
+  const axPts=[new THREE.Vector3(HOLE.cx,12,ZMID), new THREE.Vector3(HOLE.cx,108,ZMID)];
+  const ax=new THREE.Line(new THREE.BufferGeometry().setFromPoints(axPts),
+    new THREE.LineDashedMaterial({color:0x6fb7ff,dashSize:3.5,gapSize:3,transparent:true,opacity:.6}));
+  ax.computeLineDistances(); scene.add(ax);
+})();
+// ---- 載具（手臂示意）＋ 腕部模組 ----
+const carrier=new THREE.Group(); carrier.position.set(W_HOME.x,W_HOME.y,0); scene.add(carrier);
+(function buildCarrierFixed(){
+  // 手臂末節（灰，示意）＋法蘭（ISO 9409 vibe）
+  const stub=cylY(20,92,matRobot,30); stub.position.set(0,46+46,67); carrier.add(stub);
+  const band=cylY(20.6,6,matRobotDk,30); band.position.set(0,120,67); carrier.add(band);
+  const fl=cylY(28,8,matRobot,36); fl.position.set(0,42,67); carrier.add(fl);
+  for(let i=0;i<6;i++){ const a=i/6*Math.PI*2;
+    const b=cylY(2,1.2,matHole,12); b.position.set(22*Math.cos(a),46.4,67+22*Math.sin(a)); carrier.add(b);}
+  // 吊裝座＋隅板（法蘭 → 迴轉缸）
+  const col=box(28,16,23,matRobot); col.position.set(0,30,67.5); carrier.add(col);
+  for(const dz of [9,-9]){ const g=box(20,10,3,matRobotDk); g.position.set(0,24,67.5+dz); carrier.add(g);}
+  // 腕部迴轉缸（珊瑚）z56–79
+  const act=box(36,44,23,matAct); act.position.set(0,0,67.5); carrier.add(act);
+  const cap=box(37.5,45.5,2.4,matActDk); cap.position.set(0,0,80.2); carrier.add(cap);
+  for(const dy of [14,-14]){ const p=cylX(2.6,3,matActDk,14); p.position.set(19.4,dy,72); carrier.add(p);
+    const ph=cylX(1.5,3.4,matHole,12); ph.position.set(19.6,dy,72); carrier.add(ph);}
+  const bossF=cylZ(11,3,matActDk,26); bossF.position.set(0,0,54.5); carrier.add(bossF);
+  // 翻轉包絡虛線弧（棒端，隨載具）
+  const pts=[];
+  for(let i=0;i<=40;i++){ const t=i/40*90*D2R, c=Math.cos(t),s=Math.sin(t);
+    // tip 局部 (−30,−66) 繞腕軸 CCW：(x c − y s, x s + y c)
+    pts.push(new THREE.Vector3(-ROD_HALF*c-G_L.y*s, -ROD_HALF*s+G_L.y*c, ZMID)); }
+  const arc=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineDashedMaterial({color:0x57e0a8,dashSize:4,gapSize:3,transparent:true,opacity:.75}));
+  arc.computeLineDistances(); carrier.add(arc);
+})();
+// 腕部旋轉群組（θ：rotation.z=+θ）
+const wrist=new THREE.Group(); carrier.add(wrist);
+(function buildWrist(){
+  // 輸出軸＋扣環（兩端露出）
+  const shaft=cylZ(5,28,matPin,22); shaft.position.set(0,0,47); wrist.add(shaft);
+  const clip=new THREE.Mesh(new THREE.TorusGeometry(5.8,.9,8,22),matClip);
+  clip.position.set(0,0,34.2); clip.castShadow=true; wrist.add(clip);
+  // 腕轂＋托架（綠＝轉向機構輸出件）z47–55
+  const hub=cylZ(13,8,matOut,30); hub.position.set(0,0,51); wrist.add(hub);
+  const hubB=cylZ(14.5,2.6,matOutHi,30); hubB.position.set(0,0,55.6); wrist.add(hubB);
+  const bore=cylZ(5.4,9,matHole,20); bore.position.set(0,0,51); wrist.add(bore);
+  const plate=extrude(roundedRectShape(14,48,4,0,-16),6.6,matOut,.7); plate.position.z=47.6; wrist.add(plate);
+  const rib=box(3.4,40,8.4,matOutHi); rib.position.set(0,-18,51); wrist.add(rib);
+  for(const t of [-8,-26]){ const h=cylZ(2.4,8.2,matHole,14); h.position.set(0,t,51.2); wrist.add(h); }
+  // 氣爪本體（鋼）z23–47
+  const body=extrude(roundedRectShape(22,24,3.5,0,BODY_L.cy),22,matGrip,1.0); body.position.z=24; wrist.add(body);
+  [[-7,-8],[7,-8],[-7,8],[7,8]].forEach(([dx,dy])=>{
+    const s=cylZ(1.5,1,matHole,12); s.position.set(dx,BODY_L.cy+dy,47.6); wrist.add(s);});
+  const slot=box(7,21,25,matHole); slot.position.set(0,BODY_L.cy-12.6,ZMID); wrist.add(slot);
+  const port=cylZ(2.2,2.6,matActDk,14); port.position.set(9,BODY_L.cy+13.4,40); wrist.add(port);
+})();
+// 指片 ×2（局部：根 y−46 → 尖 y−72；群組原點＝夾持內面）
+function fingerMesh(){
+  const yTop=-46, yTip=-72, s=new THREE.Shape();
+  s.moveTo(-3,yTop); s.lineTo(3,yTop); s.lineTo(2.6,yTip+3);
+  s.absarc(.6,yTip+2,2,-.35,Math.PI+.35,false); s.lineTo(-3,yTop);
+  const g=new THREE.Group();
+  const f=extrude(s,3.2,matFin,.4); f.position.z=-4.2; g.add(f);
+  const pad=box(4.2,9,1.2,matPad); pad.position.set(0,yTip+7.5,-0.6); g.add(pad);
+  return g;
+}
+const jaw1=fingerMesh(), jaw2=fingerMesh(); jaw2.scale.z=-1;
+wrist.add(jaw1); wrist.add(jaw2);
+// 直棒（座上 / 夾持 / 已插入 / 掉落示意）
+const rodG=new THREE.Group();
+const rodC=cylX(ROD_R,ROD_LEN,matRod,24); rodG.add(rodC);
+const tipRing=new THREE.Mesh(new THREE.CylinderGeometry(ROD_R,ROD_R-1.2,1.6,20),matPin);
+tipRing.rotation.z=-Math.PI/2; tipRing.position.x=-ROD_LEN/2+0.8; tipRing.castShadow=true; rodG.add(tipRing);
+let rodState='seated';
+function setRodState(st){
+  rodState=st;
+  if(st==='held'){ wrist.add(rodG); rodG.position.set(0,G_L.y,ZMID); rodG.rotation.z=0; }
+  else if(st==='seated'){ scene.add(rodG); rodG.position.set(SEAT.cx,SEAT.rodY,ZMID); rodG.rotation.z=0; }
+  else if(st==='placed'){ scene.add(rodG); rodG.position.set(HOLE.cx,INS_TIP_Y+ROD_HALF,ZMID); rodG.rotation.z=Math.PI/2; }
+  else { /* dropped：保持當前世界位姿，update 內落下 */ 
+    const p=new THREE.Vector3(); rodG.getWorldPosition(p);
+    const q=new THREE.Quaternion(); rodG.getWorldQuaternion(q);
+    scene.add(rodG); rodG.position.copy(p); rodG.quaternion.copy(q); }
+}
+setRodState('seated');
+document.getElementById('rRod').textContent='V 座上';
+// ---- 運動學 / 狀態 ----
+let theta=0, grip=G_OPEN, W={x:W_HOME.x,y:W_HOME.y};
+const gripWorld=()=>{ const c=Math.cos(theta*D2R), s=Math.sin(theta*D2R);
+  return {x:W.x - G_L.y*s, y:W.y + G_L.y*c}; };
+const tipWorld=()=>{ const c=Math.cos(theta*D2R), s=Math.sin(theta*D2R);
+  return {x:W.x + (-ROD_HALF)*c - G_L.y*s, y:W.y + (-ROD_HALF)*s + G_L.y*c}; };
+function applyState(){
+  const G=gripWorld();
+  const nearSeat=Math.hypot(G.x-SEAT.cx,G.y-SEAT.rodY)<2;
+  if(rodState==='seated'&&grip<=4.2&&nearSeat) setRodState('held');
+  else if(rodState==='held'&&grip>4.5){
+    const T=tipWorld();
+    if(nearSeat&&theta<2) setRodState('seated');
+    else if(theta>88&&Math.abs(T.x-HOLE.cx)<1.5&&T.y<HOLE.top-1) setRodState('placed');
+    else setRodState('dropped');
+  }
+  else if(rodState==='placed'&&grip<=4.2&&theta>88){
+    const T={x:HOLE.cx,y:INS_TIP_Y}, Gx=gripWorld();
+    if(Math.hypot(Gx.x-HOLE.cx,Gx.y-(INS_TIP_Y+ROD_HALF))<2) setRodState('held');
+  }
+}
+function update(dt){
+  applyState();
+  carrier.position.set(W.x,W.y,0);
+  wrist.rotation.z=theta*D2R;                       // CCW（§4.2 符號已用端點驗證）
+  jaw1.position.z=ZMID-grip; jaw2.position.z=ZMID+grip;
+  if(rodState==='dropped'){                          // 掉落示意：直線落至桌面
+    const low=Math.min(rodG.position.y, 10+ROD_R+Math.abs(Math.sin(rodG.rotation.z))*ROD_HALF);
+    rodG.position.y=Math.max(rodG.position.y-220*dt, low);
+  }
+  // 讀數
+  document.getElementById('rTheta').textContent=theta.toFixed(1);
+  document.getElementById('rGrip').textContent=(2*grip).toFixed(1);
+  document.getElementById('rW').textContent='('+W.x.toFixed(0)+', '+W.y.toFixed(0)+')';
+  document.getElementById('rRod').textContent=
+    rodState==='seated'?'V 座上':(rodState==='held'?'夾持中':(rodState==='placed'?'已插入孔':'掉落（示意）'));
+  const dot=document.getElementById('dot'), sTxt=document.getElementById('sTxt');
+  let clTxt='—', ok=true;
+  if(rodState==='held'&&theta>88){
+    const T=tipWorld();
+    if(T.y<HOLE.top+2&&Math.abs(T.x-HOLE.cx)<HOLE.boreR+8){
+      const cl=HOLE.boreR-(Math.abs(T.x-HOLE.cx)+ROD_R);
+      clTxt=cl.toFixed(2)+' mm'; ok=cl>=1.0;
+      sTxt.textContent=ok?'鉛直插入中 — 孔內餘隙 ≥1mm':'⚠ 對位偏差，餘隙不足';
+    } else sTxt.textContent='棒已轉鉛直 — 待手臂對位下降';
+  } else sTxt.textContent= rodState==='dropped'?'⚠ 空中釋放：工件掉落（示意）':'兩級皆線性／直驅 — 無傳動角風險';
+  if(rodState==='dropped') ok=false;
+  document.getElementById('rClr').textContent=clTxt;
+  dot.style.background=ok?'#3ddc84':'#ffb44d';
+  dot.style.boxShadow='0 0 10px '+(ok?'#3ddc84':'#ffb44d');
+}
+// ---- 自動流程 ----
+let playing=false, master=0, last=performance.now();
+const CYCLE=14;
+function stepAuto(dt){
+  master+=dt/CYCLE;
+  if(master>=1){ master=0; if(rodState!=='seated') setRodState('seated'); }
+  for(const [a,b,name,fW,fT,fG] of PH){
+    if(master>=a&&master<b){ const u=(master-a)/(b-a);
+      W=fW(u); theta=fT(u); grip=fG(u);
+      document.getElementById('rPhase').textContent=name;
+      document.getElementById('sTheta').value=theta;
+      document.getElementById('sGrip').value=grip; break; }
+  }
+}
+const playBtn=document.getElementById('play');
+playBtn.addEventListener('click',()=>{ playing=!playing;
+  playBtn.textContent=playing?'⏸ 暫停':'▶ 自動流程'; last=performance.now(); });
+document.getElementById('sTheta').addEventListener('input',e=>{
+  playing=false; playBtn.textContent='▶ 自動流程';
+  theta=parseFloat(e.target.value); document.getElementById('rPhase').textContent='手動'; });
+document.getElementById('sGrip').addEventListener('input',e=>{
+  playing=false; playBtn.textContent='▶ 自動流程';
+  grip=parseFloat(e.target.value); document.getElementById('rPhase').textContent='手動'; });
+function wireCollapse(id){ const p=document.getElementById(id);
+  p.querySelector('.hd').addEventListener('click',()=>p.classList.toggle('collapsed')); }
+['ctrl','legend'].forEach(wireCollapse);
+if(innerWidth<560){ ['ctrl','legend'].forEach(id=>document.getElementById(id).classList.add('collapsed')); }
+// ---- orbit ＋ 手機 fit ----
+const NARROW=innerWidth<620 || innerWidth<innerHeight;
+const target=new THREE.Vector3(118,98,40);
+const HOME={r:NARROW?520:390, az:-0.62, pol:1.12};
+const sph={r:HOME.r, az:HOME.az, pol:HOME.pol};
+function applyCam(){ const s=Math.sin(sph.pol);
+  camera.position.set(target.x+sph.r*s*Math.sin(sph.az),
+    target.y+sph.r*Math.cos(sph.pol), target.z+sph.r*s*Math.cos(sph.az));
+  camera.lookAt(target); }
+applyCam();
+document.getElementById('resetCam').addEventListener('click',()=>{
+  sph.r=HOME.r; sph.az=HOME.az; sph.pol=HOME.pol; target.set(118,98,40); applyCam(); });
+let drag=0,px=0,py=0;
+const dom=renderer.domElement;
+dom.addEventListener('pointerdown',e=>{ if(e.button===1)e.preventDefault(); drag=(e.button===2)?2:1; px=e.clientX; py=e.clientY;
+  dom.setPointerCapture(e.pointerId); });
+dom.addEventListener('pointerup',e=>{ drag=0; dom.releasePointerCapture(e.pointerId); });
+dom.addEventListener('pointermove',e=>{ if(!drag) return;
+  const dx=e.clientX-px, dy=e.clientY-py; px=e.clientX; py=e.clientY;
+  if(drag===2){ const s=Math.sin(sph.pol);
+    const fwd=new THREE.Vector3(-s*Math.sin(sph.az),0,-s*Math.cos(sph.az)).normalize();
+    const right=new THREE.Vector3().crossVectors(fwd,new THREE.Vector3(0,1,0)).normalize();
+    target.addScaledVector(right,-dx*0.36);
+    target.y=Math.max(20,Math.min(240,target.y+dy*0.36));
+  }else{ sph.az-=dx*0.008; sph.pol=Math.max(0.12,Math.min(Math.PI-0.12,sph.pol-dy*0.008)); }
+  applyCam(); });
+dom.addEventListener('wheel',e=>{ e.preventDefault();
+  sph.r=Math.max(130,Math.min(900,sph.r*(1+Math.sign(e.deltaY)*0.08))); applyCam(); },{passive:false});
+dom.addEventListener('contextmenu',e=>e.preventDefault());
+addEventListener('resize',()=>{ renderer.setSize(innerWidth,innerHeight);
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); });
+// ---- 主迴圈 ----
+function loop(now){ const dt=Math.min(.05,(now-last)/1000); last=now;
+  if(playing) stepAuto(dt);
+  update(dt); renderer.render(scene,camera); requestAnimationFrame(loop); }
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

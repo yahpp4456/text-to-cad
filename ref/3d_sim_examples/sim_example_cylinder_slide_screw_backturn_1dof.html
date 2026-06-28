@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>範例｜缸驅滑台·螺桿背轉 1-DOF</title>
+<style>
+  body{margin:0;background:#e8eaec;font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif;overflow:hidden}
+  #ui{position:fixed;top:0;left:0;right:0;background:rgba(28,36,48,.92);color:#fff;
+      padding:8px 12px;display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:13px;z-index:9}
+  #ui b{color:#9cc4ee;letter-spacing:.05em}
+  #ui input[type=range]{width:min(300px,42vw)}
+  #ui button{padding:4px 14px;border:1px solid #9cc4ee;background:transparent;color:#fff;cursor:pointer}
+  #ro{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:#cfe0f2}
+  #legend{position:fixed;bottom:8px;left:10px;background:rgba(253,253,251,.92);border:1px solid #9aa3ad;
+      padding:6px 10px;font-size:11.5px;line-height:1.6;color:#1c2430;max-width:min(520px,92vw)}
+  #legend b{color:#1f5fa8}
+  canvas{display:block;touch-action:none}
+</style>
+</head>
+<body>
+<div id="ui">
+  <b>缸驅滑台·螺桿背轉 1-DOF</b>
+  <button id="play" onclick="togglePlay()">⏸ 暫停</button>
+  <span>q = 載台位移</span>
+  <input type="range" id="q" min="0" max="100" step="0.5" value="0" oninput="onQ(this.value)">
+  <span id="ro"></span>
+</div>
+<div id="legend">
+  <b>原子件來源：</b>滑塊 HGH25CA（頂孔 35×35 4-M6 ✓）＋滑軌 HGR25｜螺桿 1605＋FSIDIN 螺帽
+  （法蘭 Ø48/BCD38/<b>4-M6@45° 幾何導出</b>）｜SC32×100 缸（推力 402N@0.5MPa 公式 ✓）｜
+  BK 內含 7001 角接觸·BF 內含 6000 深溝（ATOM-BRG ✓ 錨點）<br>
+  <b>閘門：</b>4b 掃掠 33 對 × 61 取樣全 PASS（最小餘隙 4.0mm）；θ螺桿 = 2π·q/導程5（背驅）。
+  左鍵旋轉／滾輪縮放。
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ════════════════════════════════════════════════════════════
+   C1：mm 1:1，X寬 Y高(上) Z深，原點前-下-左。設計軌；r128 無CSG。
+   1-DOF：q = 載台 x 位移 ∈[0,100]；θ螺桿 = 2π q / 5（被動背轉）。
+   原子件資料（出處＝各 ATOM 查證卡，單一事實來源摘錄）：
+   ════════════════════════════════════════════════════════════ */
+const GD ={H:40,W:48,L:84,WR:23,HR:22,H1:5.5,BC:35,M:6};          // HGH25CA ✓
+const BS ={d:16,lead:5,nutOD:28,Lt:40,Fd:48,Lf:10,BCD:38,bolt:6,flats:40}; // 1605 ✓
+const CY ={D:32,rod:12,St:100};                                    // SC32×100；OD示意=1.18D
+const FpushN=Math.round(0.5*Math.PI/4*CY.D*CY.D);                  // 402 N @0.5MPa ✓公式
+
+/* 佈局常數（同 verify 腳本） */
+const RAILX=[50,350], SCREW={y:42,z:160,x:[40,345]};
+const CYL={odr:1.18*CY.D/2, y:78, z:80, body:[-64.4,90]};
+let q=0, playing=true, dir=1;
+
+const θscrew=qq=>2*Math.PI*qq/BS.lead;
+
+/* ── three 基礎 ── */
+let scene,camera,renderer;
+const target=new THREE.Vector3(190,45,95);
+const sph={r:560,az:-0.85,pol:1.12,rMin:160,rMax:1600};
+scene=new THREE.Scene(); scene.background=new THREE.Color(0x11161c);
+camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,1,4000);
+renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.outputEncoding=THREE.sRGBEncoding;
+renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.12;
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xcfe3ff,0x202830,0.85));
+const sun=new THREE.DirectionalLight(0xffffff,1.05); sun.position.set(180,320,260);
+sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
+const sc_=sun.shadow.camera; sc_.left=-180; sc_.right=320; sc_.top=260; sc_.bottom=-120; sc_.near=1; sc_.far=900;
+sun.shadow.bias=-0.0004; scene.add(sun);
+const fill=new THREE.DirectionalLight(0xffffff,0.28); fill.position.set(-200,140,-220); scene.add(fill);
+
+/* 地面：GridHelper(Y=0 機台基準)＋受光平面 —— 2a §場景 */
+const grid=new THREE.GridHelper(800,80,0x3a444f,0x252d35); grid.position.set(230,0.02,100); scene.add(grid);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(1200,1200),
+  new THREE.MeshStandardMaterial({color:0x161c23,roughness:1,metalness:0}));
+ground.rotation.x=-Math.PI/2; ground.position.set(230,0,100); ground.receiveShadow=true; scene.add(ground);
+
+/* minimal orbit（檔2b §10.7：az+=dx / pol-=dy） */
+let drag=0,px=0,py=0;
+const dom=renderer.domElement;
+dom.addEventListener("pointerdown",e=>{drag=1;px=e.clientX;py=e.clientY;dom.setPointerCapture(e.pointerId);});
+dom.addEventListener("pointerup",e=>{drag=0;dom.releasePointerCapture(e.pointerId);});
+dom.addEventListener("pointermove",e=>{ if(!drag)return;
+  const dx=e.clientX-px,dy=e.clientY-py; px=e.clientX;py=e.clientY;
+  sph.az+=dx*0.008;
+  sph.pol=Math.max(0.12,Math.min(Math.PI-0.12,sph.pol-dy*0.008));
+  applyCam();});
+dom.addEventListener("wheel",e=>{e.preventDefault();
+  sph.r=Math.max(sph.rMin,Math.min(sph.rMax,sph.r*(1+Math.sign(e.deltaY)*0.08)));applyCam();},{passive:false});
+dom.addEventListener("contextmenu",e=>e.preventDefault());
+addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+function applyCam(){const s=Math.sin(sph.pol);
+  camera.position.set(target.x+sph.r*s*Math.sin(sph.az),
+                      target.y+sph.r*Math.cos(sph.pol),
+                      target.z+sph.r*s*Math.cos(sph.az));
+  camera.lookAt(target);}
+applyCam();
+
+/* ── 材質 ── */
+const mSteel=new THREE.MeshStandardMaterial({color:0xb9c0c7,metalness:.82,roughness:.3,side:THREE.DoubleSide});
+const mDark =new THREE.MeshStandardMaterial({color:0x515963,metalness:.7,roughness:.35});
+const mBlue =new THREE.MeshStandardMaterial({color:0xE0A52E,metalness:.55,roughness:.4});   // 螺帽=範例黃
+const mCarr =new THREE.MeshStandardMaterial({color:0x1D9E75,metalness:.45,roughness:.45}); // 載台=範例綠
+const mRod  =new THREE.MeshStandardMaterial({color:0xdfe3e8,metalness:.95,roughness:.16});
+const mBase =new THREE.MeshStandardMaterial({color:0x9aa0a6,metalness:.55,roughness:.6});
+const mMark =new THREE.MeshStandardMaterial({color:0x8a2b2b,metalness:.3,roughness:.6});
+const mHole =new THREE.MeshStandardMaterial({color:0x222a33,metalness:.3,roughness:.8});
+const mTie  =new THREE.MeshStandardMaterial({color:0x6b7480,metalness:.6,roughness:.45});
+
+const box=(sx,sy,sz,m)=>new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),m);
+
+/* ── 固定件 ── */
+const base=box(460,12,200,mBase); base.position.set(230,6,100); scene.add(base);
+
+/* 滑軌（ATOM-LMG railShape 同式擠出） */
+function railShape(WR,HR){
+  const w=WR/2,ch=WR*.08,wd=WR*.12,s=new THREE.Shape();
+  s.moveTo(-w,0);s.lineTo(-w,HR*.38);s.lineTo(-w+wd,HR*.52);s.lineTo(-w,HR*.66);
+  s.lineTo(-w,HR-ch);s.lineTo(-w+ch,HR);s.lineTo(w-ch,HR);s.lineTo(w,HR-ch);
+  s.lineTo(w,HR*.66);s.lineTo(w-wd,HR*.52);s.lineTo(w,HR*.38);s.lineTo(w,0);
+  s.closePath();return s;}
+const railG=new THREE.ExtrudeGeometry(railShape(GD.WR,GD.HR),{depth:RAILX[1]-RAILX[0],bevelEnabled:false});
+railG.rotateY(Math.PI/2);
+const rail=new THREE.Mesh(railG,mSteel);
+rail.position.set(RAILX[0],12,60); scene.add(rail);   // rotateY(90°)後深度沿+X：自 x=50 起 → 50..350 ✓
+
+/* BK/BF 支撐座（示意箱+軸承環標示） */
+function pillow(x0,x1,ringColor,label){
+  const g=new THREE.Group();
+  const b=box(x1-x0,58,60,mDark); b.position.set((x0+x1)/2,12+29,160); g.add(b);
+  const ring=new THREE.Mesh(new THREE.TorusGeometry(13,3.2,12,32),
+    new THREE.MeshStandardMaterial({color:ringColor,metalness:.7,roughness:.3}));
+  ring.rotation.y=Math.PI/2; ring.position.set(label==='BK'?x1+0.5:x0-0.5,SCREW.y,160); g.add(ring);
+  scene.add(g); return g;}
+pillow(45,75,0x2e7d5b,'BK');     // 固定端：7001 角接觸成對（綠環示意）
+pillow(320,340,0x1f5fa8,'BF');   // 支撐端：6000 深溝（藍環示意，ATOM-BRG ✓）
+
+/* 螺桿（1605：光桿+標線，繞X自轉） */
+const screwGrp=new THREE.Group();
+const sh=new THREE.Mesh(new THREE.CylinderGeometry(BS.d/2,BS.d/2,SCREW.x[1]-SCREW.x[0],32),mSteel);
+sh.rotation.z=Math.PI/2; screwGrp.add(sh);
+const stripe=box(SCREW.x[1]-SCREW.x[0]-4, BS.d*.06, BS.d*.1, mMark);
+stripe.position.y=BS.d/2; screwGrp.add(stripe);
+screwGrp.position.set((SCREW.x[0]+SCREW.x[1])/2,SCREW.y,SCREW.z); scene.add(screwGrp);
+
+/* 氣缸 SC32（ATOM-CYL 示意幾何：拉杆式） */
+const cylGrp=new THREE.Group();
+const TLb=CYL.body[1]-CYL.body[0];
+const mCyl=new THREE.MeshStandardMaterial({color:0xD85A30,metalness:.6,roughness:.38});
+const tube=new THREE.Mesh(new THREE.CylinderGeometry(CYL.odr,CYL.odr,TLb-22.4,36),mCyl);
+tube.rotation.z=Math.PI/2; tube.position.x=(CYL.body[0]+CYL.body[1])/2; cylGrp.add(tube);
+[[CYL.body[0]+5.6],[CYL.body[1]-5.6]].forEach(([x])=>{
+  const c=box(11.2,1.4*CY.D,1.4*CY.D,mDark); c.position.x=x; cylGrp.add(c);});
+for(const sy of[-1,1])for(const sz of[-1,1]){
+  const t=new THREE.Mesh(new THREE.CylinderGeometry(.08*CY.D,.08*CY.D,TLb,12),mTie);
+  t.rotation.z=Math.PI/2; t.position.set((CYL.body[0]+CYL.body[1])/2, sy*.55*CY.D, sz*.55*CY.D);
+  cylGrp.add(t);}
+[[CYL.body[0]+5.6],[CYL.body[1]-5.6]].forEach(([x])=>{
+  const p=new THREE.Mesh(new THREE.CylinderGeometry(2.8,2.8,9,12),
+    new THREE.MeshStandardMaterial({color:0x8a6a2a,metalness:.6,roughness:.4}));
+  p.position.set(x,.7*CY.D+4.5,0); cylGrp.add(p);});
+cylGrp.position.set(0,CYL.y,CYL.z); scene.add(cylGrp);
+// 缸腳座
+const foot=box(60,CYL.y-CYL.odr-12,40,mDark);
+foot.position.set(-20,12+(CYL.y-CYL.odr-12)/2,CYL.z); scene.add(foot);
+// 活塞桿（長度隨 q 變—單位圓柱縮放）
+const rodMesh=new THREE.Mesh(new THREE.CylinderGeometry(CY.rod/2,CY.rod/2,1,20),mRod);
+rodMesh.rotation.z=Math.PI/2; scene.add(rodMesh);
+
+/* ── 動件總成（隨 q 平移） ── */
+const carrGrp=new THREE.Group(); scene.add(carrGrp);
+/* 滑塊 HGH25CA（ATOM-LMG blockShape 同式） */
+function blockShape(H,W,WR,HR,H1){
+  const w=W/2,iw=WR/2+WR*.07,yc=HR+WR*.1,s=new THREE.Shape();
+  s.moveTo(-w,H);s.lineTo(w,H);s.lineTo(w,H1);s.lineTo(iw,H1);
+  s.lineTo(iw,yc);s.lineTo(-iw,yc);s.lineTo(-iw,H1);s.lineTo(-w,H1);
+  s.closePath();return s;}
+const blkG=new THREE.ExtrudeGeometry(blockShape(GD.H,GD.W,GD.WR,GD.HR,GD.H1),{depth:GD.L,bevelEnabled:false});
+blkG.translate(0,0,-GD.L/2); blkG.rotateY(Math.PI/2);
+const blk=new THREE.Mesh(blkG,mBlue); blk.position.set(150,12,60); carrGrp.add(blk);
+// 滑塊頂孔 4-M6@35×35 ✓
+for(const sx of[-1,1])for(const sz of[-1,1]){
+  const h=new THREE.Mesh(new THREE.CylinderGeometry(3,3,5,14),mHole);
+  h.position.set(150+sx*GD.BC/2, 52-2.4, 60+sz*GD.BC/2); carrGrp.add(h);}
+// 墊高座 + 載台
+const riser=box(48,20,48,mCarr); riser.position.set(150,62,60); carrGrp.add(riser);
+const carr=box(110,12,140,mCarr); carr.position.set(155,78,80); carrGrp.add(carr);
+// 螺帽托架
+const brkt=box(10,56,60,mCarr); brkt.position.set(105,44,160); carrGrp.add(brkt);
+/* 1605 FSIDIN 螺帽（法蘭雙平邊+4孔@45° ✓導出）—隨載台平移、不自轉 */
+const flShape=(()=>{const s=new THREE.Shape(),R=BS.Fd/2,f=BS.flats/2;
+  for(let i=0;i<=48;i++){const t=i/48*2*Math.PI;
+    const x=Math.max(-f,Math.min(f,R*Math.cos(t))),y=R*Math.sin(t);
+    i?s.lineTo(x,y):s.moveTo(x,y);} s.closePath(); return s;})();
+const flG=new THREE.ExtrudeGeometry(flShape,{depth:BS.Lf,bevelEnabled:false});
+flG.translate(0,0,-BS.Lf/2); flG.rotateY(Math.PI/2);
+const fl=new THREE.Mesh(flG,mBlue); fl.position.set(115,SCREW.y,160); carrGrp.add(fl);
+for(let i=0;i<4;i++){const a=Math.PI/4+i*Math.PI/2;
+  const h=new THREE.Mesh(new THREE.CylinderGeometry(BS.bolt/2,BS.bolt/2,BS.Lf+.4,14),mHole);
+  h.rotation.z=Math.PI/2;
+  h.position.set(115, SCREW.y+BS.BCD/2*Math.sin(a), 160+BS.BCD/2*Math.cos(a));
+  carrGrp.add(h);}
+const nutB=new THREE.Mesh(new THREE.CylinderGeometry(BS.nutOD/2,BS.nutOD/2,BS.Lt-BS.Lf,28),mBlue);
+nutB.rotation.z=Math.PI/2; nutB.position.set(120+(BS.Lt-BS.Lf)/2,SCREW.y,160); carrGrp.add(nutB);
+// 桿端接頭板（缸→載台）
+const tip=box(8,12,12,mDark); tip.position.set(96,78,CYL.z); carrGrp.add(tip);
+
+/* ── 更新（運動學閉式） ── */
+function update(){
+  carrGrp.position.x=q;
+  screwGrp.rotation.x=-θscrew(q);                    // 背轉
+  const x0=85, x1=96+q;                              // 桿:前蓋內→接頭
+  rodMesh.scale.y=(x1-x0);
+  rodMesh.position.set((x0+x1)/2,78,CYL.z);
+  document.getElementById("ro").textContent=
+    `x=${q.toFixed(1)}mm ｜ 螺桿 ${(θscrew(q)/2/Math.PI).toFixed(1)} 圈 ｜ 缸桿伸出 ${(10+q).toFixed(0)}mm ｜ 推力理論 ${FpushN}N @0.5MPa`;
+  document.getElementById("q").value=q;
+}
+function onQ(v){q=parseFloat(v);playing=false;
+  document.getElementById("play").textContent="▶ 播放";update();}
+function togglePlay(){playing=!playing;
+  document.getElementById("play").textContent=playing?"⏸ 暫停":"▶ 播放";}
+
+let last=performance.now();
+function loop(now){const dt=(now-last)/1000;last=now;
+  if(playing){q+=dir*36*dt; if(q>100){q=100;dir=-1;} if(q<0){q=0;dir=1;} update();}
+  renderer.render(scene,camera);
+  requestAnimationFrame(loop);}
+/* 投影旗標：全 Mesh castShadow，底板/地面收影 */
+scene.traverse(o=>{ if(o.isMesh){o.castShadow=true; o.receiveShadow=false;} });
+ground.receiveShadow=true; base.receiveShadow=true; base.castShadow=false;
+update(); requestAnimationFrame(loop);
+</script>
+</body>
+</html>

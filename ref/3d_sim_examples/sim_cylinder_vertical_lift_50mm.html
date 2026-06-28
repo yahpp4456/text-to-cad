@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2"/>
+<title>氣缸驅動 垂直舉升平台 50mm — 3D 動作模擬</title>
+<style>
+  /* §5.6 亮場景：頁面底色同步 scene.background，避免載入前閃黑 */
+  :root{ --frame:#9aa0a6; --plat:#1D9E75; --cyl:#D85A30; --rod:#dfe3e8; --coup:#E0A52E; --steel:#b9c0c7; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ margin:0; height:100%; overflow:hidden;
+    font-family:"Microsoft JhengHei",Arial,sans-serif; background:#9fb0bd; color:#eef2f6; }
+  #app{ position:fixed; inset:0; }
+  canvas{ display:block; touch-action:none; }
+  /* 控制面板：亮背景上維持深色毛玻璃，對比更好讀（§5.6 規定不改） */
+  .panel{ position:fixed; z-index:10; background:rgba(20,26,33,.62);
+    backdrop-filter:blur(9px); -webkit-backdrop-filter:blur(9px);
+    border:1px solid rgba(255,255,255,.14); border-radius:14px; padding:14px 16px;
+    box-shadow:0 8px 30px rgba(0,0,0,.4); max-height:calc(100vh - 28px); overflow:auto; }
+  #ctrl{ top:14px; left:14px; width:300px; }
+  #ctrl h1{ font-size:15px; margin:0; font-weight:700; letter-spacing:.3px; }
+  #ctrl .sub{ font-size:11px; color:#9fb0bf; margin:4px 0 12px; line-height:1.55; }
+  .row{ display:flex; align-items:center; gap:10px; margin:10px 0; }
+  button{ font:inherit; color:#eef2f6; background:rgba(255,255,255,.08);
+    border:1px solid rgba(255,255,255,.18); border-radius:9px; padding:8px 12px;
+    cursor:pointer; transition:.15s; user-select:none; }
+  button:hover{ background:rgba(255,255,255,.16); }
+  button:active{ transform:translateY(1px); }
+  #play{ min-width:80px; font-weight:700; }
+  input[type=range]{ -webkit-appearance:none; appearance:none; flex:1; height:5px;
+    border-radius:4px; background:linear-gradient(90deg,var(--cyl),#f0d18a); outline:none; }
+  input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:18px; height:18px;
+    border-radius:50%; background:#fff; border:2px solid var(--cyl); cursor:pointer; }
+  input[type=range]::-moz-range-thumb{ width:18px; height:18px; border-radius:50%;
+    background:#fff; border:2px solid var(--cyl); cursor:pointer; }
+  .lab{ font-size:11px; color:#9fb0bf; width:26px; }
+  .read{ display:grid; grid-template-columns:1fr auto; gap:5px 10px; font-size:13px;
+    margin-top:10px; padding-top:12px; border-top:1px solid rgba(255,255,255,.1); }
+  .read .k{ color:#9fb0bf; } .read .v{ font-weight:700; font-variant-numeric:tabular-nums; }
+  .status{ display:flex; align-items:center; gap:9px; margin-top:12px; font-size:12.5px; }
+  #dot{ width:14px; height:14px; border-radius:50%; background:#3ddc84;
+    box-shadow:0 0 10px #3ddc84; transition:.2s; }
+  #legend{ bottom:14px; left:14px; font-size:12px; }
+  #legend .t{ font-weight:700; margin-bottom:8px; font-size:12px; color:#cdd6df; }
+  .lg{ display:flex; align-items:center; gap:8px; margin:5px 0; }
+  .sw{ width:15px; height:15px; border-radius:4px; border:1px solid rgba(255,255,255,.25); }
+  #hint{ top:14px; right:14px; font-size:11px; color:#33424f; max-width:185px; line-height:1.6;
+    background:rgba(255,255,255,.5); border-color:rgba(0,0,0,.12); color:#22303b; }
+  .hd{ display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer; user-select:none; }
+  .hd .chev{ font-size:11px; color:#9fb0bf; transition:transform .15s; }
+  .panel.collapsed .body{ display:none; }
+  .panel.collapsed .chev{ transform:rotate(-90deg); }
+  @media (max-width:560px){
+    #ctrl{ width:calc(100% - 28px); max-height:48vh; } #hint{ display:none; }
+    #legend{ font-size:11px; max-height:36vh; } #ctrl .sub{ display:none; }
+    button{ font-size:12px; padding:5px 9px; }
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="ctrl" class="panel">
+  <div class="hd"><h1>氣缸驅動 — 垂直舉升平台</h1><span class="chev">▾</span></div>
+  <div class="sub">檔6 合成產物（目錄無條目）· SC40 缸直推＋HGH25CA 直線導引<br/>DOF = 1 ｜ 驅動變數＝缸桿行程 q（0–50mm）</div>
+  <div class="row">
+    <button id="play">▶ 播放</button>
+    <button id="resetCam">重設視角</button>
+  </div>
+  <div class="row"><span class="lab">q</span>
+    <input id="slider" type="range" min="0" max="50" step="0.2" value="0"/></div>
+  <div class="body">
+    <div class="read">
+      <span class="k">缸桿行程 q</span><span class="v"><span id="rQ">0.0</span> mm</span>
+      <span class="k">平台舉升高度</span><span class="v"><span id="rLift">0.0</span> mm</span>
+      <span class="k">缸桿伸出長</span><span class="v"><span id="rRod">22.0</span> mm</span>
+      <span class="k">出力餘裕</span><span class="v">2.2× @200N</span>
+    </div>
+    <div class="status"><span id="dot"></span><span id="sTxt">1-DOF 直線導引 · 缸浮接無過約束</span></div>
+  </div>
+</div>
+
+<div id="legend" class="panel">
+  <div class="hd"><div class="t" style="margin-bottom:0">圖例</div><span class="chev">▾</span></div>
+  <div class="body">
+    <div class="lg"><span class="sw" style="background:var(--plat)"></span>夾爪平台 (末端 · 輸出)</div>
+    <div class="lg"><span class="sw" style="background:var(--cyl)"></span>SC40 氣缸 (驅動 · 固定)</div>
+    <div class="lg"><span class="sw" style="background:var(--rod)"></span>活塞桿 (伸出 q)</div>
+    <div class="lg"><span class="sw" style="background:var(--coup)"></span>浮動接頭 (只傳軸向力)</div>
+    <div class="lg"><span class="sw" style="background:var(--steel)"></span>HGH25CA 滑塊 / 滑軌 (導引)</div>
+    <div class="lg"><span class="sw" style="background:var(--frame)"></span>機架 (底板 + 立柱)</div>
+  </div>
+</div>
+
+<div id="hint" class="panel">
+  左鍵拖曳：旋轉<br/>右鍵拖曳：平移<br/>滾輪：縮放<br/>拖滑桿即定格該行程
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =====================================================================
+   1) 純運動學（單一事實來源：與接口表同一組座標；單位 = mm，Y 為鉛直）
+      唯一驅動 q ∈ [0,50]；其餘量全由 q 閉式導出。
+      缸體固定；缸桿頂、浮動接頭、滑塊、平台 全部 +q 同步上升。
+   ===================================================================== */
+const STROKE   = 50;
+const BASE_TOP = 12;          // 底板上緣
+const CYL_X    = 0;           // 缸軸 (鉛直)
+const CYL_BODY_LEN = 96;      // 缸體含端蓋包絡
+const CYL_TOP  = BASE_TOP + CYL_BODY_LEN;     // 缸體頂 = 108
+const ROD_D    = 16;          // SC40 桿徑 (卡值)
+const PLAT_B0  = 135;         // q=0 時平台底面高度
+const PLAT_TH  = 14;          // 平台厚
+const PLAT_CX  = 6.5;         // 平台中心 X（涵蓋缸@0 與滑塊@43）
+const PLAT_W   = 86;          // 平台 X 向寬 (-30 … +43)
+const PLAT_D   = 84;          // 平台 Z 向深 (= HGH25CA 滑塊長尺度)
+const RAIL_X   = 75;          // 滑軌中心 X
+const BLK_FACE = 43;          // 滑塊安裝面 X（平台右緣鎖此）
+const BLK_LEN  = 84;          // HGH25CA 滑塊長 L (沿 Y 行走)
+const COUP_H   = 5;           // 浮動接頭高
+
+const platBottom = q => PLAT_B0 + q;          // 平台底
+const rodTopY    = q => platBottom(q) - COUP_H;
+const rodLen     = q => rodTopY(q) - CYL_TOP;  // 桿露出長 = 22 + q
+const ROD0 = rodLen(0);
+
+/* =====================================================================
+   2) 場景 / 相機 / 燈光 / 地面  —— §5.6 亮場景標準
+   ===================================================================== */
+const app=document.getElementById('app');
+const scene=new THREE.Scene(); scene.background=new THREE.Color(0x9fb0bd);   // §5.6 明亮灰藍
+const camera=new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 1, 5000);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.outputEncoding=THREE.sRGBEncoding;
+renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.1;
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xffffff,0x9aa4ad,1.1));                  // §5.6
+const sun=new THREE.DirectionalLight(0xffffff,1.0); sun.position.set(140,260,180);
+sun.castShadow=true; sun.shadow.mapSize.set(2048,2048);
+const scam=sun.shadow.camera; scam.left=-160; scam.right=220; scam.top=260; scam.bottom=-40; scam.near=1; scam.far=900;
+sun.shadow.bias=-0.0004; scene.add(sun);
+const fill=new THREE.DirectionalLight(0xffffff,0.3); fill.position.set(-120,120,-140); scene.add(fill);
+
+const grid=new THREE.GridHelper(700,70,0x7c8893,0x6e7a85); grid.position.set(20,0.02,0); scene.add(grid);  // §5.6 亮灰格線
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(1000,1000),
+  new THREE.MeshStandardMaterial({color:0x8b97a1,roughness:1,metalness:0}));
+ground.rotation.x=-Math.PI/2; ground.position.set(20,0,0); ground.receiveShadow=true; scene.add(ground);
+
+/* =====================================================================
+   3) 材質（§5.6 表）＋ 建模工具
+   ===================================================================== */
+const M=(c,m,r)=>new THREE.MeshStandardMaterial({color:c,metalness:m,roughness:r});
+const matFrame=M(0x9aa0a6,.55,.6), matPlat=M(0x1D9E75,.45,.45), matPlatHi=M(0x2bbf8f,.45,.42),
+      matCyl=M(0xD85A30,.6,.38), matCap=M(0xae4724,.6,.42), matRod=M(0xdfe3e8,.95,.16),
+      matTie=M(0x6b7480,.6,.45), matPort=M(0x8a6a2a,.6,.4), matSteel=M(0xb9c0c7,.82,.3),
+      matRail=M(0x8c939b,.7,.34), matCoup=M(0xE0A52E,.55,.4), matPin=M(0x515963,.92,.26),
+      matHole=M(0x12161b,.3,.9);
+function box(w,h,d,mat){const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);m.castShadow=true;m.receiveShadow=true;return m;}
+function cylY(r,h,mat,s){const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,h,s||28),mat);m.castShadow=true;m.receiveShadow=true;return m;}
+function cylX(r,h,mat,s){const m=cylY(r,h,mat,s);m.rotation.z=Math.PI/2;return m;}
+function cylZ(r,h,mat,s){const m=cylY(r,h,mat,s);m.rotation.x=Math.PI/2;return m;}
+function rounded(w,h,r){const s=new THREE.Shape();const x=-w/2,y=-h/2;
+  s.moveTo(x+r,y);s.lineTo(x+w-r,y);s.quadraticCurveTo(x+w,y,x+w,y+r);
+  s.lineTo(x+w,y+h-r);s.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  s.lineTo(x+r,y+h);s.quadraticCurveTo(x,y+h,x,y+h-r);
+  s.lineTo(x,y+r);s.quadraticCurveTo(x,y,x+r,y);return s;}
+
+/* =====================================================================
+   4) 機架：底板 + 立柱（固定，不動）
+   ===================================================================== */
+const base=box(170,BASE_TOP,150,matFrame); base.position.set(20,BASE_TOP/2,0); scene.add(base);
+const column=box(16,210,80,matFrame); column.position.set(RAIL_X+11,210/2,0); scene.add(column);     // 立柱貼滑軌背
+// 滑軌（固定在立柱前面，鉛直）
+const rail=box(22,196,23,matRail); rail.position.set(RAIL_X,12+196/2,0); scene.add(rail);
+for(let y=30; y<200; y+=60){ const bolt=cylX(3.2,6,matPin,16); bolt.position.set(RAIL_X,y,0); scene.add(bolt);} // 軌孔栓示意
+
+/* =====================================================================
+   5) 氣缸 SC40（缸體固定）＋ 活塞桿（隨 q 伸縮）   D=40 / d=16（卡值）
+   ===================================================================== */
+const D=40, OD=1.18*D, capH=10;
+const cylGrp=new THREE.Group(); scene.add(cylGrp);
+const tube=cylY(OD/2,CYL_BODY_LEN-2*capH,matCyl,40); tube.position.y=BASE_TOP+CYL_BODY_LEN/2; cylGrp.add(tube);
+[BASE_TOP+capH/2, CYL_TOP-capH/2].forEach(y=>{const c=box(1.4*D,capH,1.4*D,matCap); c.position.set(0,y,0); cylGrp.add(c);});
+for(const sx of[-1,1])for(const sz of[-1,1]){ const t=cylY(0.07*D,CYL_BODY_LEN,matTie,14);
+  t.position.set(sx*0.55*D, BASE_TOP+CYL_BODY_LEN/2, sz*0.55*D); cylGrp.add(t);}            // 四角拉杆
+[BASE_TOP+capH+6, CYL_TOP-capH-6].forEach(y=>{const p=cylZ(0.09*D,0.34*D,matPort,16); p.position.set(0,y,0.62*OD); cylGrp.add(p);}); // 氣口
+// 缸尾腳座（鎖底板）
+const foot=box(1.5*D,8,1.5*D,matFrame); foot.position.set(0,BASE_TOP+4,0); cylGrp.add(foot);
+// 活塞桿（可伸縮組）：底端固定在缸頂，往上長
+const rodGrp=new THREE.Group(); scene.add(rodGrp);
+const rod=cylY(ROD_D/2,1,matRod,28); rodGrp.add(rod);            // 高度由 scale.y 控
+const rodTip=cylY(ROD_D/2*0.82,0.3*D,matCap,20); rodGrp.add(rodTip);
+
+/* =====================================================================
+   6) 浮動接頭（桿端關節：只傳軸向力，化解與滑軌平行雙移動副的過約束）
+   ===================================================================== */
+const coupGrp=new THREE.Group(); scene.add(coupGrp);
+const ball=cylY(ROD_D*0.5,COUP_H+2,matCoup,22); coupGrp.add(ball);
+const couPin=cylZ(2.6,ROD_D*1.4,matPin,16); coupGrp.add(couPin);
+const lug=box(ROD_D*1.3,3,ROD_D*1.6,matSteel); lug.position.y=COUP_H/2+1; coupGrp.add(lug);   // 平台底耳座
+
+/* =====================================================================
+   7) HGH25CA 滑塊（隨 q 上下）  H40 × W48 × L84（卡值）
+   ===================================================================== */
+const blkGrp=new THREE.Group(); scene.add(blkGrp);
+const blk=box(40,BLK_LEN,48,matSteel); blkGrp.add(blk);                       // 本體
+const blkTop=box(34,BLK_LEN*0.96,42,matSteel); blkTop.position.x=-3.5; blkGrp.add(blkTop);   // 倒角感
+// 頂面 4-M6 安裝孔（35×35）朝平台側（-X 面）
+[[35/2,35/2],[35/2,-35/2],[-35/2,35/2],[-35/2,-35/2]].forEach(([y,z])=>{
+  const h=cylX(2.6,8,matHole,14); h.position.set(-20,y,z); blkGrp.add(h);});
+
+/* =====================================================================
+   8) 夾爪平台（末端 · 輸出，隨 q 上升）：倒角板 + 定位凸台 + 安裝孔 + 背肋
+   ===================================================================== */
+const platGrp=new THREE.Group(); scene.add(platGrp);
+const slabGeo=new THREE.ExtrudeGeometry(rounded(PLAT_W,PLAT_D,8),
+  {depth:PLAT_TH,bevelEnabled:true,bevelThickness:1,bevelSize:1.2,bevelSegments:2,steps:1});
+const slab=new THREE.Mesh(slabGeo,matPlat); slab.rotation.x=Math.PI/2; slab.castShadow=true; slab.receiveShadow=true;
+slab.position.y=PLAT_TH/2; platGrp.add(slab);                                  // 板厚沿 Y
+// 上表面中央定位凸台（給夾爪安裝基準）+ 導孔
+const boss=cylY(13,7,matPlatHi,28); boss.position.set(PLAT_CX,PLAT_TH+3.5,0); platGrp.add(boss);
+const pilot=cylY(5,16,matHole,20); pilot.position.set(PLAT_CX,PLAT_TH-2,0); platGrp.add(pilot);
+// 四個夾爪安裝孔
+[[26,24],[26,-24],[-14,24],[-14,-24]].forEach(([x,z])=>{const h=cylY(3,16,matHole,16); h.position.set(PLAT_CX+x,PLAT_TH-3,z); platGrp.add(h);});
+// 背肋（底面，增剛）避開缸桿與滑塊
+const ribA=box(PLAT_W*0.8,6,5,matPlat); ribA.position.set(PLAT_CX,-3,22); platGrp.add(ribA);
+const ribB=box(PLAT_W*0.8,6,5,matPlat); ribB.position.set(PLAT_CX,-3,-22); platGrp.add(ribB);
+
+/* =====================================================================
+   9) 行程指示（平台頂緣上升範圍，虛線）
+   ===================================================================== */
+const gp=[]; for(let i=0;i<=2;i++){gp.push(new THREE.Vector3(PLAT_CX+PLAT_W/2+12, PLAT_B0+PLAT_TH+ i*STROKE,0));}
+const guideLine=new THREE.Line(new THREE.BufferGeometry().setFromPoints(
+  [new THREE.Vector3(PLAT_CX+PLAT_W/2+12,PLAT_B0+PLAT_TH,0),new THREE.Vector3(PLAT_CX+PLAT_W/2+12,PLAT_B0+PLAT_TH+STROKE,0)]),
+  new THREE.LineDashedMaterial({color:0x33424f,dashSize:3.5,gapSize:2.6}));
+guideLine.computeLineDistances(); scene.add(guideLine);
+
+/* =====================================================================
+   10) update(q) — 唯一驅動，閉式代入（節點 5 運動學）
+   ===================================================================== */
+const I=id=>document.getElementById(id);
+function update(q){
+  const pb=platBottom(q), rl=rodLen(q), rt=rodTopY(q);
+  // 活塞桿
+  rod.scale.y=rl; rod.position.set(CYL_X,CYL_TOP+rl/2,0);
+  rodTip.position.set(CYL_X,rt+0.15*D,0);
+  // 浮動接頭（在桿頂與平台底之間）
+  coupGrp.position.set(CYL_X,rt+COUP_H/2,0);
+  // 滑塊（頂面齊平台底，往下延伸）
+  blkGrp.position.set((RAIL_X+BLK_FACE)/2, pb-BLK_LEN/2, 0);
+  // 平台
+  platGrp.position.set(PLAT_CX, pb, 0);
+  // 讀數
+  I('rQ').textContent=q.toFixed(1);
+  I('rLift').textContent=q.toFixed(1);
+  I('rRod').textContent=rl.toFixed(1);
+}
+
+/* =====================================================================
+   11) 自寫 minimal orbit（檔2b §10.7）
+   ===================================================================== */
+const target=new THREE.Vector3(20,108,0);
+const NARROW=innerWidth<620||innerWidth<innerHeight;
+const HOME={r:NARROW?430:320,az:-0.82,pol:1.05}; const sph={...HOME};
+function applyCam(){const s=Math.sin(sph.pol);
+  camera.position.set(target.x+sph.r*s*Math.sin(sph.az),
+    target.y+sph.r*Math.cos(sph.pol), target.z+sph.r*s*Math.cos(sph.az));
+  camera.lookAt(target);}
+applyCam();
+const dom=renderer.domElement; let drag=0,lx=0,ly=0;
+dom.addEventListener('pointerdown',e=>{if(e.button===1)e.preventDefault(); drag=e.button===2?2:1; lx=e.clientX; ly=e.clientY; dom.setPointerCapture(e.pointerId);});
+dom.addEventListener('pointermove',e=>{ if(!drag)return;
+  const dx=e.clientX-lx,dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
+  if(drag===2){ const s=Math.sin(sph.pol);
+    const fwd=new THREE.Vector3(s*Math.sin(sph.az),Math.cos(sph.pol),s*Math.cos(sph.az));
+    const right=new THREE.Vector3().crossVectors(fwd,new THREE.Vector3(0,1,0)).normalize();
+    const up=new THREE.Vector3().crossVectors(right,fwd).normalize();
+    const k=sph.r*0.0016; target.addScaledVector(right,dx*k); target.addScaledVector(up,dy*k);
+  } else { sph.az-=dx*0.008; sph.pol=Math.max(0.12,Math.min(Math.PI-0.12,sph.pol-dy*0.008)); }
+  applyCam();
+});
+addEventListener('pointerup',()=>drag=0);
+dom.addEventListener('wheel',e=>{e.preventDefault();
+  sph.r=Math.max(120,Math.min(820,sph.r*(1+Math.sign(e.deltaY)*0.08))); applyCam();
+},{passive:false});
+dom.addEventListener('contextmenu',e=>e.preventDefault());
+
+/* =====================================================================
+   12) UI ＋ ping-pong 迴圈（檔2b §10.9 手機收合）
+   ===================================================================== */
+let q=0,dir=1,playing=false,speed=26,last=performance.now();   // speed: mm/s
+const slider=I('slider'),playBtn=I('play');
+function setPlay(p){playing=p; playBtn.textContent=p?'⏸ 暫停':'▶ 播放';}
+playBtn.addEventListener('click',()=>setPlay(!playing));
+I('resetCam').addEventListener('click',()=>{Object.assign(sph,HOME); target.set(20,108,0); applyCam();});
+slider.addEventListener('input',()=>{setPlay(false); q=parseFloat(slider.value); update(q);});
+function loop(now){const dt=(now-last)/1000; last=now;
+  if(playing){ q+=dir*speed*dt;
+    if(q>=STROKE){q=STROKE;dir=-1;} else if(q<=0){q=0;dir=1;}
+    slider.value=q.toFixed(1); update(q); }
+  renderer.render(scene,camera); requestAnimationFrame(loop);
+}
+function wireCollapse(id){const p=document.getElementById(id);
+  p.querySelector('.hd').addEventListener('click',()=>p.classList.toggle('collapsed'));}
+['ctrl','legend'].forEach(wireCollapse);
+if(innerWidth<560){['ctrl','legend'].forEach(id=>document.getElementById(id).classList.add('collapsed'));}
+/* sRGB + ACES：材質色與背景一次轉 linear，與圖例 hex 對齊（不動幾何） */
+{const ms=new Set(); scene.traverse(o=>{if(o.isMesh){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>ms.add(m));}});
+ ms.forEach(m=>{if(m.color)m.color.convertSRGBToLinear();});
+ if(scene.background&&scene.background.isColor)scene.background.convertSRGBToLinear();}
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight);});
+update(0); requestAnimationFrame(loop);
+</script>
+</body>
+</html>
