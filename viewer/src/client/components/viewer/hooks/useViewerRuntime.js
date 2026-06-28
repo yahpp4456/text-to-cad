@@ -172,8 +172,15 @@ export function useViewerRuntime({
       controls.rotateSpeed = 1;
       controls.panSpeed = 1.35;
       controls.zoomSpeed = getDefaultZoomSpeed();
+      // Zoom toward the fixed orbit target (the model centre), NOT the cursor.
+      // zoomToCursor walks BOTH camera and target along the cursor ray on every
+      // dolly; when the cursor sits over empty space, zooming out pushes the
+      // target away from the model unboundedly (it escapes the model-radius
+      // maxDistance clamp, which only limits camera->target distance), so the
+      // model drifts off-screen and is lost. Fixed-target zoom keeps the model
+      // framed and bounded at every zoom level, matching the reference examples.
       if ("zoomToCursor" in controls) {
-        controls.zoomToCursor = true;
+        controls.zoomToCursor = false;
       }
 
       const hemisphereLight = new THREE.HemisphereLight(

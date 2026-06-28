@@ -217,6 +217,18 @@ const ZOOM_CONTROL_CONTENT_WIDTH = "6.875rem";
 const ZOOM_CONTROL_MIN_PERCENT = 10;
 const ZOOM_CONTROL_MAX_PERCENT = 800;
 const ZOOM_CONTROL_STEP_PERCENT = 10;
+// Hard dolly-out limit, as a multiple of the model radius. The default fit sits at
+// ~2.5x radius, so 6x lets the user pull back for context while keeping the model
+// clearly legible (it can never shrink into a speck on an unbounded grid). It also
+// clamps any restored/persisted far perspective back into view on the next
+// controls.update(), matching the reference examples' bounded orbit radius.
+const MODEL_ZOOM_OUT_RADII = 6;
+// Orthographic zoom floor. OrbitControls zooms a PERSPECTIVE camera by dollying the
+// distance (bounded by maxDistance above), but zooms an ORTHOGRAPHIC camera by
+// scaling camera.zoom toward controls.minZoom -- which defaults to 0, i.e. the model
+// can shrink to nothing. Fit sets ortho zoom = 1, so a 0.4 floor keeps the model at
+// >= ~40% of its framed size at maximum zoom-out, mirroring the perspective bound.
+const MODEL_MIN_ORTHO_ZOOM = 0.4;
 const CAD_EDGE_OPACITY = 0.84;
 const DEFAULT_LIGHTING = {
   toneMappingExposure: 1.08,
@@ -919,7 +931,7 @@ function updateStageEffects(runtime, viewerTheme, themeSettings, radius, floorZ 
   const stageScaleMode = sceneScaleMode;
   const floorSize = getStageFloorSize(radius, stageScaleMode);
   const lightingScopeRadius = getStageEffectRadius(radius, stageScaleMode);
-  runtime.stageGroup.add(createStageFloorPlane(runtime.THREE, viewerTheme, themeSettings, floorSize, floorZ, 0));
+  runtime.stageGroup.add(createStageFloorPlane(runtime.THREE, viewerTheme, themeSettings, floorSize, floorZ, 0, radius));
   const glowPlane = createStageFloorGlowPlane(
     runtime.THREE,
     themeSettings,
@@ -3645,7 +3657,8 @@ const CadViewer = forwardRef(function CadViewer({
     syncRuntimeCameraClipPlanes(runtime, Math.max(radius / 1200, 0.01), Math.max(radius * 600, 2000));
     applyCameraFrameInsets(runtime, viewportFrameInsetsRef.current, { updateProjection: false });
     controls.minDistance = Math.max(radius / 2200, 0.02);
-    controls.maxDistance = Math.max(radius * 140, 50);
+    controls.maxDistance = Math.max(radius * MODEL_ZOOM_OUT_RADII, 12);
+    controls.minZoom = MODEL_MIN_ORTHO_ZOOM;
     controls.zoomSpeed = DEFAULT_ZOOM_SPEED;
     runtime.edgePickThreshold = Math.max(radius / 320, 0.65);
 

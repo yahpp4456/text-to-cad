@@ -492,7 +492,51 @@ export function getStageFloorGlowSize(lightingScopeRadius, size, sceneScaleMode 
   );
 }
 
-export function createStageFloorPlane(THREE, viewerTheme, themeSettings, size, floorZ, lift = 0) {
+// Stage-floor fade radii, as multiples of the model radius. The lit ground plane is
+// huge (see getStageFloorSize), so without this it meets the background in a hard,
+// view-dependent "horizon" band once the bounded grid no longer paints the whole
+// screen. Fading the floor's alpha radially -- solid out to INNER*radius, gone by
+// OUTER*radius -- dissolves it into the background, so the model sits on a soft
+// ground patch (slightly larger than the grid) with no horizon band at any angle.
+export const STAGE_FLOOR_FADE_INNER_RADII = 2.6;
+export const STAGE_FLOOR_FADE_OUTER_RADII = 3.8;
+
+// Radially fade a stage-floor material's alpha to 0 by OUTER*modelRadius, so the huge
+// lit ground plane dissolves into the scene background instead of showing a hard
+// horizon edge. Mirrors the bounded shader grid's model-anchored fade. No-op when
+// modelRadius <= 0 (keeps the legacy full-bleed floor for callers that don't opt in).
+function applyStageFloorRadialFade(material, modelRadius) {
+  if (!(modelRadius > 0)) {
+    return material;
+  }
+  const fadeInner = modelRadius * STAGE_FLOOR_FADE_INNER_RADII;
+  const fadeOuter = modelRadius * STAGE_FLOOR_FADE_OUTER_RADII;
+  material.transparent = true;
+  material.depthWrite = false;
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uFloorFadeInner = { value: fadeInner };
+    shader.uniforms.uFloorFadeOuter = { value: fadeOuter };
+    shader.vertexShader = shader.vertexShader
+      .replace("#include <common>", "#include <common>\nvarying vec2 vStageFloorXY;")
+      .replace(
+        "#include <begin_vertex>",
+        "#include <begin_vertex>\n  vStageFloorXY = (modelMatrix * vec4(transformed, 1.0)).xy;"
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nvarying vec2 vStageFloorXY;\nuniform float uFloorFadeInner;\nuniform float uFloorFadeOuter;"
+      )
+      .replace(
+        "#include <dithering_fragment>",
+        "#include <dithering_fragment>\n  gl_FragColor.a *= 1.0 - smoothstep(uFloorFadeInner, uFloorFadeOuter, length(vStageFloorXY));"
+      );
+  };
+  material.needsUpdate = true;
+  return material;
+}
+
+export function createStageFloorPlane(THREE, viewerTheme, themeSettings, size, floorZ, lift = 0, modelRadius = 0) {
   const glassFactor = resolveStageFloorGlassFactor(themeSettings);
   const horizonBlend = getStageFloorSetting(themeSettings, "horizonBlend", 0, 0, 1);
   const reflectivity = getStageFloorSetting(themeSettings, "reflectivity", 0.12, 0, 1);
@@ -571,6 +615,7 @@ export function createStageFloorPlane(THREE, viewerTheme, themeSettings, size, f
     depthWrite: opacity >= 0.999,
     envMapIntensity
   });
+  applyStageFloorRadialFade(material, modelRadius);
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1, 1, 1), material);
   mesh.position.set(0, 0, floorZ + lift);
   mesh.scale.set(size, size, 1);

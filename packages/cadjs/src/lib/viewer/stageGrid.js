@@ -15,6 +15,15 @@ import { DEFAULT_AUTO_ZOOM_PADDING } from "./autoZoom.js";
 export const DEFAULT_GRID_DIVISIONS = 28;
 export const GRID_TARGET_VISIBLE_CELLS = 1.25;
 
+// Model-anchored grid fade radii, expressed as multiples of the model radius. The
+// grid reads as a FINITE disk centred on the model: lines are solid out to
+// INNER * radius and fully faded by OUTER * radius. Because the fade is anchored to
+// the model (not the camera distance), dollying the camera out never expands the
+// grid into an infinite faint web -- it stays a bounded floor around the model,
+// like the reference examples' finite GridHelper.
+export const GRID_FADE_INNER_RADII = 2.4;
+export const GRID_FADE_OUTER_RADII = 3.4;
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
@@ -78,6 +87,100 @@ export function buildGridConfig(radius, sceneScaleMode, floorSettings = {}) {
   };
 }
 
+// Bounded reference grid. A large plane lies on the floor (z = floorZ); a fragment
+// shader draws minor/major grid lines in WORLD coordinates with fwidth anti-aliasing
+// (so lines stay crisp at every zoom) and fades them out by distance from the MODEL
+// centre -- the model is recentred to the XY origin on load, so the grid is a finite
+// disk of radius ~OUTER*modelRadius anchored to the model. Unlike a camera-distance
+// fade, dollying the camera out keeps the grid a tidy bounded floor around the model
+// instead of expanding it into an infinite faint web, matching the reference
+// examples' finite GridHelper look.
+export const STAGE_GRID_VERTEX_SHADER = `
+varying vec3 vWorldPosition;
+void main() {
+  vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+  vWorldPosition = worldPosition.xyz;
+  gl_Position = projectionMatrix * viewMatrix * worldPosition;
+}
+`;
+
+export const STAGE_GRID_FRAGMENT_SHADER = `
+precision highp float;
+varying vec3 vWorldPosition;
+uniform vec3 uCellColor;
+uniform vec3 uCenterColor;
+uniform float uOpacity;
+uniform float uCellSize;
+uniform float uFloorZ;
+uniform vec2 uGridCenter;
+uniform float uFadeInner;
+uniform float uFadeOuter;
+
+// Line coverage in [0,1] (1 on a grid line) for a given cell size, kept ~1px
+// wide via screen-space derivatives so lines stay crisp at any zoom.
+float gridLine(vec2 coord, float cell) {
+  vec2 g = coord / cell;
+  vec2 w = fwidth(g);
+  vec2 distanceToLine = abs(fract(g - 0.5) - 0.5) / max(w, vec2(1e-6));
+  float line = min(distanceToLine.x, distanceToLine.y);
+  return 1.0 - clamp(line, 0.0, 1.0);
+}
+
+void main() {
+  vec2 plane = vWorldPosition.xy;
+  float minor = gridLine(plane, uCellSize);
+  float major = gridLine(plane, uCellSize * 10.0);
+
+  // Fade by planar distance from the model centre (uGridCenter, the XY origin the
+  // model is recentred to). This makes the grid a FINITE disk anchored to the model:
+  // solid out to uFadeInner, gone by uFadeOuter. Because it is independent of the
+  // camera, dollying out keeps the grid a bounded floor around the model rather than
+  // an ever-expanding faint web, and the soft smoothstep edge avoids a hard boundary.
+  float radial = length(plane - uGridCenter);
+  float fade = 1.0 - smoothstep(uFadeInner, uFadeOuter, radial);
+  if (fade <= 0.0) {
+    discard;
+  }
+
+  float strength = max(minor * 0.55, major);
+  if (strength <= 0.0) {
+    discard;
+  }
+  vec3 color = mix(uCellColor, uCenterColor, step(0.5, major));
+  float alpha = strength * uOpacity * fade;
+  if (alpha < 0.0025) {
+    discard;
+  }
+  gl_FragColor = vec4(color, alpha);
+}
+`;
+
+function buildGridMaterial(THREE, config, floorZ) {
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uCellColor: { value: new THREE.Color(config.cellColor) },
+      uCenterColor: { value: new THREE.Color(config.centerColor) },
+      uOpacity: { value: config.opacity },
+      uCellSize: { value: config.cellSize },
+      uFloorZ: { value: floorZ },
+      // Plain [x, y] arrays upload fine as a vec2 (three uses uniform2fv), so the
+      // grid material stays free of any THREE.Vector2 dependency.
+      uGridCenter: { value: [0, 0] },
+      uFadeInner: { value: config.fadeInner },
+      uFadeOuter: { value: config.fadeOuter }
+    },
+    vertexShader: STAGE_GRID_VERTEX_SHADER,
+    fragmentShader: STAGE_GRID_FRAGMENT_SHADER,
+    transparent: true,
+    depthWrite: false,
+    toneMapped: false,
+    side: THREE.DoubleSide
+  });
+  // Needed for fwidth() under WebGL1; ignored (always available) on WebGL2.
+  material.extensions = { ...(material.extensions || {}), derivatives: true };
+  return material;
+}
+
 export function updateGridHelper(
   runtime,
   viewerTheme,
@@ -100,45 +203,52 @@ export function updateGridHelper(
     runtime.gridConfig = null;
     return;
   }
+  const base = buildGridConfig(radius, sceneScaleMode, floorSettings);
+  const style = resolveGridStyle(viewerTheme, floorSettings);
+  // Large carrier plane: far beyond the camera-relative fade so its own edge can
+  // never enter view. Scaled to the model so precision stays sane per scene.
+  const planeSize = Math.max(base.size * 16, base.cellSize * 512);
+  const safeGridRadius = clampSceneModelRadius(radius, sceneScaleMode);
   const nextConfig = {
-    ...buildGridConfig(radius, sceneScaleMode, floorSettings),
-    ...resolveGridStyle(viewerTheme, floorSettings)
+    cellSize: base.cellSize,
+    radius: safeGridRadius,
+    fadeInner: safeGridRadius * GRID_FADE_INNER_RADII,
+    fadeOuter: safeGridRadius * GRID_FADE_OUTER_RADII,
+    planeSize,
+    centerColor: style.centerColor,
+    cellColor: style.cellColor,
+    opacity: style.opacity
   };
   const currentConfig = runtime.gridConfig;
   if (
     currentConfig &&
-    currentConfig.size === nextConfig.size &&
+    runtime.gridHelper &&
     currentConfig.cellSize === nextConfig.cellSize &&
-    currentConfig.divisions === nextConfig.divisions &&
+    currentConfig.fadeInner === nextConfig.fadeInner &&
+    currentConfig.fadeOuter === nextConfig.fadeOuter &&
+    currentConfig.planeSize === nextConfig.planeSize &&
     currentConfig.centerColor === nextConfig.centerColor &&
     currentConfig.cellColor === nextConfig.cellColor &&
     currentConfig.opacity === nextConfig.opacity
   ) {
-    if (runtime.gridHelper) {
-      runtime.gridHelper.rotation.x = Math.PI / 2;
+    runtime.gridHelper.position.set(0, 0, floorZ);
+    if (runtime.gridHelper.material?.uniforms?.uFloorZ) {
+      runtime.gridHelper.material.uniforms.uFloorZ.value = floorZ;
     }
-    runtime.gridHelper?.position.set(0, 0, floorZ);
     return;
   }
 
   disposeSceneObject(runtime.gridHelper);
-  runtime.gridHelper = new runtime.THREE.GridHelper(
-    nextConfig.size,
-    nextConfig.divisions,
-    nextConfig.centerColor,
-    nextConfig.cellColor
-  );
-  const materials = Array.isArray(runtime.gridHelper.material)
-    ? runtime.gridHelper.material
-    : [runtime.gridHelper.material];
-  for (const material of materials) {
-    material.transparent = true;
-    material.opacity = nextConfig.opacity;
-    material.depthWrite = false;
-    material.toneMapped = false;
-  }
-  runtime.gridHelper.rotation.x = Math.PI / 2;
-  runtime.gridHelper.position.set(0, 0, floorZ);
-  runtime.scene.add(runtime.gridHelper);
+  const THREE = runtime.THREE;
+  const geometry = new THREE.PlaneGeometry(planeSize, planeSize);
+  const material = buildGridMaterial(THREE, nextConfig, floorZ);
+  const grid = new THREE.Mesh(geometry, material);
+  // PlaneGeometry already lies in the XY plane (normal +Z), matching the z-up CAD
+  // floor, so -- unlike GridHelper -- it needs no rotation.
+  grid.position.set(0, 0, floorZ);
+  grid.renderOrder = -1;
+  grid.frustumCulled = false;
+  runtime.gridHelper = grid;
   runtime.gridConfig = nextConfig;
+  runtime.scene.add(grid);
 }
