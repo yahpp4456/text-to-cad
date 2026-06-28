@@ -218,6 +218,21 @@ class InterferenceTests(unittest.TestCase):
             assert_no_interference(payload)
         assert_no_interference(payload, allow=[("bolt", "nut")])  # declared -> ok
 
+    def test_declared_overlap_is_reported_as_allowed_not_hidden(self) -> None:
+        # Lesson L-5: a declared (allow-listed) overlap must NOT be silently
+        # skipped -- its volume is measured and surfaced so a gross "glued blocks"
+        # whitelist is visible for review, even though it does not block the gate.
+        from build123d import Box, Pos
+
+        a = ("a", Box(10, 10, 10))
+        b = ("b", Pos(5, 0, 0) * Box(10, 10, 10))  # 5x10x10 = 500 mm^3 overlap
+        report = enumerate_interferences([a, b], allow=[("a", "b")])
+        self.assertEqual(len(report.overlaps), 0)            # declared -> does not block
+        self.assertEqual(len(report.allowed), 1)             # but IS recorded
+        self.assertAlmostEqual(report.allowed[0].overlap_volume, 500.0, places=1)
+        self.assertIn("allowed:", report.summary())          # and surfaced in the summary
+        assert_no_interference([a, b], allow=[("a", "b")])   # still passes (no raise)
+
     def test_near_miss_is_reported_not_blocking(self) -> None:
         from build123d import Box, Pos
 

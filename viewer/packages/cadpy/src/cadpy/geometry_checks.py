@@ -25,10 +25,26 @@ allow-list:
 
 - overlap  (common volume > ``overlap_tol``) on a pair NOT in ``allow`` -> defect
 - near     (``0 < gap < clearance``, no overlap)                        -> reported, not blocking
-- declared intended-contact pair (in ``allow``)                        -> skipped
+- declared intended-contact pair (in ``allow``) -> classified ``allowed``: its
+  overlap volume is still MEASURED and reported (see ``InterferenceReport.allowed``
+  and ``summary``), but it does not block.
 
 So ``assert_no_interference`` fails only on *undeclared* volume overlap; the
 author declares the intended contacts exactly as they would reason about them.
+
+Allow-list is for a genuine FIT, not a license to glue blocks (lesson L-5)
+-------------------------------------------------------------------------
+A legitimate intended contact is a real mechanical fit -- a shaft in a bore, a
+pin in a hole, a press fit, a gear mesh -- where the overlap represents that fit.
+It is NOT a license to allow-list a gross interpenetration of two distinct
+STRUCTURAL members so the gate passes ("glued blocks"): two parts that should be
+fastened cannot occupy the same volume. Model such a joint pin-mediated (a
+dowel/bolt/pin that overlaps each member in a small bore contact, while the two
+members themselves stay clear) or face-mated. Magnitude alone does not separate
+the two (a piston rod legitimately fills most of its barrel bore), so the report
+now surfaces every ``allowed`` overlap's volume for review, and a consuming model
+should assert its joined members do NOT overlap while the mediator overlaps each
+(see ``tests/.../test_parts_models.py`` and ``skills/cad/references/lessons.md``).
 
 Naming: parts are named by their build123d label (or position). Duplicate
 labels are common (identical fasteners, repeated gears), so they are
@@ -174,6 +190,16 @@ class InterferenceReport:
     def near(self) -> tuple[PairResult, ...]:
         return tuple(p for p in self.pairs if p.kind == "near")
 
+    @property
+    def allowed(self) -> tuple[PairResult, ...]:
+        """Declared intended-contact pairs, with their MEASURED overlap volume.
+
+        Surfaced (not silently skipped) so an author/reviewer can audit what is
+        being whitelisted and how much it overlaps -- a gross declared overlap
+        between two structural members is the "glued blocks" smell (lesson L-5).
+        """
+        return tuple(p for p in self.pairs if p.kind == "allowed")
+
     def summary(self) -> str:
         if not self.pairs:
             return "no part pairs to check"
@@ -188,8 +214,14 @@ class InterferenceReport:
                 f"near(<{self.clearance}mm): "
                 + ", ".join(f"{p.a}~{p.b}({p.gap:.3f}mm)" for p in nr)
             )
+        allowed_ov = tuple(p for p in self.allowed if p.overlap_volume > 0)
+        if allowed_ov:
+            out.append(
+                "allowed: "
+                + ", ".join(f"{p.a}~{p.b}({p.overlap_volume:.1f}mm^3)" for p in allowed_ov)
+            )
         if not ov and not nr:
-            out.append("no overlaps, no clearance violations")
+            out.append("no undeclared overlaps, no clearance violations")
         return "; ".join(out)
 
 
@@ -311,7 +343,13 @@ def enumerate_interferences(
         for j in range(i + 1, len(named)):
             nb, sb = named[j]
             if frozenset((na, nb)) in allow_set:
-                continue  # declared intended contact
+                # declared intended contact: still MEASURE it (so its magnitude is
+                # reviewable -- a gross declared overlap is the glued-block smell),
+                # but classify as "allowed" so it never blocks.
+                gap = min_gap(sa, sb)
+                ov = overlap_volume(sa, sb) if gap <= _TOUCH_EPS else 0.0
+                results.append(PairResult(na, nb, gap, ov, "allowed"))
+                continue
 
             gap = min_gap(sa, sb)
             ov = 0.0
