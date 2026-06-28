@@ -1,11 +1,13 @@
 """Model-level acceptance gates for the parts-catalog consumers.
 
-These lock the two integration gates from the parts plan -- the rack_pinion
-(Phase 1 dogfood: a SELECTED cylinder drives a real mechanism) and the
+These lock the integration gates from the parts plan -- the rack_pinion
+(Phase 1 dogfood: a SELECTED cylinder drives a real mechanism), the
 motorized_linear_stage (Phase 3 capstone: four selected families assemble and
-travel) -- by running each model's own ``check_geometry``, which includes the
-whole-stroke MOTION sweep, not just the seated pose. A static-only check would
-miss a mid-travel clash, so the gate is the sweep.
+travel) and the xyz_pickplace_gantry (a multi-axis machine: three selected
+motorized screw axes + four selected pneumatic nozzles) -- by running each
+model's own ``check_geometry``, which includes the whole-stroke MOTION sweep,
+not just the seated pose. A static-only check would miss a mid-travel clash, so
+the gate is the sweep.
 """
 
 from __future__ import annotations
@@ -108,6 +110,53 @@ class MotorizedLinearStageGateTests(unittest.TestCase):
         p1 = dict(self.m.pose(1.0))
         dx = p1["screw_nut"].bounding_box().min.X - p0["screw_nut"].bounding_box().min.X
         self.assertAlmostEqual(dx, self.m.STROKE, delta=1.0)
+
+
+class XyzPickPlaceGantryGateTests(unittest.TestCase):
+    """Multi-axis gate: three SELECTED motorized screw axes (X, Y, Z) plus four
+    SELECTED pneumatic nozzles assemble AND travel penetration-free over every
+    axis stroke and the cylinder down-stroke (four motion sweeps, not just seated)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.m = _load_model("xyz_pickplace_gantry", "xyz_pickplace_gantry")
+
+    def test_each_axis_selects_four_families_and_nozzle_is_selected(self):
+        for sel in (self.m.X_SEL, self.m.Y_SEL, self.m.Z_SEL):
+            models = {
+                sel["screw"]["model"], sel["guide"]["model"],
+                sel["bearing"]["model"], sel["motor"]["model"],
+            }
+            self.assertEqual(len(models), 4)  # ball screw, guide, bearing, stepper
+        self.assertIn("model", self.m.CYL_SPEC)
+        self.assertGreater(self.m.CYL_SPEC["selected_for"]["margin"], 1.0)
+
+    def test_full_assembly_check_geometry_passes(self):
+        self.m.check_geometry(self.m.gen_step())  # validity + interference + 4 sweeps
+
+    def test_every_dof_actually_travels_over_the_sweep(self):
+        # Displacement-flavor anti-vacuous guard: each carriage group (and a
+        # nozzle) must actually displace by its full stroke between pose endpoints,
+        # so the four swept DOFs really exercise motion -- a static scene swept N
+        # times would prove nothing. Covers X/Y/Z travel + one cylinder down-stroke.
+        m = self.m
+
+        def lo(frame, name, axis):
+            return getattr(dict(frame)[name].bounding_box().min, axis)
+
+        seat = m.pose()
+        self.assertAlmostEqual(
+            lo(m.pose(x=m.X_STROKE), "x_carriage_body", "X") - lo(seat, "x_carriage_body", "X"),
+            m.X_STROKE, delta=1.0)
+        self.assertAlmostEqual(
+            lo(m.pose(y=m.Y_STROKE), "y_carriage_body", "Y") - lo(seat, "y_carriage_body", "Y"),
+            m.Y_STROKE, delta=1.0)
+        self.assertAlmostEqual(
+            lo(m.pose(z=m.Z_STROKE), "z_carriage_body", "Z") - lo(seat, "z_carriage_body", "Z"),
+            -m.Z_STROKE, delta=1.0)  # the Z carriage DESCENDS as z grows
+        self.assertAlmostEqual(
+            lo(m.pose(e=(m.CYL_STROKE, 0, 0, 0)), "nozzle0", "Z") - lo(seat, "nozzle0", "Z"),
+            -m.CYL_STROKE, delta=1.0)  # nozzle 0 fires down on its own extension
 
 
 if __name__ == "__main__":
