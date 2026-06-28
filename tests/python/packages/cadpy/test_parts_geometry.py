@@ -68,6 +68,16 @@ class CylinderGeometryTests(unittest.TestCase):
         self.assertEqual(len(enumerate_interferences(cyl).overlaps), 1)
         check_cylinder(cyl)
 
+    def test_rod_protrusion_exposes_a_rod_end_when_retracted(self) -> None:
+        # a real cylinder's rod sticks out even retracted; rod_protrusion raises the
+        # retracted rod top by exactly that amount (so a coupler has an end to grip).
+        flush = self._cyl(extension=0.0)
+        proud = self._cyl(extension=0.0, rod_protrusion=8.0)
+        top_flush = max(c.bounding_box().max.Z for c in flush.children)
+        top_proud = max(c.bounding_box().max.Z for c in proud.children)
+        self.assertAlmostEqual(top_proud - top_flush, 8.0, places=3)
+        check_cylinder(proud)  # still only the intended body~rod contact
+
     def test_known_bad_rod_not_smaller_than_bore_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             pneumatic_cylinder(bore=32, stroke=20, rod_dia=32)  # rod == bore

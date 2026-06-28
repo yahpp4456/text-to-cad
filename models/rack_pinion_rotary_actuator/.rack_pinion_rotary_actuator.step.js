@@ -33,9 +33,10 @@ const rackPinionRotaryActuator = {
       support_bracket: { ref: "#o1.2", label: "Support bracket" },
       cylinder_body: { ref: "#o1.3", label: "Cylinder body" },
       piston_rod: { ref: "#o1.4", label: "Piston rod", description: "Rises with the rack." },
-      rack: { ref: "#o1.5", label: "Rack", description: "Vertical toothed bar driven by the cylinder." },
-      pinion: { ref: "#o1.6", label: "Pinion", description: "Converts rack travel into rotation about +Y." },
-      platform: { ref: "#o1.7", label: "Platform", description: "Tilts 0-90 deg with the pinion." }
+      coupler: { ref: "#o1.5", label: "Rod-rack coupler", description: "Clamps the rod end to the rack; rises with them." },
+      rack: { ref: "#o1.6", label: "Rack", description: "Vertical toothed bar driven by the cylinder." },
+      pinion: { ref: "#o1.7", label: "Pinion", description: "Converts rack travel into rotation about +Y." },
+      platform: { ref: "#o1.8", label: "Platform", description: "Tilts 0-90 deg with the pinion." }
     },
     parameters: {
       swing: {
@@ -67,9 +68,11 @@ const rackPinionRotaryActuator = {
     const travel = swing * STROKE_90;
     const angleDeg = -swing * 90;
 
-    // Rack and rod share the same vertical translation.
-    effects.transform("rack", { transforms: [{ translate: [0, 0, travel] }] });
-    effects.transform("piston_rod", { transforms: [{ translate: [0, 0, travel] }] });
+    // Rod, coupler and rack rise together as one rigid group.
+    const lift = { transforms: [{ translate: [0, 0, travel] }] };
+    effects.transform("piston_rod", lift);
+    effects.transform("coupler", lift);
+    effects.transform("rack", lift);
 
     // Pinion and platform share the same rotation about the pinion axis.
     const rotate = { rotate: { axis: SWING_AXIS, origin: SWING_ORIGIN, angleDeg } };

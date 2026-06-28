@@ -40,8 +40,8 @@ from cadpy.assembly import AssemblyHelper
 from cadpy.parts import pneumatic_cylinder, select_cylinder
 
 # --- Primary parameters ---------------------------------------------------
-BASE_LEN_X = 70.0
-BASE_WID_Y = 50.0
+BASE_LEN_X = 85.0
+BASE_WID_Y = 60.0
 BASE_T = 8.0
 BASE_CENTER_X = -10.0
 BASE_HOLE_D = 5.0
@@ -73,10 +73,15 @@ REQ_STROKE = STROKE_90
 CYL_SPEC = select_cylinder(
     load_N=CYL_LOAD_N, pressure_bar=CYL_PRESSURE_BAR, stroke_mm=REQ_STROKE
 )
-# Cylinder is mounted upright on the base, offset +X so its (selected) body
-# diameter clears the pinion support bracket; the rod drives the rack from below.
+# Cylinder mounted upright on the base, offset +X so its (selected) body diameter
+# clears the pinion support bracket, and offset to the rack's -Y centerline so the
+# rod, coupler and rack all sit on -Y and never reach the +Y platform mid-swing.
 CYL_X = 9.0
+CYL_Y = -6.0          # = RACK_Y_CENTER, so the rod is coaxial-in-Y with the rack
 CYL_BASE_Z = BASE_T
+# The rod always protrudes this far above the barrel even fully retracted, exposing
+# a rod end that the coupler clamps to the rack (a real cylinder presents one).
+ROD_PROTRUDE = 6.0
 
 
 def _placed_cylinder():
@@ -84,8 +89,8 @@ def _placed_cylinder():
 
     Returns (body, rod) where body is static and rod is the rigid piston at its
     topmost (fully extended) position; pose() slides the rod back down by the
-    retracted amount. Built fully extended so the rigid rod is long enough to stay
-    engaged in the barrel across the whole stroke.
+    retracted amount. Built fully extended plus the fixed protrusion so the rigid
+    rod stays engaged in the barrel AND exposes an end above it across the stroke.
     """
     cyl = pneumatic_cylinder(
         bore=CYL_SPEC["bore"],
@@ -93,19 +98,32 @@ def _placed_cylinder():
         extension=REQ_STROKE,
         rod_dia=CYL_SPEC["rod_dia"],
         body_dia=CYL_SPEC["body_dia"],
+        rod_protrusion=ROD_PROTRUDE,
     )
-    body = cyl.children[0].translate((CYL_X, 0.0, CYL_BASE_Z))
-    rod = cyl.children[1].translate((CYL_X, 0.0, CYL_BASE_Z))
+    body = cyl.children[0].translate((CYL_X, CYL_Y, CYL_BASE_Z))
+    rod = cyl.children[1].translate((CYL_X, CYL_Y, CYL_BASE_Z))
     body.label = "cylinder_body"
     rod.label = "piston_rod"
     return body, rod
 
 
 _CYL_BODY, _CYL_ROD_EXTENDED = _placed_cylinder()
-# Rod top at full extension == rack bottom at full swing; subtract the stroke to
-# get the seated rack bottom (where the retracted rod top sits).
-BODY_TOP_Z = _CYL_BODY.bounding_box().max.Z
-RACK_BOTTOM_Z = BODY_TOP_Z  # seated: rack rests on the retracted rod top
+BODY_TOP_Z = _CYL_BODY.bounding_box().max.Z          # ~46.05
+# Seated retracted rod end sits ROD_PROTRUDE above the body top; the coupler ties
+# that end to the rack bottom. The rack bottom must stay at/below the lowest tooth
+# (teeth start at PINION_Z - 22 = 56), so it sits in the gap above the body, a hair
+# above the rod end (the rod and rack do not touch -- the coupler bridges them).
+ROD_TOP_SEATED = BODY_TOP_Z + ROD_PROTRUDE           # ~52.05
+RACK_BOTTOM_Z = 53.0
+
+# --- Coupler: the rod-to-rack connector -----------------------------------
+# A clamp block that captures the exposed rod end AND the rack bottom (both are
+# declared INTENDED contact), so the rod actually drives the rack through a part,
+# not by resting against it. It rides in the gap between the body top and the rack,
+# entirely on the -Y side, and translates with the rod+rack group.
+COUPLER_Z0, COUPLER_Z1 = 48.0, 58.0
+COUPLER_X0, COUPLER_X1 = -4.0, 16.0
+COUPLER_Y0, COUPLER_Y1 = -12.0, 0.0
 
 # Rack: backing bar on +X side of the pitch line, block teeth pointing -X toward
 # the pinion. RACK_BACKLASH only pulls the tooth tips back a touch; it does NOT
@@ -240,6 +258,19 @@ def make_platform():
     return table + hub
 
 
+def make_coupler():
+    """Clamp block tying the exposed rod end to the rack bottom. It captures both
+    (declared intended contact), sits in the gap above the cylinder body, and rides
+    the rod+rack group -- this is the connector, not a resting contact."""
+    return Pos(
+        (COUPLER_X0 + COUPLER_X1) / 2.0,
+        (COUPLER_Y0 + COUPLER_Y1) / 2.0,
+        (COUPLER_Z0 + COUPLER_Z1) / 2.0,
+    ) * Box(
+        COUPLER_X1 - COUPLER_X0, COUPLER_Y1 - COUPLER_Y0, COUPLER_Z1 - COUPLER_Z0
+    )
+
+
 # ===========================================================================
 # Kinematics -- one source of truth for static / sweep / sidecar
 # ===========================================================================
@@ -260,6 +291,7 @@ def _base_parts():
         ("support_bracket", make_support_bracket()),
         ("cylinder_body", _CYL_BODY),
         ("piston_rod", _CYL_ROD_EXTENDED),
+        ("coupler", make_coupler()),
         ("rack", make_rack()),
         ("pinion", make_pinion()),
         ("platform", make_platform()),
@@ -268,10 +300,12 @@ def _base_parts():
 
 def _move(name, shape, swing):
     travel, angle = kin(swing)
-    if name == "rack":
+    if name in ("rack", "coupler"):
+        # rack and its coupler rise rigidly together with the rod
         return shape.translate((0.0, 0.0, travel))
     if name == "piston_rod":
         # rod is built fully extended; slide it down by the not-yet-extended amount
+        # (net: rod, coupler and rack move as one rigid group by `travel`)
         return shape.translate((0.0, 0.0, travel - STROKE_90))
     if name in ("pinion", "platform"):
         return shape.rotate(SWING_AXIS, angle)
@@ -283,27 +317,34 @@ def pose(swing):
     return [(n, _move(n, s, swing)) for n, s in _base_parts()]
 
 
-# Intended contact at the seated pose (declared to the static gate): the rod
-# rides in the barrel bore (volume overlap), the rod pushes the rack (a coincident
-# face contact -- a compression drive, not interpenetration), the rack meshes the
-# pinion, and the platform hub rides the pinion shaft. (rack~platform is NOT a
-# contact: the rack runs on the -Y side, the platform on +Y.)
+# Intended contact at the seated pose (declared to the static gate): the rod rides
+# in the barrel bore, the COUPLER clamps both the exposed rod end and the rack
+# bottom (the real rod->rack connection), the rack meshes the pinion, and the
+# platform hub rides the pinion shaft. The rod and rack do NOT touch directly (the
+# coupler bridges a small gap); rack~platform is not a contact (rack on -Y,
+# platform on +Y).
 INTENDED_CONTACT = [
     ("cylinder_body", "piston_rod"),
-    ("piston_rod", "rack"),
+    ("coupler", "piston_rod"),
+    ("coupler", "rack"),
     ("rack", "pinion"),
     ("pinion", "platform"),
 ]
 
-# Pairs whose clearance is swept over the whole stroke. The rack/pinion mesh is
-# the real dogfood: the SELECTED cylinder's rod drives the rack through a rolling
-# gear mesh, which must stay penetration-free beyond the seated backlash.
+# Pairs swept over the whole stroke. The rack/pinion mesh is the dogfood (the
+# selected cylinder's rod drives the rack through a rolling mesh); the coupler-vs-
+# static-structure pairs guard that the new connector clears the body/bracket/
+# platform as the rod+coupler+rack group rises.
 _SWEEP_PAIRS = [
     ("rack", "pinion"),
     ("rack", "platform"),
     ("rack", "support_bracket"),
     ("piston_rod", "cylinder_body"),
-    ("piston_rod", "rack"),
+    ("coupler", "piston_rod"),
+    ("coupler", "rack"),
+    ("coupler", "cylinder_body"),
+    ("coupler", "support_bracket"),
+    ("coupler", "platform"),
 ]
 
 # The block-tooth mesh is a geometric approximation of an involute gear: its

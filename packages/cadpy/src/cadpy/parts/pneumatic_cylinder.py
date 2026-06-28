@@ -27,19 +27,26 @@ def pneumatic_cylinder(
     extension: float = 0.0,
     rod_dia: float | None = None,
     body_dia: float | None = None,
+    rod_protrusion: float = 0.0,
     label_prefix: str = "cyl",
 ) -> Any:
-    """A barrel + rod compound, rod protruding by ``extension`` in [0, stroke].
+    """A barrel + rod compound, rod protruding by ``rod_protrusion + extension``.
 
-    ``rod_dia``/``body_dia`` default to bore-proportional values when not given
-    (use the selected row's values for a real part). Children are labeled
-    ``<prefix>_body`` and ``<prefix>_rod`` so an interference check can name and
-    allow their (intended) bore contact.
+    ``extension`` in [0, stroke] is the stroke-driven travel; ``rod_protrusion``
+    is the fixed amount the rod always sticks out beyond the body face even fully
+    RETRACTED (extension 0) -- the exposed rod end a real cylinder presents for a
+    clevis/coupling. Default 0 keeps the rod flush at retraction. ``rod_dia`` /
+    ``body_dia`` default to bore-proportional values when not given (use the
+    selected row's values for a real part). Children are labeled ``<prefix>_body``
+    and ``<prefix>_rod`` so an interference check can name and allow their
+    (intended) bore contact.
     """
     if bore <= 0 or stroke < 0:
         raise ValueError("bore must be > 0 and stroke >= 0")
     if not -1e-9 <= extension <= stroke + 1e-9:
         raise ValueError(f"extension {extension} must be in [0, stroke={stroke}]")
+    if rod_protrusion < 0:
+        raise ValueError("rod_protrusion must be >= 0")
     if rod_dia is None:
         rod_dia = 0.4 * bore
     if not 0 < rod_dia < bore:
@@ -56,7 +63,7 @@ def pneumatic_cylinder(
 
     engage = _ROD_ENGAGE * bore
     rod_bottom = body_len - engage
-    rod_top = body_len + extension
+    rod_top = body_len + rod_protrusion + extension
     rod = Pos(0.0, 0.0, (rod_bottom + rod_top) / 2.0) * Cylinder(
         rod_dia / 2.0, rod_top - rod_bottom
     )
