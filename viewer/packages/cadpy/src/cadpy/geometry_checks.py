@@ -55,6 +55,7 @@ the name shown in :class:`InterferenceReport` / the failure message.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Iterable, Sequence
 
@@ -303,6 +304,27 @@ def _normalize_allow(allow: Iterable[Sequence[str]] | None) -> set[frozenset[str
     return out
 
 
+def _shape_aabb(shape) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """Conservative axis-aligned box (OCC bounding boxes CONTAIN the shape)."""
+    bb = shape.bounding_box()
+    return ((bb.min.X, bb.min.Y, bb.min.Z), (bb.max.X, bb.max.Y, bb.max.Z))
+
+
+def _aabb_separation(a, b) -> float:
+    """Euclidean separation of two AABBs (0.0 when they intersect/touch).
+
+    Because each box CONTAINS its shape, this is a true LOWER BOUND on the
+    exact ``min_gap`` -- a pair whose boxes are separated by more than the
+    required clearance cannot overlap nor violate that clearance.
+    """
+    total = 0.0
+    for k in range(3):
+        d = max(a[0][k] - b[1][k], b[0][k] - a[1][k])
+        if d > 0.0:
+            total += d * d
+    return math.sqrt(total)
+
+
 def enumerate_interferences(
     parts: Any,
     *,
@@ -312,9 +334,12 @@ def enumerate_interferences(
 ) -> InterferenceReport:
     """Sweep every unordered part pair and classify it (detect, never raise).
 
-    Cost is O(n^2) exact kernel queries (a distance per pair, plus a boolean
-    intersection per touching pair) with no broad-phase, so it is intended for
-    the small-to-moderate assemblies this skill produces, not hundreds of parts.
+    Cost is O(n^2), but an AABB broad-phase skips the exact kernel queries for
+    pairs whose boxes (grown by ``clearance``) are disjoint -- those are
+    reported as ``clear`` with the box separation as the gap lower bound. Only
+    the surviving candidate pairs pay a distance query (plus a boolean
+    intersection per touching pair), so moderate assemblies (tens of parts)
+    stay fast; hundreds of parts remain out of scope.
 
     Parameters
     ----------
@@ -337,6 +362,8 @@ def enumerate_interferences(
     named = _as_named_parts(parts)
     allow_set = _normalize_allow(allow)
     results: list[PairResult] = []
+    # Broad-phase: one conservative AABB per part, computed once up front.
+    boxes = [_shape_aabb(s) for _, s in named]
 
     for i in range(len(named)):
         na, sa = named[i]
@@ -349,6 +376,15 @@ def enumerate_interferences(
                 gap = min_gap(sa, sb)
                 ov = overlap_volume(sa, sb) if gap <= _TOUCH_EPS else 0.0
                 results.append(PairResult(na, nb, gap, ov, "allowed"))
+                continue
+
+            # Broad-phase skip: box separation is a lower bound on the exact
+            # gap, so beyond the clearance the verdict can only be "clear".
+            # The pair is still REPORTED (pair enumeration stays complete);
+            # its gap is the box separation, an honest lower bound.
+            sep = _aabb_separation(boxes[i], boxes[j])
+            if sep > clearance and sep > _TOUCH_EPS:
+                results.append(PairResult(na, nb, sep, 0.0, "clear"))
                 continue
 
             gap = min_gap(sa, sb)

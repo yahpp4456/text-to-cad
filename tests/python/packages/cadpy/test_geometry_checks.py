@@ -268,6 +268,66 @@ class InterferenceTests(unittest.TestCase):
         self.assertIn("overlap:", report.summary())
 
 
+class BroadPhaseTests(unittest.TestCase):
+    """AABB broad-phase 必須是純提速:配對數、判定、allowed 量測全不變。"""
+
+    def test_pair_enumeration_complete_and_far_pair_clear(self) -> None:
+        from build123d import Box, Pos
+
+        a = ("a", Box(10, 10, 10))
+        b = ("b", Pos(5, 0, 0) * Box(10, 10, 10))  # 500 mm^3 overlap
+        c = ("c", Pos(30, 0, 0) * Box(10, 10, 10))  # far -> broad-phase skip
+        report = enumerate_interferences([a, b, c])
+        self.assertEqual(len(report.pairs), 3)  # skipped pairs are still reported
+        by_pair = {frozenset((p.a, p.b)): p for p in report.pairs}
+        self.assertEqual(by_pair[frozenset(("a", "b"))].kind, "overlap")
+        far = by_pair[frozenset(("a", "c"))]
+        self.assertEqual(far.kind, "clear")
+        # 跳過對的 gap = box 間距,對軸對齊 box 恰為精確值(誠實下界)
+        self.assertAlmostEqual(far.gap, 20.0, places=3)
+
+    def test_clearance_grows_the_broad_phase_margin(self) -> None:
+        from build123d import Box, Pos
+
+        a = ("a", Box(10, 10, 10))  # x in [-5, 5]
+        b = ("b", Pos(11, 0, 0) * Box(10, 10, 10))  # gap 1 < clearance 2
+        report = enumerate_interferences([a, b], clearance=2.0)
+        self.assertEqual(len(report.near), 1)  # 必須進 kernel 而非被預過濾掉
+
+    def test_beyond_clearance_pair_is_clear_without_kernel(self) -> None:
+        from build123d import Box, Pos
+
+        a = ("a", Box(10, 10, 10))
+        b = ("b", Pos(20, 0, 0) * Box(10, 10, 10))  # gap 10 > clearance 2
+        report = enumerate_interferences([a, b], clearance=2.0)
+        self.assertEqual([p.kind for p in report.pairs], ["clear"])
+        self.assertGreaterEqual(report.pairs[0].gap, 10.0 - 1e-6)
+
+    def test_diagonal_separation_lower_bound(self) -> None:
+        import math
+
+        from build123d import Box, Pos
+
+        a = ("a", Box(10, 10, 10))
+        b = ("b", Pos(15, 15, 15) * Box(10, 10, 10))  # 角對角間距 5*sqrt(3)
+        report = enumerate_interferences([a, b])
+        p = report.pairs[0]
+        self.assertEqual(p.kind, "clear")
+        self.assertGreater(p.gap, 0.0)
+        self.assertLessEqual(p.gap, 5.0 * math.sqrt(3.0) + 1e-6)  # 下界不得超過精確值
+
+    def test_allowed_pairs_still_measured_with_far_parts_present(self) -> None:
+        from build123d import Box, Pos
+
+        a = ("a", Box(10, 10, 10))
+        b = ("b", Pos(5, 0, 0) * Box(10, 10, 10))  # 宣告接觸 500 mm^3
+        c = ("c", Pos(40, 0, 0) * Box(10, 10, 10))  # 被 broad-phase 跳過
+        report = enumerate_interferences([a, b, c], allow=[("a", "b")])
+        self.assertEqual(len(report.overlaps), 0)
+        self.assertEqual(len(report.allowed), 1)  # allowed 永遠照常量測
+        self.assertAlmostEqual(report.allowed[0].overlap_volume, 500.0, places=1)
+
+
 class MotionSweepTests(unittest.TestCase):
     """The motion sweep extends interference from one pose to a whole travel.
     Locked by the injected defect that started it: a part that is clear at BOTH
