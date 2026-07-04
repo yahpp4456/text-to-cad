@@ -1,0 +1,24 @@
+{
+  "name": "cad-chat",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "本機網頁版『對話式 CAD 產圖』 — Claude Agent SDK(綁訂閱)驅動 text-to-cad pipeline。",
+  "scripts": {
+    "dev": "node src/server/server.mjs --dev",
+    "build": "vite build",
+    "serve": "node src/server/server.mjs",
+    "start": "node src/server/server.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.195",
+    "gifenc": "^1.0.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "three": "0.160.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.7.0",
+    "vite": "^7.3.2"
+  }
+}

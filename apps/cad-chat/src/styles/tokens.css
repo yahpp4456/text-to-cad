@@ -1,0 +1,119 @@
+/* SUIYAO 淺色企業風 design tokens(取自 cad-chat.dc.html / design-system base.md)。 */
+:root {
+  /* 品牌色 */
+  --ink: #2e3192; /* 主色:標題/按鈕/編號 */
+  --design: #3461b5; /* DESIGN accent 藍 */
+  --emit: #18a0c4; /* EMIT accent 青 */
+  --part: #34ab86; /* PART accent 薄荷綠 */
+  --amber: #e8a13a; /* 自我修正/工程標註 */
+  --danger: #d64848; /* 失敗/中斷 */
+
+  /* 中性色 */
+  --bg: #eef1f6;
+  --panel: #ffffff;
+  --panel-sub: #fafbfd;
+  --line: #e4e8f0;
+  --line-soft: #eef1f6;
+  --text: #1c2150;
+  --text-muted: #8a93a3;
+  --text-dim: #6b7480;
+
+  /* 字型 */
+  --font-display: "Anton", sans-serif;
+  --font-eyebrow: "Oswald", sans-serif;
+  --font-body: "Noto Sans TC", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  /* 切角 clip-path(對角缺角,非圓角) */
+  --chamfer-14: polygon(
+    0 0,
+    calc(100% - 14px) 0,
+    100% 14px,
+    100% 100%,
+    14px 100%,
+    0 calc(100% - 14px)
+  );
+  --chamfer-12: polygon(
+    0 0,
+    calc(100% - 12px) 0,
+    100% 12px,
+    100% 100%,
+    12px 100%,
+    0 calc(100% - 12px)
+  );
+  --chamfer-10: polygon(
+    0 0,
+    calc(100% - 10px) 0,
+    100% 10px,
+    100% 100%,
+    10px 100%,
+    0 calc(100% - 10px)
+  );
+  /* 小膠囊:左上 + 右下單角斜切 */
+  --chamfer-pill: polygon(
+    6px 0,
+    100% 0,
+    100% calc(100% - 6px),
+    calc(100% - 6px) 100%,
+    0 100%,
+    0 6px
+  );
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+body {
+  font-family: var(--font-body);
+  color: var(--text);
+  background: linear-gradient(180deg, #f3f5f9, #eceff5);
+}
+::selection {
+  background: var(--ink);
+  color: #fff;
+}
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d4dae6;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes msgin {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes barflow {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 40px 0;
+  }
+}
