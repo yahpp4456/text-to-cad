@@ -188,6 +188,33 @@ python scripts/inspect align path/to/assembly.step \
 
 Use `--mode flush` for coplanar face alignment. Use `--mode center` for centerline, plane-center, or symmetrical alignment where supported by the selected references. If the returned delta is outside tolerance, apply a source-level correction (see below), regenerate, and rerun inspection.
 
+### Rotation alignment (`--mode axis`)
+
+When the moving part's direction (cylinder/cone/torus axis, circle axis, line direction, plane
+normal, or occurrence frame Z) must match the target's direction, use `--mode axis`:
+
+```bash
+python scripts/inspect align path/to/assembly.step \
+  --moving '#moving_selector' \
+  --target '#target_selector' \
+  --mode axis
+```
+
+The result's `alignment.rotation` carries the delta in three equivalent forms plus centering:
+
+- `axis` + `angleDeg` + `pivot`: apply as `part.rotate(Axis(pivot, axis), angleDeg)`.
+- `eulerXYZDeg`: apply as build123d `Rotation(rx, ry, rz)` (convention locked by tests).
+- `matrix`: 16-float row-major affine about the pivot, for debugging.
+- `residualTranslation`: radial centering delta that makes the two axes collinear after the
+  rotation. Along-axis placement is deliberately out of scope — follow with `--mode flush`.
+
+`variant` reports whether the recommended rotation is `parallel` or `antiparallel` (plane
+normals prefer antiparallel mating; undirected axes take the smaller angle), and `alternate`
+carries the other option. Degenerate inputs behave deterministically: already-parallel returns
+`angleDeg: 0` with `axis: null`; antiparallel returns 180° about a deterministic perpendicular
+axis; a selector with no usable direction (bbox-only) is a hard error, not a silent identity.
+`--axis`/`--offset` have no meaning in this mode (the direction comes from the target selector).
+
 ## Frame validation
 
 Use `frame` to inspect an occurrence or selector's world frame:

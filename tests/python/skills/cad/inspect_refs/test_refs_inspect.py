@@ -929,5 +929,119 @@ class InspectRefsTests(unittest.TestCase):
         self.assertEqual([2.0, 0.0, 0.0], result["alignment"]["translationVector"])
         self.assertEqual(2.0, result["alignment"]["transformTranslationDelta"]["3"])
 
+    # ── mode="axis" 旋轉對齊:fixture 加一個 z 軸圓柱面(f3),與既有 x 軸圓柱(f2)、
+    # z 法向平面(f1)、x 方向線邊(e1)組成全部變體/退化案例。──
+
+    def _axis_manifest(self) -> dict[str, object]:
+        manifest = _refs_manifest(self.cad_ref)
+        manifest["faces"].append(
+            [
+                "o1.2.f3",
+                "o1.2",
+                "o1.2.s1",
+                3,
+                "cylinder",
+                15.0,
+                [1.0, 1.0, 5.0],
+                [0.0, 0.0, 1.0],
+                {"min": [0.0, 0.0, 0.0], "max": [2.0, 2.0, 10.0]},
+                1,
+                0,
+                55,
+                0,
+                {"center": [1.0, 1.0, 5.0], "axis": [0.0, 0.0, 1.0], "radius": 1.0},
+                0,
+                0,
+            ]
+        )
+        manifest["stats"]["faceCount"] = 3
+        manifest["shapes"][0][9] = 3  # shape row faceCount 欄
+        return manifest
+
+    def test_axis_mode_rotates_cylinder_axis_onto_target(self) -> None:
+        with self._mock_glb_topology(self._axis_manifest()):
+            result = refs_inspect.align_targets(self.cad_ref, "#o1.2.f2", "#o1.2.f3", mode="axis")
+
+        self.assertTrue(result["ok"])
+        rotation = result["alignment"]["rotation"]
+        self.assertEqual("parallel", rotation["variant"])
+        self.assertAlmostEqual(90.0, rotation["angleDeg"], places=9)
+        # cross(x, z) = -y
+        self.assertEqual([0.0, -1.0, 0.0], [round(c, 9) for c in rotation["axis"]])
+        self.assertEqual([7.0, 2.0, 1.0], rotation["pivot"])
+        # 徑向對心:d = target−pivot = [-6,-1,4],沿 z 投影後殘差 [-6,-1,0]
+        self.assertEqual([-6.0, -1.0, 0.0], [round(c, 9) for c in rotation["residualTranslation"]])
+        self.assertEqual([-6.0, -1.0, 0.0], [round(c, 9) for c in result["alignment"]["translationVector"]])
+        self.assertTrue(result["alignment"]["rotationRequired"])
+        self.assertEqual(3, len(rotation["eulerXYZDeg"]))
+        self.assertEqual(16, len(rotation["matrix"]))
+        # matrix 是繞 pivot 的仿射:pivot 為不動點
+        m = rotation["matrix"]
+        px, py, pz = rotation["pivot"]
+        moved = [
+            m[0] * px + m[1] * py + m[2] * pz + m[3],
+            m[4] * px + m[5] * py + m[6] * pz + m[7],
+            m[8] * px + m[9] * py + m[10] * pz + m[11],
+        ]
+        for got, want in zip(moved, rotation["pivot"]):
+            self.assertAlmostEqual(want, got, places=9)
+        self.assertEqual("antiparallel", rotation["alternate"]["variant"])
+
+    def test_axis_mode_plane_normal_prefers_antiparallel(self) -> None:
+        with self._mock_glb_topology(self._axis_manifest()):
+            result = refs_inspect.align_targets(self.cad_ref, "#o1.2.f1", "#o1.2.f3", mode="axis")
+
+        rotation = result["alignment"]["rotation"]
+        self.assertEqual("antiparallel", rotation["variant"])
+        self.assertAlmostEqual(180.0, rotation["angleDeg"], places=9)
+        self.assertEqual("normal", rotation["sources"]["moving"])
+
+    def test_axis_mode_parallel_is_identity(self) -> None:
+        # x 圓柱 → x 線方向:angle 0、axis None、不需旋轉
+        with self._mock_glb_topology(self._axis_manifest()):
+            result = refs_inspect.align_targets(self.cad_ref, "#o1.2.f2", "#o1.2.e1", mode="axis")
+
+        rotation = result["alignment"]["rotation"]
+        self.assertEqual(0.0, rotation["angleDeg"])
+        self.assertIsNone(rotation["axis"])
+        self.assertFalse(result["alignment"]["rotationRequired"])
+
+    def test_axis_mode_occurrence_frame_fallback(self) -> None:
+        # 母 token(#o1.2):方向取 occurrence frame 的 localAxes.z
+        with self._mock_glb_topology(self._axis_manifest()):
+            result = refs_inspect.align_targets(self.cad_ref, "#o1.2", "#o1.2.f3", mode="axis")
+
+        rotation = result["alignment"]["rotation"]
+        self.assertEqual("frameZ", rotation["sources"]["moving"])
+        self.assertAlmostEqual(0.0, rotation["angleDeg"])
+
+    def test_axis_mode_bbox_only_selector_fails_loudly(self) -> None:
+        with self._mock_glb_topology(self._axis_manifest()):
+            with self.assertRaises(refs_inspect.CadRefError) as ctx:
+                refs_inspect.align_targets(self.cad_ref, "#o1.2.s1", "#o1.2.f3", mode="axis")
+        self.assertIn("bbox-only", str(ctx.exception))
+
+    def test_axis_mode_rejects_axis_argument(self) -> None:
+        with self._mock_glb_topology(self._axis_manifest()):
+            with self.assertRaises(refs_inspect.CadRefError):
+                refs_inspect.align_targets(self.cad_ref, "#o1.2.f2", "#o1.2.f3", mode="axis", axis="x")
+
+    def test_axis_mode_offset_ignored_with_note(self) -> None:
+        with self._mock_glb_topology(self._axis_manifest()):
+            result = refs_inspect.align_targets(
+                self.cad_ref, "#o1.2.f2", "#o1.2.f3", mode="axis", offset=2.0
+            )
+        self.assertTrue(any("offset" in note for note in result["alignment"]["notes"]))
+
+    def test_axis_mode_through_cli_worker_dispatch(self) -> None:
+        # worker/batch 與 CLI 共用 build_parser + inspect_command_result:choices 更新即生效
+        with self._mock_glb_topology(self._axis_manifest()):
+            exit_code, result = inspect_cli.inspect_command_result(
+                ["align", self.cad_ref, "--moving", "#o1.2.f2", "--target", "#o1.2.f3", "--mode", "axis"]
+            )
+        self.assertEqual(0, exit_code)
+        self.assertIn("rotation", result["alignment"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -349,6 +349,94 @@ def vector_relationship(
     }
 
 
+ROTATION_ANGLE_EPS_DEG = 0.01
+
+
+def _cross(
+    left: tuple[float, float, float],
+    right: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    return (
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    )
+
+
+def rotation_between_vectors(source: object, target: object) -> dict[str, object] | None:
+    """兩方向向量間的最短旋轉(axis-angle;輸入自動正規化,純方向計算)。
+
+    退化:平行(angle<=EPS)→ ``{"axis": None, "angleDeg": 0.0}``;
+    反平行(>=180-EPS)→ 180 度,旋轉軸不唯一,取確定性軸
+    ``normalize(cross(source, 分量最小的全域座標軸))``(可測試鎖定)。
+    任一向量無效(零長/格式錯)→ ``None``。
+    """
+    src = _normalize(_float_triplet(source))
+    dst = _normalize(_float_triplet(target))
+    if src is None or dst is None:
+        return None
+    dot = max(-1.0, min(1.0, _dot(src, dst)))
+    angle_deg = math.degrees(math.acos(dot))
+    if angle_deg <= ROTATION_ANGLE_EPS_DEG:
+        return {"axis": None, "angleDeg": 0.0}
+    if angle_deg >= 180.0 - ROTATION_ANGLE_EPS_DEG:
+        smallest = min(range(3), key=lambda index: abs(src[index]))
+        basis = tuple(1.0 if index == smallest else 0.0 for index in range(3))
+        axis = _normalize(_cross(src, basis))
+        if axis is None:  # 理論上不可能(basis 與 src 不平行),防衛而已
+            return None
+        return {"axis": list(axis), "angleDeg": 180.0}
+    axis = _normalize(_cross(src, dst))
+    if axis is None:
+        return {"axis": None, "angleDeg": 0.0}
+    return {"axis": list(axis), "angleDeg": angle_deg}
+
+
+def axis_angle_matrix(axis: object, angle_deg: object) -> list[list[float]] | None:
+    """Rodrigues:axis-angle → 3x3 旋轉矩陣(rows 清單;axis 自動正規化)。"""
+    unit = _normalize(_float_triplet(axis))
+    if unit is None:
+        return None
+    try:
+        theta = math.radians(float(angle_deg))
+    except (TypeError, ValueError):
+        return None
+    cos_t = math.cos(theta)
+    sin_t = math.sin(theta)
+    one_c = 1.0 - cos_t
+    x, y, z = unit
+    return [
+        [cos_t + x * x * one_c, x * y * one_c - z * sin_t, x * z * one_c + y * sin_t],
+        [y * x * one_c + z * sin_t, cos_t + y * y * one_c, y * z * one_c - x * sin_t],
+        [z * x * one_c - y * sin_t, z * y * one_c + x * sin_t, cos_t + z * z * one_c],
+    ]
+
+
+def matrix_to_euler_xyz_deg(matrix: object) -> list[float] | None:
+    """3x3 旋轉矩陣 → euler 角(度),使 ``R = Rx(rx) @ Ry(ry) @ Rz(rz)``。
+
+    契合 build123d ``Rotation(rx, ry, rz)`` 的組成順序(整合測試鎖定)。
+    gimbal(|ry|≈90 度)時取 rz=0 的解。
+    """
+    if not isinstance(matrix, (list, tuple)) or len(matrix) != 3:
+        return None
+    try:
+        rows = [[float(matrix[r][c]) for c in range(3)] for r in range(3)]
+    except (TypeError, ValueError, IndexError):
+        return None
+    sin_y = max(-1.0, min(1.0, rows[0][2]))
+    ry = math.asin(sin_y)
+    if abs(sin_y) < 1.0 - 1e-9:
+        rx = math.atan2(-rows[1][2], rows[2][2])
+        rz = math.atan2(-rows[0][1], rows[0][0])
+    else:
+        rz = 0.0
+        rx = math.atan2(rows[1][0], rows[1][1])
+        if sin_y < 0.0:
+            rx = -rx
+    return [math.degrees(rx), math.degrees(ry), math.degrees(rz)]
+
+
 def geometry_facts_for_row(
     selector_type: str,
     row: dict[str, object],

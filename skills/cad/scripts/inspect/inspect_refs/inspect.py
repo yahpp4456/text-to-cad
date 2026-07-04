@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -744,6 +745,20 @@ def _primary_vector(positioning: dict[str, object]) -> object:
     return None
 
 
+def _axis_mode_vector(positioning: dict[str, object]) -> tuple[object, str | None]:
+    """mode="axis" 的方向來源(軸類優先,平面法向次之,occurrence frame 殿後)。"""
+    for key in ("axisVector", "direction", "normal"):
+        value = positioning.get(key)
+        if value is not None and value != "":
+            return value, key
+    local_axes = positioning.get("localAxes")
+    if isinstance(local_axes, dict):
+        z_axis = local_axes.get("z")
+        if z_axis is not None and z_axis != "":
+            return z_axis, "frameZ"
+    return None, None
+
+
 def inspect_target_frame(
     entry_target: str,
     selector: str = "",
@@ -850,10 +865,126 @@ def align_targets(
     moving_positioning = _selection_positioning_payload(moving_selection)
     target_positioning = _selection_positioning_payload(target_selection)
     normalized_mode = str(mode or "flush").strip().lower()
-    if normalized_mode not in {"flush", "center"}:
-        raise CadRefError(f"Unsupported alignment mode {mode!r}; expected 'flush' or 'center'.")
+    if normalized_mode not in {"flush", "center", "axis"}:
+        raise CadRefError(f"Unsupported alignment mode {mode!r}; expected 'flush', 'center', or 'axis'.")
 
-    if normalized_mode == "center":
+    notes: list[str] = []
+    rotation_payload: dict[str, object] | None = None
+    if normalized_mode == "axis":
+        # 旋轉對齊:姿態(axis-angle)+ 徑向對心(residualTranslation);
+        # 沿軸位置刻意不管——那是既有 flush 的職責(正交分工)。
+        if axis is not None and str(axis).strip():
+            raise CadRefError(
+                "mode='axis' derives the direction from the target selector; drop --axis "
+                "(world-axis alignment is not supported yet)."
+            )
+        if float(offset):
+            notes.append(
+                "offset has no radial meaning in mode='axis'; ignored (use mode='flush' for along-axis placement)."
+            )
+        moving_vector, moving_source = _axis_mode_vector(moving_positioning)
+        target_vector, target_source = _axis_mode_vector(target_positioning)
+        missing = []
+        if moving_vector is None:
+            missing.append(f"moving {moving_selector!r}")
+        if target_vector is None:
+            missing.append(f"target {target_selector!r}")
+        if missing:
+            raise CadRefError(
+                "mode='axis' needs a direction on both selectors (cylinder/cone/torus axis, "
+                "circle axis, line direction, plane normal, or occurrence frame); "
+                + " and ".join(missing)
+                + " resolved to bbox-only geometry."
+            )
+        pivot = analysis.positioning_point(moving_positioning)
+        if pivot is None:
+            raise CadRefError("mode='axis' could not derive a pivot point from the moving selector.")
+
+        try:
+            negated_target = [-float(component) for component in target_vector]
+        except (TypeError, ValueError):
+            negated_target = None
+        rot_parallel = analysis.rotation_between_vectors(moving_vector, target_vector)
+        rot_anti = (
+            analysis.rotation_between_vectors(moving_vector, negated_target)
+            if negated_target is not None
+            else None
+        )
+        if rot_parallel is None or rot_anti is None:
+            raise CadRefError("mode='axis' could not normalize the selector directions.")
+
+        # 變體推薦(確定性):涉平面法向 → 反平行貼合;軸類↔軸類 → 取小角(軸是無向線)。
+        if "normal" in {moving_source, target_source}:
+            recommended_variant = "antiparallel"
+        else:
+            recommended_variant = (
+                "parallel" if float(rot_parallel["angleDeg"]) <= float(rot_anti["angleDeg"]) else "antiparallel"
+            )
+        recommended = rot_parallel if recommended_variant == "parallel" else rot_anti
+        alternate = rot_anti if recommended_variant == "parallel" else rot_parallel
+        alternate_variant = "antiparallel" if recommended_variant == "parallel" else "parallel"
+
+        angle_deg = float(recommended["angleDeg"])
+        rot_axis = recommended["axis"]
+        rotation_matrix3 = (
+            analysis.axis_angle_matrix(rot_axis, angle_deg)
+            if rot_axis is not None
+            else [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        )
+        euler_xyz = analysis.matrix_to_euler_xyz_deg(rotation_matrix3) or [0.0, 0.0, 0.0]
+        pivot_f = [float(component) for component in pivot]
+        rotated_pivot = [
+            sum(rotation_matrix3[row][col] * pivot_f[col] for col in range(3)) for row in range(3)
+        ]
+        affine_translation = [pivot_f[row] - rotated_pivot[row] for row in range(3)]
+        matrix16 = [
+            rotation_matrix3[0][0], rotation_matrix3[0][1], rotation_matrix3[0][2], affine_translation[0],
+            rotation_matrix3[1][0], rotation_matrix3[1][1], rotation_matrix3[1][2], affine_translation[1],
+            rotation_matrix3[2][0], rotation_matrix3[2][1], rotation_matrix3[2][2], affine_translation[2],
+            0.0, 0.0, 0.0, 1.0,
+        ]
+
+        # 徑向對心:旋轉後 moving 軸 = 過 pivot、方向 target_dir 的線;
+        # residual = (p_target − pivot) 的垂直分量(與變體選擇無關:(d·u)u 對 u 取負不變)。
+        residual = None
+        target_point = analysis.positioning_point(target_positioning)
+        if target_point is not None:
+            try:
+                direction = [float(component) for component in target_vector]
+            except (TypeError, ValueError):
+                direction = None
+            length = math.sqrt(sum(component * component for component in direction)) if direction else 0.0
+            if direction is not None and length > 1e-12:
+                unit = [component / length for component in direction]
+                delta = [float(target_point[index]) - pivot_f[index] for index in range(3)]
+                along = sum(delta[index] * unit[index] for index in range(3))
+                residual = [delta[index] - along * unit[index] for index in range(3)]
+        if residual is None:
+            notes.append("target selector exposes no point; residualTranslation unavailable (axes made parallel only).")
+
+        translation_vector = list(residual) if residual is not None else [0.0, 0.0, 0.0]
+        resolved_axis = None
+        rotation_payload = {
+            "pivot": pivot_f,
+            "variant": recommended_variant,
+            "axis": rot_axis,
+            "angleDeg": angle_deg,
+            "eulerXYZDeg": euler_xyz,
+            "matrix": matrix16,
+            "alternate": {
+                "variant": alternate_variant,
+                "axis": alternate["axis"],
+                "angleDeg": alternate["angleDeg"],
+            },
+            "residualTranslation": residual,
+            "sources": {"moving": moving_source, "target": target_source},
+            "apply": (
+                "rotate moving about Axis(pivot, axis) by angleDeg (build123d: "
+                "Rotation(*eulerXYZDeg) 等價), then translate by residualTranslation; "
+                "along-axis placement is a separate mode='flush' call."
+            ),
+        }
+    elif normalized_mode == "center":
         moving_point = analysis.positioning_point(moving_positioning)
         target_point = analysis.positioning_point(target_positioning)
         if moving_point is None or target_point is None:
@@ -885,9 +1016,27 @@ def align_targets(
         _primary_vector(moving_positioning),
         _primary_vector(target_positioning),
     )
-    rotation_required = None
-    if vector_relationship is not None:
-        rotation_required = vector_relationship.get("relation") != "opposed"
+    if normalized_mode == "axis":
+        rotation_required = float(rotation_payload["angleDeg"]) > analysis.ROTATION_ANGLE_EPS_DEG
+    else:
+        rotation_required = None
+        if vector_relationship is not None:
+            rotation_required = vector_relationship.get("relation") != "opposed"
+
+    alignment_payload: dict[str, object] = {
+        "translationVector": translation_vector,
+        "transformTranslationDelta": {
+            "3": translation_vector[0],
+            "7": translation_vector[1],
+            "11": translation_vector[2],
+        },
+        "vectorRelationship": vector_relationship,
+        "rotationRequired": rotation_required,
+    }
+    if rotation_payload is not None:
+        alignment_payload["rotation"] = rotation_payload
+    if notes:
+        alignment_payload["notes"] = notes
 
     return {
         "ok": True,
@@ -902,16 +1051,7 @@ def align_targets(
             **_selection_result_payload(target_selection),
             "positioning": target_positioning,
         },
-        "alignment": {
-            "translationVector": translation_vector,
-            "transformTranslationDelta": {
-                "3": translation_vector[0],
-                "7": translation_vector[1],
-                "11": translation_vector[2],
-            },
-            "vectorRelationship": vector_relationship,
-            "rotationRequired": rotation_required,
-        },
+        "alignment": alignment_payload,
     }
 
 

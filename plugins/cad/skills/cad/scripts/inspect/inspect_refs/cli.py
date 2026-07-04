@@ -134,14 +134,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     align_parser = subparsers.add_parser(
         "align",
-        help="Calculate a read-only translation delta for simple selector alignment.",
+        help="Calculate a read-only translation/rotation delta for simple selector alignment.",
     )
     align_parser.add_argument("entry", help="CAD STEP path or CAD entry target.")
     align_parser.add_argument("--moving", required=True, help="Moving/source selector ref.")
     align_parser.add_argument("--target", required=True, help="Target selector ref.")
-    align_parser.add_argument("--mode", choices=("flush", "center"), default="flush", help="Alignment mode. Default: flush.")
+    align_parser.add_argument(
+        "--mode",
+        choices=("flush", "center", "axis"),
+        default="flush",
+        help="Alignment mode. Default: flush. 'axis' returns an axis-angle rotation (plus radial centering delta) that aligns the moving direction onto the target direction.",
+    )
     align_parser.add_argument("--offset", type=float, default=0.0, help="Offset in mm. For flush, applies along target normal when axis-aligned.")
-    align_parser.add_argument("--axis", choices=("x", "y", "z"), help="Axis to use for flush or one-axis center alignment.")
+    align_parser.add_argument("--axis", choices=("x", "y", "z"), help="Axis to use for flush or one-axis center alignment. Not valid with --mode axis.")
     _add_output_arguments(align_parser)
     align_parser.set_defaults(handler=run_align)
 
@@ -572,6 +577,13 @@ def _format_align_text(result: dict[str, object], *, quiet: bool, verbose: bool)
         return _format_errors(result)
     alignment = result.get("alignment") if isinstance(result.get("alignment"), dict) else {}
     lines = [f"mode={result.get('mode')} axis={result.get('axis')} translation={alignment.get('translationVector')}"]
+    rotation = alignment.get("rotation") if isinstance(alignment.get("rotation"), dict) else None
+    if rotation is not None:
+        lines.append(
+            f"rotation axis={rotation.get('axis')} angleDeg={rotation.get('angleDeg')} "
+            f"pivot={rotation.get('pivot')} variant={rotation.get('variant')}"
+        )
+        lines.append(f"eulerXYZDeg={rotation.get('eulerXYZDeg')} residual={rotation.get('residualTranslation')}")
     if verbose and not quiet:
         lines.append(f"transformTranslationDelta={alignment.get('transformTranslationDelta')}")
     return "\n".join(lines)
