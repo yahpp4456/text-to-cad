@@ -1904,6 +1904,15 @@ def _generate_step_outputs(
         if logger is not None:
             output_kwargs["logger"] = logger
         return _generate_part_outputs(spec, **output_kwargs)
+    # Direct STEP/STP (imported) target: no generator to run; build the hidden
+    # GLB/topology artifact straight from the STEP scene (kind came from --kind).
+    imported_kwargs: dict[str, object] = {
+        "entries_by_step_path": entries_by_step_path,
+        "force": force,
+    }
+    if logger is not None:
+        imported_kwargs["logger"] = logger
+    return _generate_part_outputs(spec, **imported_kwargs)
 
 
 def _generate_step_outputs_for_cli(
