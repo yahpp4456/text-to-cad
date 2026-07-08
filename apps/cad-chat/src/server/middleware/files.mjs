@@ -9,7 +9,7 @@ import path from "node:path";
 import { MODELS_ROOT, REPO_ROOT } from "../config.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
 import { resolveInside } from "../cad/paths.mjs";
-import { spawnPython } from "../cad/python.mjs";
+import { scrubPaths, spawnPython } from "../cad/python.mjs";
 
 const STEP_DIR = "skills/cad/scripts/step";
 const OPEN_TIMEOUT_MS = 120_000; // 裸 STEP 轉 GLB 上限(大檔 tessellation 可能要一陣子)
@@ -199,7 +199,7 @@ export function filesMiddleware() {
     if (url.pathname === "/api/open" && req.method === "POST") {
       readJsonBody(req)
         .then((body) => handleOpen(body, res))
-        .catch((err) => sendJson(res, 400, { ok: false, error: String(err?.message || err) }));
+        .catch((err) => sendJson(res, 400, { ok: false, error: scrubPaths(String(err?.message || err)) }));
       return;
     }
 

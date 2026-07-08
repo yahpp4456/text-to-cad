@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from cadpy.parts.ball_screw import ball_screw
 from cadpy.parts.deep_groove_bearing import deep_groove_bearing
+from cadpy.parts.gripper import gripper
 from cadpy.parts.linear_guide import linear_guide
 from cadpy.parts.pneumatic_cylinder import pneumatic_cylinder
 from cadpy.parts.select import (
@@ -30,6 +31,7 @@ from cadpy.parts.select import (
     select_ball_screw,
     select_bearing,
     select_cylinder,
+    select_gripper,
     select_linear_guide,
     select_stepper,
 )
@@ -44,9 +46,11 @@ __all__ = [
     "select_stepper",
     "select_linear_guide",
     "select_ball_screw",
+    "select_gripper",
     "pneumatic_cylinder",
     "deep_groove_bearing",
     "stepper_motor",
     "linear_guide",
     "ball_screw",
+    "gripper",
 ]

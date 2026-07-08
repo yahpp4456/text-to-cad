@@ -255,3 +255,33 @@ motor = select_stepper(torque_Nm=payload_N*(screw["lead"]/1000.0)/(2*math.pi*eff
 6. **L2 不進單元測試**(連網 flaky);自動 resolver 是後話。
 7. **fork 流程**:`開發` 直接 commit、不 PR、不 push、不碰 main;**無 symlink**,複本用 `scripts/dev/sync-vendored.sh` 同步(**不要手寫廣域 find|cp**——會誤覆寫 `tests/python/packages/cadpy/` 測試目錄,見 §3.3 ⚠️),不跑 bundle/symlink/Release;LFS 永不關。
 8. **誠實邊界**:選型=幾何/力學初選,margin 報而不擋,不宣稱 FEA/疲勞/公差/認證。
+
+---
+
+## 11. 後續擴充（超出原 5-family 計畫）
+
+- **2026-07-08 — 第 6 個 family:`gripper`(平行氣爪)**。同一 L1/L3 兩層套路:
+  - 規格來源:網路搜尋 **AirTAC 亞德克 HFZ** 平行氣爪開放資料(多路搜尋 + 跨來源核對;
+    HFZ6…HFZ40 的 bore/總行程/夾持力@0.5 MPa 由 4 個獨立來源一致,標 `med`)。
+    `specs/grippers.json` 只存**真實**的 bore/stroke/`gripping_force_N`/`force_pressure_MPa`;
+    body 外形不進表,由生成器以 bore/stroke 比例代理(envelope proxy,誠實標註)。
+  - `select_gripper(grip_force_N, *, opening_mm, gripper_type="parallel", pressure_MPa=None)`:
+    夾持力用**表列值**(非由 bore 計算,因夾持力取決於內部楔/齒條比),氣壓可線性縮放;
+    挑 (bore, stroke) 最小滿足者;報 `margin`/`opening_margin`;無解 `NoFittingPart`。
+  - 幾何 `gripper(bore, stroke, *, opening, …)`:本體方塊 + 兩指對稱平移(各動 `opening/2`),
+    指根座進本體頂面(`body~jaw` 為刻意接觸,兩指恆隔 `min_gap` 不相撞),全開時指不得跑出本體
+    (off-body 範圍檢查,類比滑軌 off-rail)。`check_geometry` 上鎖 + 開爪掃掠(honest scope:
+    平移不變,close 側靠 `min_gap`、open 側靠範圍檢查)。
+  - 消費層(step.parts 真 STEP)仍是 agent 決策點,未自動化。
+  - **capstone dogfood(比照其他 family)**:`models/linear_pick_station/linear_pick_station.py`
+    ——`select_linear_guide` 選出的滑軌載 `select_gripper` 選出的夾爪,2 DOF(滑座平移 + 夾爪開閉);
+    夾爪以微小 bracket 間隙騎在滑塊上(不 allow 結構互穿,守 L-5),`INTENDED_CONTACT` 只有兩對 body~jaw。
+    `test_parts_models.py` 新增 `LinearPickStationGateTests`(消費 2 選型 family、整機 `check_geometry`
+    含雙掃掠、反 vacuous 位移斷言)。
+  - cad-chat 接線:`cad_source_part(family="gripper", {grip_force_N, opening_mm, pressure_MPa?})`
+    → `apps/cad-chat/src/server/cad/select_part.py` FN 表 + `tools.mjs`/`prompt.mjs` family 清單。
+  - 驗收:`test_parts_{select+8,geometry+5,models+3}` 全綠(80 parts tests);
+    `sync-vendored.sh` 傳播 7 份複本;select_part.py 端到端 spawn 驗過;**L4 真互動**——以使用者身分
+    Playwright 驅動 cad-chat 跑一輪,agent `cad_source_part`→**HFZ20**、複用 `cadpy.parts.gripper` 產生器
+    建模、`cad_validate` 全綠、呈現到畫布(一次自修:把 `INTENDED_CONTACT` 提到模組層,見
+    [[cadchat-intended-contact-gate]])。角度型(HFR/HFY)、三爪(HFCY)**刻意不收**(生成器只模平行爪)。

@@ -30,21 +30,41 @@ def _circle_area(dia: float) -> float:
     return math.pi / 4.0 * dia * dia
 
 
+_ACTION_ALIASES = {
+    "push": "push", "extend": "push", "out": "push",
+    "pull": "pull", "retract": "pull", "in": "pull",
+    "double": "double", "double_acting": "double",
+    "doubleacting": "double", "both": "double",
+}
+
+
+def _normalize_action(action: str) -> str:
+    """Fold common phrasings (case, hyphen/space, ``double-acting``, ``extend`` ...)
+    onto the canonical ``push`` / ``pull`` / ``double`` the force model speaks.
+
+    An unknown value passes through unchanged so :func:`_force` still raises on it.
+    """
+    a = str(action).strip().lower().replace("-", "_").replace(" ", "_")
+    return _ACTION_ALIASES.get(a, a)
+
+
 def _force(row: dict[str, Any], pressure_bar: float, action: str) -> float:
     """Output force (N) of a cylinder row at a gauge pressure.
 
     ``push`` uses the full bore area; ``pull`` uses the annular area (bore minus
-    rod). This is the ONLY force model: selection and margin both call it, so a
+    rod). ``double`` (double-acting) must satisfy the load on BOTH strokes, so it
+    is sized by the weaker pull stroke (the rod steals area) -- the binding case.
+    This is the ONLY force model: selection and margin both call it, so a
     push/pull mismatch between "what was selected" and "what margin was reported"
     is impossible. 1 bar = 0.1 N/mm^2.
     """
     p = pressure_bar * 0.1  # N/mm^2
     if action == "push":
         area = _circle_area(row["bore"])
-    elif action == "pull":
+    elif action in ("pull", "double"):
         area = _circle_area(row["bore"]) - _circle_area(row["rod_dia"])
     else:
-        raise ValueError(f"action must be 'push' or 'pull', got {action!r}")
+        raise ValueError(f"action must be 'push', 'pull' or 'double', got {action!r}")
     return p * area
 
 
@@ -63,6 +83,10 @@ def select_cylinder(
     are filtered by ACTUAL output force (so a pull selection correctly demands a
     larger bore than push, because the rod steals area) and by stroke being inside
     the series' offered range. ``raise NoFittingPart`` when none qualifies.
+
+    ``action`` is ``push`` / ``pull`` / ``double``; ``double`` (double-acting) is
+    sized by its weaker pull stroke so the pick covers the load both ways. Common
+    phrasings (``double-acting``, ``Double``, ``extend`` / ``retract``) normalize.
     """
     if load_N <= 0:
         raise ValueError("load_N must be positive")
@@ -72,6 +96,7 @@ def select_cylinder(
         raise ValueError("pressure_bar must be positive")
     if stroke_mm <= 0:
         raise ValueError("stroke_mm must be positive")
+    action = _normalize_action(action)  # 'double-acting', 'Double', 'retract' ... → canonical
     f_req = load_N / load_ratio
     rows = [
         r
@@ -249,5 +274,70 @@ def select_ball_screw(
             "accuracy": accuracy,
             "margin": pick["C_dynamic_N"] / load_N,
             "speed_margin": pick["lead"] / lead_req,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Parallel pneumatic gripper
+# ---------------------------------------------------------------------------
+def select_gripper(
+    grip_force_N: float,
+    *,
+    opening_mm: float,
+    gripper_type: str = "parallel",
+    pressure_MPa: float | None = None,
+) -> dict[str, Any]:
+    """Smallest gripper whose gripping force covers ``grip_force_N`` and whose jaw
+    stroke opens at least ``opening_mm``.
+
+    Gripping force is the TABULATED holding force at each row's rated pressure
+    (``force_pressure_MPa``), not computed from bore -- a gripper's force depends on
+    its internal wedge/rack ratio, so the catalog value is the single source of
+    truth (as for a bearing's C or a stepper's holding torque). Pneumatic force is
+    ~linear in supply pressure, so an explicit ``pressure_MPa`` scales each row's
+    force from its rated pressure; omit it to size at the rated pressure. Pick is min
+    by (bore, stroke): the smallest body, then the shortest stroke that still opens
+    far enough. ``raise NoFittingPart`` when no row meets the force, the opening, or
+    the requested type. A first-cut force/opening sizing, not a
+    grip-friction/acceleration verdict.
+    """
+    if grip_force_N <= 0:
+        raise ValueError("grip_force_N must be positive")
+    if opening_mm <= 0:
+        raise ValueError("opening_mm must be positive")
+    if pressure_MPa is not None and pressure_MPa <= 0:
+        raise ValueError("pressure_MPa must be positive when given")
+
+    def eff_force(row: dict[str, Any]) -> float:
+        rated = row["force_pressure_MPa"]
+        p = rated if pressure_MPa is None else pressure_MPa
+        return row["gripping_force_N"] * (p / rated)
+
+    rows = [
+        r
+        for r in load_specs("grippers")
+        if str(r.get("type", "parallel")) == gripper_type
+        and eff_force(r) >= grip_force_N
+        and r["stroke"] >= opening_mm
+    ]
+    if not rows:
+        raise NoFittingPart(
+            f"no gripper: need force >= {grip_force_N} N"
+            + (f" at {pressure_MPa} MPa" if pressure_MPa is not None else "")
+            + f" and stroke >= {opening_mm} mm, type {gripper_type!r}"
+        )
+    pick = min(rows, key=lambda r: (r["bore"], r["stroke"]))
+    pick_force = eff_force(pick)
+    return {
+        **pick,
+        "selected_for": {
+            "grip_force_N": grip_force_N,
+            "opening_mm": opening_mm,
+            "gripper_type": gripper_type,
+            "pressure_MPa": pick["force_pressure_MPa"] if pressure_MPa is None else pressure_MPa,
+            "force_N": pick_force,          # tabulated force scaled to the sizing pressure
+            "margin": pick_force / grip_force_N,
+            "opening_margin": pick["stroke"] / opening_mm,
         },
     }

@@ -20,6 +20,7 @@ from cadpy.parts.select import (  # noqa: E402
     select_ball_screw,
     select_bearing,
     select_cylinder,
+    select_gripper,
     select_linear_guide,
     select_stepper,
 )
@@ -33,7 +34,7 @@ class SpecHonestyTests(unittest.TestCase):
     missing source key or an out-of-range confidence, so those are not re-tested
     here -- this locks the contract load_specs does NOT enforce.)"""
 
-    FAMILIES = ("cylinders", "bearings", "motors", "linear_guides", "ball_screws")
+    FAMILIES = ("cylinders", "bearings", "motors", "linear_guides", "ball_screws", "grippers")
 
     def test_every_row_has_a_nonempty_source(self) -> None:
         for family in self.FAMILIES:
@@ -81,6 +82,32 @@ class CylinderSelectTests(unittest.TestCase):
         self.assertEqual(select_cylinder(load_N=490, stroke_mm=100)["model"], "SC40")
         self.assertEqual(
             select_cylinder(load_N=490, stroke_mm=100, action="pull")["model"], "SC50"
+        )
+
+    def test_double_acting_is_sized_by_its_weaker_pull_stroke(self) -> None:
+        # double-acting must cover the load both ways, so it sizes by pull (the
+        # rod steals area) -- identical force and pick to an explicit pull.
+        sc40 = next(r for r in load_specs("cylinders") if r["model"] == "SC40")
+        self.assertEqual(_force(sc40, 6.0, "double"), _force(sc40, 6.0, "pull"))
+        pick = select_cylinder(load_N=490, stroke_mm=100, action="double")
+        self.assertEqual(pick["model"], "SC50")
+        self.assertEqual(pick["selected_for"]["action"], "double")
+
+    def test_action_phrasings_normalize(self) -> None:
+        # the reported bug: 'double' (and its phrasings) must not raise; common
+        # synonyms fold onto the canonical push/pull/double.
+        for phrasing in ("Double", "double-acting", "double_acting", "both"):
+            self.assertEqual(
+                select_cylinder(load_N=490, stroke_mm=100, action=phrasing)["model"],
+                "SC50",
+                msg=phrasing,
+            )
+        # 'retract' -> pull (SC50), 'extend' -> push (SC40)
+        self.assertEqual(
+            select_cylinder(load_N=490, stroke_mm=100, action="retract")["model"], "SC50"
+        )
+        self.assertEqual(
+            select_cylinder(load_N=490, stroke_mm=100, action="extend")["model"], "SC40"
         )
 
     def test_margin_is_reported_consistently_with_the_force_model(self) -> None:
@@ -267,6 +294,60 @@ class BallScrewSelectTests(unittest.TestCase):
         # the catalog ships rolled C7 screws only; a C5 request must not fit
         with self.assertRaises(NoFittingPart):
             select_ball_screw(500, travel=100, target_speed_mm_s=200, accuracy="C5")
+
+
+class GripperSelectTests(unittest.TestCase):
+    def test_known_good_smallest_that_meets_force_and_opening(self) -> None:
+        # force >= 10 N and opens >= 3 mm -> HFZ6 (3.3 N) is too weak, HFZ10 fits
+        self.assertEqual(
+            select_gripper(10, opening_mm=3)["model"], "HFZ10"
+        )
+        # 30 N climbs to HFZ16 (34 N); HFZ10 (11 N) is too weak
+        self.assertEqual(select_gripper(30, opening_mm=5)["model"], "HFZ16")
+
+    def test_opening_drives_a_larger_body_than_force_alone(self) -> None:
+        # 10 N alone would pick HFZ10, but needing an 8 mm opening drops HFZ10
+        # (stroke 4) and HFZ16 (stroke 6) and climbs to HFZ20 (stroke 10).
+        self.assertEqual(select_gripper(10, opening_mm=8)["model"], "HFZ20")
+
+    def test_higher_pressure_lets_a_smaller_gripper_qualify(self) -> None:
+        # at the rated 0.5 MPa, 40 N needs HFZ20 (45 N); HFZ16 is 34 N
+        self.assertEqual(select_gripper(40, opening_mm=5)["model"], "HFZ20")
+        # at 0.7 MPa the force scales ~linearly: HFZ16 -> 34*1.4 = 47.6 N >= 40,
+        # so the smaller HFZ16 now qualifies (proves pressure drives the pick).
+        pick = select_gripper(40, opening_mm=5, pressure_MPa=0.7)
+        self.assertEqual(pick["model"], "HFZ16")
+        self.assertAlmostEqual(pick["selected_for"]["force_N"], 34 * 0.7 / 0.5, places=6)
+        self.assertEqual(pick["selected_for"]["pressure_MPa"], 0.7)
+
+    def test_margins_are_reported_at_the_sizing_pressure(self) -> None:
+        pick = select_gripper(30, opening_mm=5)  # HFZ16, 34 N at rated 0.5 MPa
+        self.assertEqual(pick["model"], "HFZ16")
+        self.assertEqual(pick["selected_for"]["pressure_MPa"], 0.5)
+        self.assertAlmostEqual(pick["selected_for"]["margin"], 34 / 30, places=6)
+        self.assertAlmostEqual(pick["selected_for"]["opening_margin"], 6 / 5, places=6)
+
+    def test_no_fit_when_force_exceeds_every_row(self) -> None:
+        with self.assertRaises(NoFittingPart):
+            select_gripper(99999, opening_mm=5)
+
+    def test_no_fit_when_opening_exceeds_every_stroke(self) -> None:
+        with self.assertRaises(NoFittingPart):
+            select_gripper(10, opening_mm=999)  # max stroke is 30
+
+    def test_no_fit_for_unavailable_type(self) -> None:
+        # the catalog ships parallel grippers only; an angular request must not fit
+        with self.assertRaises(NoFittingPart):
+            select_gripper(10, opening_mm=3, gripper_type="angular")
+
+    def test_bad_inputs_raise(self) -> None:
+        for kw in (
+            dict(grip_force_N=0, opening_mm=5),
+            dict(grip_force_N=10, opening_mm=0),
+            dict(grip_force_N=10, opening_mm=5, pressure_MPa=0),
+        ):
+            with self.assertRaises(ValueError):
+                select_gripper(**kw)
 
 
 if __name__ == "__main__":

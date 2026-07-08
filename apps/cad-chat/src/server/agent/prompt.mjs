@@ -8,6 +8,8 @@ export function buildSystemPrompt(session) {
   const importsNote = session.imports?.length
     ? `\n本 session 已匯入元件:${session.imports.join("、")}(在 ${wd}/ 下,組合件直接引用)。`
     : "";
+  // 累積教訓摘要(由 runner 每 turn 掛上;lessons.mjs 蒸餾自歷史失敗)。空字串 = 無教訓不出段。
+  const lessons = session._lessonsDigest ? `\n\n${session._lessonsDigest}` : "";
   return `你是穗鈅(SUIYAO)「對話式 CAD 產圖」的資深 CAD / 機構工程師代理。使用者是懂規格、公差、3D 的機構工程師,要的是精確與效率。
 
 # 範圍(硬規則,優先於其他指示)
@@ -96,7 +98,7 @@ UI 訊號:
 - \`emit_params(defs)\`:宣告滑桿(如 [{"key":"od","label":"外徑","unit":"mm","min":10,"max":40,"step":0.5,"value":20}, ...]),要對應 PARAMS 的鍵。
 做事:
 - \`cad_import(file)\`:把 models/ 下既有 STEP 元件複製進工作區 imported/,回 rel 路徑與 bbox 摘要(組合件引用它)。
-- \`cad_source_part(family, requirement)\`:選標準件(family ∈ bearing/cylinder/stepper/linear_guide/ball_screw)。
+- \`cad_source_part(family, requirement)\`:選標準件(family ∈ bearing/cylinder/stepper/linear_guide/ball_screw/gripper;gripper=平行氣爪)。
 - \`cad_build(name, code)\`:寫產生器原始碼並執行產 STEP+GLB。回傳 ok / version / 輸出檔 / log。
 - \`cad_build(name, edits=[{find, replace}, …])\`:**最小段精修**——對既有產生器做逐字
   find/replace(find 必須唯一命中,含縮排逐字比對)再重建。**修復/微調一律用這個,
@@ -133,5 +135,5 @@ UI 訊號:
 # 紀律
 只報「真的有跑」的檢查(自交/壁厚目前 pipeline 沒有,會標 SKIP;運動掃掠只在產生器宣告 MOTION 時真跑,未宣告誠實標 SKIP)。不宣稱幾何合理性以外的公差/結構/製造保證。產物一律留在 ${wd}/。
 所有工作在本回合內**同步**完成:不得啟動子代理(Agent/Task)、背景任務、排程喚醒或任何非同步流程——
-這會切斷本對話的工具通道導致建模失敗。要查參考就直接 Read/Glob/Grep,查完立刻繼續做。${rehydrate}${importsNote}`;
+這會切斷本對話的工具通道導致建模失敗。要查參考就直接 Read/Glob/Grep,查完立刻繼續做。${lessons}${rehydrate}${importsNote}`;
 }

@@ -1,0 +1,86 @@
+[
+  {
+    "series": "AirTAC HFZ",
+    "model": "HFZ6",
+    "type": "parallel",
+    "bore": 6,
+    "stroke": 3,
+    "gripping_force_N": 3.3,
+    "force_pressure_MPa": 0.5,
+    "weight_g": 25,
+    "source": "AirTAC HFZ6 parallel (2-jaw) pneumatic gripper -- bore/stroke(total)/gripping force @0.5 MPa cross-checked across multiple distributor spec tables; body envelope is a bore/stroke-proportional substitute, not the catalog outline",
+    "confidence": "med"
+  },
+  {
+    "series": "AirTAC HFZ",
+    "model": "HFZ10",
+    "type": "parallel",
+    "bore": 10,
+    "stroke": 4,
+    "gripping_force_N": 11,
+    "force_pressure_MPa": 0.5,
+    "weight_g": 56,
+    "source": "AirTAC HFZ10 parallel (2-jaw) pneumatic gripper -- bore/stroke(total)/gripping force @0.5 MPa cross-checked across multiple distributor spec tables; body envelope is a bore/stroke-proportional substitute, not the catalog outline",
+    "confidence": "med"
+  },
+  {
+    "series": "AirTAC HFZ",
+    "model": "HFZ16",
+    "type": "parallel",
+    "bore": 16,
+    "stroke": 6,
+    "gripping_force_N": 34,
+    "force_pressure_MPa": 0.5,
+    "weight_g": 124,
+    "source": "AirTAC HFZ16 parallel (2-jaw) pneumatic gripper -- bore/stroke(total)/gripping force @0.5 MPa cross-checked across multiple distributor spec tables; body envelope is a bore/stroke-proportional substitute, not the catalog outline",
+    "confidence": "med"
+  },
+  {
+    "series": "AirTAC HFZ",
+    "model": "HFZ20",
+    "type": "parallel",
+    "bore": 20,
+    "stroke": 10,
+    "gripping_force_N": 45,
+    "force_pressure_MPa": 0.5,
+    "weight_g": 236,
+    "source": "AirTAC HFZ20 parallel (2-jaw) pneumatic gripper -- bore/stroke(total)/gripping force @0.5 MPa cross-checked across multiple distributor spec tables; body envelope is a bore/stroke-proportional substitute, not the catalog outline",
+    "confidence": "med"
+  },
+  {
+    "series": "AirTAC HFZ",
+    "model": "HFZ25",
+    "type": "parallel",
+    "bore": 25,
+    "stroke": 14,
+    "gripping_force_N": 69,
+    "force_pressure_MPa": 0.5,
+    "weight_g": 428,
+    "source": "AirTAC HFZ25 parallel (2-jaw) pneumatic gripper -- bore/stroke(total)/gripping force @0.5 MPa cross-checked across multiple distributor spec tables; body envelope is a bore/stroke-proportional substitute, not the catalog outline",
+    "confidence": "med"
+  },
+  {
+    "series": "AirTAC HFZ",
+    "model": "HFZ32",
+    "type": "parallel",
+    "bore": 32,
+    "stroke": 22,
+    "gripping_force_N": 160,
+    "force_pressure_MPa": 0.5,
+    "weight_g": 729,
+    "source": "AirTAC HFZ32 parallel (2-jaw) pneumatic gripper -- bore/stroke(total)/gripping force @0.5 MPa cross-checked across multiple distributor spec tables; body envelope is a bore/stroke-proportional substitute, not the catalog outline",
+    "confidence": "med"
+  },
+  {
+    "series": "AirTAC HFZ",
+    "model": "HFZ40",
+    "type": "parallel",
+    "bore": 40,
+    "stroke": 30,
+    "gripping_force_N": 255,
+    "force_pressure_MPa": 0.5,
+    "weight_g": 1268,
+    "source": "AirTAC HFZ40 parallel (2-jaw) pneumatic gripper -- bore/stroke(total)/gripping force @0.5 MPa cross-checked across multiple distributor spec tables; body envelope is a bore/stroke-proportional substitute, not the catalog outline",
+    "confidence": "med"
+  }
+]

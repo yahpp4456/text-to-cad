@@ -4,6 +4,25 @@
 
 This is a self-use fork (origin=yahpp4456, upstream=earthtojake), not PR'd upstream.
 
+**This fork's primary work is `apps/cad-chat`** — a local web "conversational
+CAD" app: browser chat → Claude Agent SDK (subscription OAuth or API key) drives
+the repo's existing text-to-cad pipeline → real STEP/GLB + geometry validation,
+iterated by text / geometry picks / parameter sliders. The rest of the repo
+(`skills/`, `packages/cadpy*`, `packages/cadjs`, `models/`) is the CAD pipeline
+and viewer runtime that cad-chat *drives* — it is not the day-to-day deliverable
+here (that framing in AGENTS.md describes upstream). `apps/` is fork-local and
+absent upstream, so keep cad-chat guidance in this file, not in AGENTS.md.
+
+- Deep docs for the app live in `apps/cad-chat/README.md` (architecture,
+  endpoints, MOTION contract, file-type/import/merge flows, view chrome). There
+  is a nested `apps/cad-chat/CLAUDE.md` that Claude Code auto-loads inside that
+  subtree.
+- **Before editing cad-chat, load the `cad-chat-verify` skill**
+  (`.claude/skills/cad-chat-verify/SKILL.md`) — it owns the layered verify
+  pyramid (L0 build → L4 LLM), the "changed area → must-run layer" table, and
+  the "new feature → which test" decision tree. Every layer runs LLM-free to the
+  end; a real LLM turn is the last, most expensive, gated layer.
+
 - **NEVER commit unless the user explicitly asks for it.** Do all work in the
   working tree and leave it uncommitted; the user decides when to commit. This
   overrides the "Commit directly to it" note below — that describes *where* to

@@ -17,6 +17,15 @@ import {
   writeGenerator,
 } from "../cad/pipeline.mjs";
 import { spawnPython } from "../cad/python.mjs";
+import {
+  noteBuildSuccess,
+  noteFixAttempt,
+  noteRetry,
+  noteValidateSuccess,
+  recordApplyFailure,
+  recordBuildFailure,
+  recordCheckFailure,
+} from "../lessons.mjs";
 
 const result = (obj) => ({ content: [{ type: "text", text: JSON.stringify(obj) }] });
 const toolId = () => `tool_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
@@ -88,6 +97,7 @@ export function buildCadchatServer({ session, emit, signal }) {
           adjustment: z.string().optional(),
         },
         async ({ attempt, reason, adjustment }) => {
+          noteRetry(session, { attempt, reason, adjustment }); // 教訓案例:agent 自診
           emit("retry", { attempt, reason, adjustment: adjustment || "" });
           return result({ ok: true });
         },
@@ -144,7 +154,7 @@ export function buildCadchatServer({ session, emit, signal }) {
       ),
       tool(
         "cad_source_part",
-        "選用標準件。requirement 鍵(依 family):cylinder={load_N,stroke_mm,pressure_bar?,action?} bearing={shaft_dia,radial_load_N?} stepper={torque_Nm} linear_guide={load_N,rail_len} ball_screw={load_N,travel,target_speed_mm_s,accuracy?}。",
+        "選用標準件。requirement 鍵(依 family):cylinder={load_N,stroke_mm,pressure_bar?,action?=push|pull|double} bearing={shaft_dia,radial_load_N?} stepper={torque_Nm} linear_guide={load_N,rail_len} ball_screw={load_N,travel,target_speed_mm_s,accuracy?} gripper={grip_force_N,opening_mm,pressure_MPa?}(平行氣爪)。",
         { family: z.string(), requirement: z.record(z.string(), z.any()).optional() },
         async ({ family, requirement }) => {
           const gated = clarifyGate();
@@ -184,17 +194,21 @@ export function buildCadchatServer({ session, emit, signal }) {
           if (gated) return gated;
           const part = sanitizeName(name || n());
           const id = toolId();
+          // 教訓案例:記本次修法(kind+edits 摘要),成功時回填給被閉環的失敗案例
+          noteFixAttempt(session, { kind: code ? "code" : edits?.length ? "edits" : "params", edits });
           if (code) {
             writeGenerator(session, part, code);
           } else if (edits?.length) {
             const r = applyEdits(session, part, edits);
             if (!r.ok) {
+              recordApplyFailure(session, { part, kind: "edits", error: r.error });
               emit("tool", { id, name: `cad.build(${part}.py)`, label: "精修重生", status: "error", note: r.error });
               return result({ ok: false, error: r.error });
             }
           } else if (params) {
             const r = rewriteParams(session, part, params);
             if (!r.ok) {
+              recordApplyFailure(session, { part, kind: "params", error: r.error });
               emit("tool", { id, name: `cad.build(${part}.py)`, label: "參數重生", status: "error", note: r.error });
               return result({ ok: false, error: r.error });
             }
@@ -214,9 +228,14 @@ export function buildCadchatServer({ session, emit, signal }) {
           });
           const res = await runStep(session, part, { signal });
           if (!res.ok) {
+            // 中斷/斷線殺掉的子程序不是生成失敗,不記教訓案例(鏡射 runner 的 aborted 守衛)
+            if (!signal?.aborted) {
+              recordBuildFailure(session, { part, exitCode: res.exitCode, stderr: res.stderr, source: "build" });
+            }
             emit("tool", { id, status: "error", note: (res.stderr || "").slice(-400), ms: res.ms });
             return result({ ok: false, exitCode: res.exitCode, stderr: (res.stderr || "").slice(-1500) });
           }
+          noteBuildSuccess(session); // 同 turn 前面的 build 失敗至此閉環
           session.lastName = part;
           emit("tool", {
             id,
@@ -241,6 +260,14 @@ export function buildCadchatServer({ session, emit, signal }) {
           session._valAttempt = (session._valAttempt || 0) + 1;
           const { ok, checks, motion, partCount, ms } = await runValidate(session, part, { signal });
           if (partCount > 0) session.lastPartCount = partCount; // 規模分級(決定性)
+          // 教訓案例:每顆真的 FAIL 的檢查一筆;全綠則閉環本 turn 全部失敗案例。
+          // 中斷殺掉的 validate.py 會產出幽靈紅(parse 失敗/generator error),不記。
+          if (!signal?.aborted) {
+            for (const c of checks) {
+              if (!c.skipped && !c.ok) recordCheckFailure(session, { part, check: c, partCount, source: "validate" });
+            }
+            if (ok) noteValidateSuccess(session);
+          }
           const decorated = decorateChecks(checks);
           emit("validate", {
             ok,

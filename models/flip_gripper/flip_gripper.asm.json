@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "type": "assembly",
+  "generator": "flip_gripper.py",
+  "partCount": 9,
+  "parts": [
+    {
+      "label": "arm_flange"
+    },
+    {
+      "label": "rotary_body"
+    },
+    {
+      "label": "rotary_hub"
+    },
+    {
+      "label": "swing_bracket"
+    },
+    {
+      "label": "gripper_body"
+    },
+    {
+      "label": "jaw_left"
+    },
+    {
+      "label": "jaw_right"
+    },
+    {
+      "label": "finger_left"
+    },
+    {
+      "label": "finger_right"
+    }
+  ],
+  "imports": [],
+  "updatedAt": "2026-07-08T14:51:17.133Z"
+}

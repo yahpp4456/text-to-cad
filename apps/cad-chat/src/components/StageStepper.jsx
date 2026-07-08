@@ -1,6 +1,6 @@
 import React from "react";
 
-const STAGES = [
+export const STAGES = [
   ["理解", "UNDERSTAND"],
   ["規劃", "PLAN"],
   ["生成", "GENERATE"],

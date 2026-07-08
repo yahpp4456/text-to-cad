@@ -23,6 +23,7 @@ import { filesMiddleware } from "./middleware/files.mjs";
 import { projectMiddleware } from "./middleware/project.mjs";
 import { chatMiddleware } from "./middleware/chat.mjs";
 import { interruptMiddleware } from "./middleware/interrupt.mjs";
+import { lessonsMiddleware } from "./middleware/lessons.mjs";
 
 loadDotEnvLocal();
 
@@ -38,6 +39,7 @@ const middlewares = [
   projectMiddleware(),
   chatMiddleware(),
   interruptMiddleware(),
+  lessonsMiddleware(),
 ];
 
 let vite = null;
@@ -71,12 +73,18 @@ function runMiddleware(index, req, res) {
     sendText(res, 404, "not found");
     return;
   }
-  try {
-    mw(req, res, () => runMiddleware(index + 1, req, res));
-  } catch (err) {
+  const fail = (err) => {
     process.stderr.write(`middleware error: ${err?.stack || err}\n`);
     if (!res.headersSent) sendText(res, 500, "internal error");
     else res.destroy();
+  };
+  try {
+    // async middleware 的例外是 rejected promise,同步 try/catch 接不到——
+    // 不接住會變 unhandledRejection 直接殺掉整個伺服器(Node 預設 throw 模式)。
+    const out = mw(req, res, () => runMiddleware(index + 1, req, res));
+    if (out && typeof out.catch === "function") out.catch(fail);
+  } catch (err) {
+    fail(err);
   }
 }
 

@@ -20,6 +20,17 @@
   background: rgba(255, 255, 255, 0.62);
   border-right: 1px solid var(--line);
 }
+/* clarify 待答 → 左欄反灰凍結為「上下文」,把作答重心讓給視圖聚光燈卡。
+   淡化的是 .conv/.composer 兩個內容節點(非 .conv-col 本身)→ 保留欄底色與 border-right。
+   不用 pointer-events:none:.conv-scroll 仍要能上捲讀歷史、左欄 inline 選項仍是備援作答路徑。
+   :focus-within 讓一點進輸入框即恢復全亮,化解「灰卻可打字」的混合訊號(輸入框刻意不 disable)。 */
+.conv-col[data-frozen="true"] .conv,
+.conv-col[data-frozen="true"] .composer {
+  opacity: 0.5;
+}
+.conv-col[data-frozen="true"] .composer:focus-within {
+  opacity: 1;
+}
 .right-col {
   flex: 1;
   display: flex;
@@ -242,6 +253,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  transition: opacity 0.25s ease; /* clarify 凍結進/退場平滑淡入淡出 */
 }
 .conv-head {
   flex: none;
@@ -797,6 +809,86 @@
 .hdr-btn:hover {
   border-color: var(--ink);
 }
+.hdr-btn[data-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+.hdr-btn[data-disabled="true"]:hover {
+  border-color: var(--line);
+}
+
+/* ── 另存專案對話框(共用 .fb-overlay 背幕) ── */
+.save-dialog {
+  width: min(440px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--emit);
+  padding: 18px 20px 16px;
+  clip-path: var(--chamfer-14);
+}
+.save-eyebrow {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--emit);
+}
+.save-hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+.save-input {
+  font: inherit;
+  font-size: 14px;
+  padding: 9px 12px;
+  border: 1px solid #cfd6e2;
+  background: #f8fafd;
+  outline: none;
+}
+.save-input:focus {
+  border-color: var(--emit);
+  background: #fff;
+}
+.save-warn {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--amber, #a06a00);
+}
+.save-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.save-btn {
+  cursor: pointer;
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #fff;
+  background: var(--ink);
+  padding: 8px 16px;
+  clip-path: var(--chamfer-pill);
+  user-select: none;
+}
+.save-btn[data-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}
+.save-btn.save-cancel {
+  color: var(--ink);
+  background: var(--panel-sub);
+  border: 1px solid var(--line);
+}
+.save-btn.save-danger {
+  background: #b0483f;
+}
 .fb-overlay {
   position: fixed;
   inset: 0;
@@ -948,6 +1040,179 @@
   color: var(--text-muted);
   border-top: 1px solid var(--line-soft);
 }
+
+/* ── 教訓面板(共用 .fb-overlay 背幕與 fb-head/close/list/foot 骨架) ── */
+.lessons-panel {
+  width: min(720px, 100%);
+  max-height: 76vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  clip-path: var(--chamfer-14);
+  box-shadow: 0 18px 48px rgba(28, 33, 80, 0.22);
+}
+.lessons-toast {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--design);
+  background: color-mix(in oklab, var(--design) 7%, var(--panel));
+  border-bottom: 1px solid var(--line-soft);
+}
+.lessons-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.lessons-row[data-status="disabled"] {
+  opacity: 0.55;
+}
+.lessons-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lessons-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--design);
+}
+.lessons-pill {
+  font-family: var(--font-eyebrow);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  color: var(--part);
+}
+.lessons-pill[data-status="disabled"] {
+  color: var(--text-muted);
+}
+.lessons-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+.lessons-grad {
+  margin-left: 5px;
+  color: #d99a2b;
+  cursor: help;
+}
+.lessons-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.lessons-rule {
+  font-size: 12.5px;
+  color: var(--text);
+  line-height: 1.5;
+}
+.lessons-cause {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.lessons-sig {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  border: 1px solid var(--line-soft);
+  padding: 0 6px;
+  cursor: help;
+}
+.lessons-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+.lessons-danger {
+  color: var(--danger);
+}
+.lessons-danger:hover {
+  border-color: var(--danger);
+}
+.lessons-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+/* 待蒸餾案例(未蒸餾)逐筆刪除區 */
+.lessons-pending {
+  margin-top: 10px;
+  border-top: 1px dashed var(--line);
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.lessons-pending-head {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 9.5px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.pending-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.pending-sig {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.pending-x {
+  color: var(--emit);
+  font-weight: 700;
+}
+.pending-warn {
+  color: var(--amber);
+  font-weight: 500;
+}
+.pending-case {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  background: var(--panel-sub);
+  border: 1px solid var(--line-soft);
+  clip-path: var(--chamfer-10);
+  font-size: 12px;
+}
+.pending-case-id {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+}
+.pending-case-note {
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 46%;
+}
+.pending-case-meta {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.fb-action[data-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .artifact-open {
   cursor: pointer;
   display: inline-flex;
@@ -1009,6 +1274,7 @@
   padding: 14px 18px 16px;
   border-top: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.8);
+  transition: opacity 0.25s ease; /* clarify 凍結進/退場平滑;:focus-within 恢復全亮 */
 }
 .pick-chips {
   display: flex;
@@ -1141,6 +1407,275 @@
   color: #9aa3b0;
   letter-spacing: 0.5px;
 }
+
+/* ── 產圖進度(模型還沒出來時攤在視圖區) ── */
+.canvas-progress {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+}
+.prog-eyebrow {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 2.5px;
+  color: var(--emit);
+}
+.prog-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 230px;
+}
+.prog-stage {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  opacity: 0.38;
+  transition: 0.2s;
+}
+.prog-stage[data-state="done"] { opacity: 0.75; }
+.prog-stage[data-state="cur"] { opacity: 1; }
+.prog-dot {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  align-self: center;
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 10px;
+  color: #5b6577;
+  border: 1px solid #c6cede;
+  clip-path: var(--chamfer-pill);
+  background: #fff;
+}
+.prog-dot[data-state="done"] {
+  color: var(--emit);
+  border-color: color-mix(in oklab, var(--emit) 45%, transparent);
+}
+.prog-dot[data-state="cur"] {
+  color: #fff;
+  background: var(--emit);
+  border-color: var(--emit);
+  animation: live-pulse 1.2s ease-in-out infinite;
+}
+.prog-cn {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.prog-en {
+  font-family: var(--font-eyebrow);
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: #9aa3b0;
+}
+.prog-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  letter-spacing: 0.3px;
+}
+.prog-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 260px;
+  max-width: 78%;
+}
+.prog-tool {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11.5px;
+  color: #77808f;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid #e2e7f0;
+  padding: 4px 10px;
+  clip-path: var(--chamfer-pill);
+}
+.prog-tool[data-status="running"] { color: var(--ink); border-color: color-mix(in oklab, var(--emit) 35%, transparent); }
+.prog-tool[data-status="error"] { color: #b0483f; }
+.prog-tool-ic { flex: none; font-weight: 700; }
+.prog-tool[data-status="done"] .prog-tool-ic { color: var(--emit); }
+.prog-tool-label { font-weight: 600; }
+.prog-tool-ms { font-family: var(--font-eyebrow); font-size: 9px; letter-spacing: 1px; color: #9aa3b0; }
+.prog-tool-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* ── 改版重建中:頂部細條(不遮模型) ── */
+.canvas-progress-strip {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid #dde2ec;
+  padding: 6px 14px;
+  clip-path: var(--chamfer-pill);
+  max-width: 70%;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* ── GLB 載入中 ── */
+.canvas-loading {
+  position: absolute;
+  bottom: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid #dde2ec;
+  padding: 6px 14px;
+  clip-path: var(--chamfer-pill);
+}
+/* 匯出/轉檔進行中:畫布正中央明顯提示(比 loading 條更強調,雙行帶預期說明) */
+.canvas-export-note {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 7;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1.5px solid var(--emit);
+  box-shadow: 0 10px 30px rgba(24, 160, 196, 0.18);
+  padding: 14px 20px;
+  clip-path: var(--chamfer-pill);
+}
+.canvas-export-note .live-dot {
+  grid-row: 1 / span 2;
+}
+.canvas-export-main {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.canvas-export-sub {
+  grid-column: 2;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ── 選擇題卡(clarify)= 視圖聚光燈焦點模式 ── */
+/* scrim 壓暗整個畫布背景(進度面板/「3D」佔位圖/模型皆可),把注意力導向置中焦點卡。
+   無 onClick,pointer-events 預設 auto → 吸收對背後模型/markers 的點擊,強化焦點。 */
+.canvas-clarify-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 10; /* 蓋住視圖所有背景(progress/markers 4、props 5、strip 6、export-note 7、nameplate 8) */
+  background: rgba(18, 26, 44, 0.42);
+  animation: scrim-in 0.22s ease;
+}
+.canvas-clarify {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 11; /* 在 scrim(10)之上:等待回答時選項必須永遠可點 */
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: min(460px, 82%);
+  max-height: 80%;
+  overflow-y: auto; /* 長選項清單保險:超高就卡內捲動,不溢出畫布 */
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid color-mix(in oklab, var(--emit) 55%, #dde2ec);
+  border-left: 3px solid var(--emit);
+  padding: 13px 16px;
+  clip-path: var(--chamfer-14);
+  box-shadow:
+    0 0 44px color-mix(in oklab, var(--emit) 22%, transparent),
+    0 18px 44px rgba(24, 39, 58, 0.28);
+  animation: clarify-focus-in 0.28s ease;
+}
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes clarify-focus-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 10px));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+}
+.canvas-clarify-kicker {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 9.5px;
+  letter-spacing: 2px;
+  color: var(--emit);
+}
+.canvas-clarify-q {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+.canvas-clarify-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.canvas-clarify-opt {
+  cursor: pointer;
+  font-size: 12px;
+  background: #f4f7fb;
+  border: 1px solid #dfe6f0;
+  padding: 6px 12px;
+  clip-path: var(--chamfer-pill);
+  transition: 0.15s;
+  user-select: none;
+}
+.canvas-clarify-opt:hover {
+  border-color: var(--emit);
+  background: color-mix(in oklab, var(--emit) 8%, #fff);
+}
+.canvas-clarify-suggest {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--emit);
+  user-select: none;
+}
+.canvas-clarify-suggest:hover { text-decoration: underline; }
 .viewport {
   position: absolute;
   inset: 0;
@@ -1595,6 +2130,48 @@
   gap: 10px;
   overflow-x: auto;
 }
+.version-revert {
+  cursor: pointer;
+  flex: none;
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  color: var(--emit);
+  border: 1px solid color-mix(in oklab, var(--emit) 45%, transparent);
+  background: color-mix(in oklab, var(--emit) 7%, #fff);
+  padding: 7px 12px;
+  clip-path: var(--chamfer-pill);
+  user-select: none;
+  white-space: nowrap;
+}
+.version-revert:hover {
+  background: color-mix(in oklab, var(--emit) 14%, #fff);
+}
+.version-dl {
+  cursor: pointer;
+  flex: none;
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  color: #5b6577;
+  border: 1px solid #dde2ec;
+  background: #fff;
+  padding: 7px 12px;
+  clip-path: var(--chamfer-pill);
+  user-select: none;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.version-dl:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+.version-dl[data-busy="true"] {
+  opacity: 0.55;
+  cursor: default;
+}
 .version-chip {
   cursor: pointer;
   flex: none;
@@ -1726,6 +2303,94 @@
   background: var(--emit);
   border-color: var(--emit);
 }
+/* ◇ 面標記面板:預設/全部/隱藏快切 + 逐面勾選;列 hover = 3D 面填色預覽 */
+.marker-panel {
+  width: 238px;
+  background: #fff;
+  border: 1px solid #dde2ec;
+  box-shadow: 0 10px 28px rgba(31, 42, 68, 0.14);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.marker-panel-acts {
+  display: flex;
+  gap: 6px;
+}
+.marker-panel-acts a {
+  cursor: pointer;
+  flex: 1;
+  text-align: center;
+  font-family: var(--font-eyebrow);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #5b6577;
+  border: 1px solid #dde2ec;
+  padding: 4px 0;
+  user-select: none;
+  transition: 0.15s;
+}
+.marker-panel-acts a[data-on="true"] {
+  color: #fff;
+  background: var(--emit);
+  border-color: var(--emit);
+}
+.marker-panel-list {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.marker-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 2px;
+  font-size: 11.5px;
+  color: #303849;
+  cursor: pointer;
+}
+.marker-row:hover {
+  background: #f2f6fb;
+}
+.marker-row input {
+  accent-color: var(--emit);
+  margin: 0;
+  flex: none;
+}
+.marker-row-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.marker-row[data-cited="true"] .marker-row-label {
+  color: var(--amber);
+  font-weight: 600;
+}
+.marker-row-owner {
+  color: #9aa3b0;
+  font-size: 10px;
+  flex: none;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.marker-row-cited {
+  font-family: var(--font-eyebrow);
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--amber);
+  flex: none;
+}
+.marker-panel-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #9aa3b0;
+}
 .motion-note {
   position: absolute;
   left: 20px;
@@ -1782,6 +2447,14 @@
 }
 .sel-clear {
   color: #9aa3b0;
+}
+/* nameplate 拆件匯出鈕(⤓ STEP/⤓ STL):emit 青區分「下載」與「帶入對話」動作 */
+.sel-export {
+  color: var(--emit);
+}
+.sel-export[data-busy="true"] {
+  opacity: 0.55;
+  cursor: progress;
 }
 .props-bring[data-cited="true"] {
   color: var(--part);

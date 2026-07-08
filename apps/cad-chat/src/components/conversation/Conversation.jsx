@@ -9,12 +9,14 @@ const EXAMPLES = [
   { text: "行程 100mm 的電動線性滑台:底板、線軌滑塊、滾珠螺桿與步進馬達", accent: "var(--ink)" },
 ];
 
-export default function Conversation({ items, isIdle, running, live, onSubmitText, handlers }) {
+export default function Conversation({ items, isIdle, running, live, frozen, onSubmitText, handlers }) {
   const scrollRef = useRef(null);
+  // clarify 焦點模式凍結期:抑制強拉到底,讓使用者能安心上捲讀歷史(答案的重心已移到
+  // 視圖聚光燈卡)。答完 frozen 轉 false → effect 重跑 → 平滑回到底。
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [items, live]);
+    if (el && !frozen) el.scrollTop = el.scrollHeight;
+  }, [items, live, frozen]);
 
   return (
     <section className="conv">

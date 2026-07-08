@@ -19,6 +19,7 @@ export const initialState = {
   // 運動宣告(validate 後由後端決定性發出;forVer 在 PRESENT 時蓋上 → 版本切換
   // 或跳過 validate 的 present 自動不顯示播放鈕,不需清理邏輯)
   motion: null, // { name, dofs, forVer } | null
+  clarify: null, // { q, opts, suggested } 視圖區選擇題卡(ADD_USER 即視為已回答)
 };
 
 function nextId(state) {
@@ -47,6 +48,7 @@ export function reducer(state, action) {
       return {
         ...state,
         _seq: seq,
+        clarify: null, // 任何送出=已回答選擇題(對齊 server 端 _clarifyPending 新 turn 重設)
         items: [
           ...state.items,
           { type: "user", id, text: action.text, ref: action.ref || "" },
@@ -257,6 +259,40 @@ export function reducer(state, action) {
 
     case "SELECT_NODE":
       return { ...state, selNode: action.id };
+
+    case "SET_CLARIFY":
+      return { ...state, clarify: action.clarify || null };
+
+    // 跨重整續聊:回灌 localStorage 快照。暫態欄位一律收斂(不還原 running/live/
+    // clarify/pickRefs);_seq 取 max 防新訊息 id 撞還原的 items。
+    case "RESTORE": {
+      const s = action.snapshot || {};
+      const items = (Array.isArray(s.items) ? s.items : []).map((it) =>
+        it?.streaming ? { ...it, streaming: false } : it,
+      );
+      const versions = Array.isArray(s.versions) ? s.versions : [];
+      return {
+        ...initialState,
+        sessionId: s.sessionId || null,
+        _seq: Math.max(Math.trunc(Number(s._seq)) || 0, items.length),
+        items,
+        versions,
+        activeVer: s.activeVer || null,
+        canvas: s.canvas?.glbUrl
+          ? { ...initialState.canvas, ...s.canvas, status: "loading" }
+          : { ...initialState.canvas },
+        params: Array.isArray(s.params?.defs)
+          ? { defs: s.params.defs, values: s.params.values || {}, dirty: false }
+          : { ...initialState.params },
+        motion: s.motion?.dofs?.length ? s.motion : null,
+        stageIdx: versions.length ? 4 : -1,
+        phase: versions.length ? "done" : "idle",
+      };
+    }
+
+    // 「新對話」:回到初始狀態(對話/版本/畫布/參數/選取/運動/選擇題全清)。
+    case "RESET":
+      return { ...initialState };
 
     case "SET_MOTION":
       return {

@@ -4,13 +4,64 @@ import * as THREE from "three";
 import { useCadViewport } from "../../hooks/useCadViewport.js";
 import { createMotionPlayer } from "../../lib/cadMotion.js";
 import { buildTopologyModel } from "../../lib/cadTopology.js";
+import { STAGES } from "../StageStepper.jsx";
 import PropertiesDrawer from "./PropertiesDrawer.jsx";
 
-// 面標記顯示上限:每個被圈選零件最多 6 個、整體最多 12(避免大組合件菱形海)。
+// 面標記「預設顯示」上限:每件 6 個、整體 12(避免菱形海)。這只是預設——
+// 候選面不設限,使用者可從「◇ 面標記」面板切全部/隱藏/逐面勾選。
 const MARKERS_PER_PART = 6;
 const MARKERS_TOTAL = 12;
 
-export default function Canvas3D({ canvas, propsOpen, selNode, dispatch, onBringToChat, motion, pickRefs }) {
+// 預設那 6 個面用最遠點取樣挑「空間上散得開」的:同軸疊在一起的外圓柱/頂底面
+// 只會入選一兩個,名額讓給孔壁這類散佈的特徵(否則法蘭 7 面取前 6,第 4 個孔沒標記)。
+function spreadPick(nodes, k) {
+  if (nodes.length <= k) return nodes;
+  const pts = nodes.map((n) => n.row.center);
+  const d2 = (a, b) => {
+    const dx = a[0] - b[0];
+    const dy = a[1] - b[1];
+    const dz = a[2] - b[2];
+    return dx * dx + dy * dy + dz * dz;
+  };
+  const keep = new Set([0]);
+  const minD = pts.map((p) => d2(p, pts[0]));
+  while (keep.size < k) {
+    let bi = -1;
+    let bd = -1;
+    for (let i = 0; i < pts.length; i++) {
+      if (!keep.has(i) && minD[i] > bd) {
+        bd = minD[i];
+        bi = i;
+      }
+    }
+    if (bi < 0) break;
+    keep.add(bi);
+    for (let i = 0; i < pts.length; i++) {
+      const nd = d2(pts[i], pts[bi]);
+      if (nd < minD[i]) minD[i] = nd;
+    }
+  }
+  return nodes.filter((_, i) => keep.has(i));
+}
+
+export default function Canvas3D({
+  canvas,
+  propsOpen,
+  selNode,
+  dispatch,
+  onBringToChat,
+  motion,
+  pickRefs,
+  running,
+  live,
+  stageIdx,
+  toolFeed,
+  clarify,
+  onSubmitText,
+  onExportParts,
+  partsBusy,
+  exportNote,
+}) {
   const mountRef = useRef(null);
   const markersRef = useRef([]);
   const [topo, setTopo] = useState(null);
@@ -23,6 +74,15 @@ export default function Canvas3D({ canvas, propsOpen, selNode, dispatch, onBring
   const [selParts, setSelParts] = useState([]); // partId(occurrenceId) 陣列(多選,上限 4)
   const [orbit, setOrbit] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [gridOn, setGridOn] = useState(true);
+  const [axesOn, setAxesOn] = useState(true);
+  const [hoverFaceRow, setHoverFaceRow] = useState(null); // 菱形 hover → 面填色預覽
+  // 面標記顯示模式:default=散佈取樣 6/件、all=全部候選、none=隱藏、custom=手動勾選集
+  const [markerMode, setMarkerMode] = useState("default");
+  const [markerPick, setMarkerPick] = useState(() => new Set()); // custom 模式的 node.id 集合
+  const [pickerOpen, setPickerOpen] = useState(false); // ◇ 面標記面板開闔
+  const previewGroupRef = useRef(null); // GROUP 節點預覽高亮中的群組 id(dev 鉤用)
+  const markerProbeRef = useRef({}); // 標記顯示狀態探針(dev 鉤用,渲染期賦值)
   const empty = !canvas.glbUrl;
 
   motionRef.current = motion || null;
@@ -60,17 +120,45 @@ export default function Canvas3D({ canvas, propsOpen, selNode, dispatch, onBring
   useCadViewport(mountRef, canvas.glbUrl, {
     name: canvas.name,
     onStatus: (status) => dispatch({ type: "SET_CANVAS_STATUS", status }),
-    onReady: ({ runtime, model, setSelection, setAutoRotate }) => {
+    onReady: ({
+      runtime,
+      model,
+      setSelection,
+      setAutoRotate,
+      setGrid,
+      setAxes,
+      setFaceHighlights,
+      faceFillCount,
+      faceFillDebug,
+      chrome,
+    }) => {
       const t = buildTopologyModel(runtime);
       topoRef.current = t;
       setTopo(t);
-      apiRef.current = { model, runtime, setSelection, setAutoRotate };
+      apiRef.current = {
+        model,
+        runtime,
+        setSelection,
+        setAutoRotate,
+        setGrid,
+        setAxes,
+        setFaceHighlights,
+        faceFillCount,
+        faceFillDebug,
+        chrome,
+      };
       playerRef.current = model ? createMotionPlayer(THREE, model, runtime) : null;
       selRef.current = [];
       playingRef.current = false;
       setSelParts([]);
       setOrbit(false);
       setPlaying(false);
+      setGridOn(true); // 新模型載入 → 網格/座標軸回到預設開
+      setAxesOn(true);
+      setMarkerMode("default"); // 標記顯示模式跟著新模型重置
+      setMarkerPick(new Set());
+      setPickerOpen(false);
+      setHoverFaceRow(null); // 舊模型的 rowIndex 在新拓撲上是隨機別的面,不得殘留
     },
     onFrame: ({ camera, host }) => {
       updateMarkers(camera, host);
@@ -101,6 +189,16 @@ export default function Canvas3D({ canvas, propsOpen, selNode, dispatch, onBring
             ? playerRef.current.coverage(motionRef.current)
             : null,
       };
+      window.__cadChrome = {
+        grid: () => apiRef.current.chrome?.grid?.visible ?? null,
+        axes: () => apiRef.current.chrome?.axes?.visible ?? null,
+      };
+      window.__cadFaceFill = {
+        count: () => apiRef.current.faceFillCount?.() ?? 0,
+        debug: () => apiRef.current.faceFillDebug?.() ?? null,
+      };
+      window.__cadPreview = { group: () => previewGroupRef.current };
+      window.__cadMarkers = { state: () => markerProbeRef.current };
     }
   }, [playing]);
 
@@ -127,6 +225,16 @@ export default function Canvas3D({ canvas, propsOpen, selNode, dispatch, onBring
     setOrbit(next);
     apiRef.current.setAutoRotate?.(next);
   };
+  const toggleGrid = () => {
+    const next = !gridOn;
+    setGridOn(next);
+    apiRef.current.setGrid?.(next);
+  };
+  const toggleAxes = () => {
+    const next = !axesOn;
+    setAxesOn(next);
+    apiRef.current.setAxes?.(next);
+  };
 
   // 「已帶入對話」= pickRefs 現存的 token(chips 移除/送出即熄滅,生命週期跟著 composer)。
   const citedTokens = useMemo(
@@ -134,30 +242,112 @@ export default function Canvas3D({ canvas, propsOpen, selNode, dispatch, onBring
     [pickRefs],
   );
 
-  // 面標記:單件模型直接顯示前 6 個面;組合件要先雙擊圈選零件,
-  // 才顯示「被圈選那幾件」的面標記(避免 6 個菱形全擠在第一個零件上)。
+  // 面級填色:已帶入的面持續亮 amber(不只亮菱形),hover 菱形時該面亮 emit 青做預覽。
+  // 掃全部 face 節點而非只掃目前顯示的菱形——組合件切換圈選後,已帶入的面仍要亮著。
+  useEffect(() => {
+    const entries = [];
+    for (const n of topo?.nodes || []) {
+      if (n.kind !== "face" || !n.ref) continue;
+      const rowIndex = n.ref.rowIndex ?? n.ref.pickData?.rowIndex;
+      if (!Number.isInteger(rowIndex)) continue;
+      const token = n.ref.copyText || n.label;
+      if (citedTokens.has(token)) {
+        entries.push({ rowIndex, color: "#e8a13a", opacity: 0.32 }); // --amber
+      }
+    }
+    if (hoverFaceRow != null && !entries.some((e) => e.rowIndex === hoverFaceRow)) {
+      entries.push({ rowIndex: hoverFaceRow, color: "#18a0c4", opacity: 0.3 }); // --emit
+    }
+    apiRef.current.setFaceHighlights?.(entries);
+  }, [citedTokens, topo, hoverFaceRow]);
+
+  // GROUP 中繼節點(屬性樹點子組件)→ 3D 預覽高亮其所有後代:
+  // occurrenceId 是點分前綴,applyPartVisualState 的比對前綴感知,直接把群組 id
+  // 疊在圈選集合上呼叫 setSelection 即可;不寫 selParts → 不佔 4 件上限、
+  // 名牌與面標記不受影響。點回葉節點/清空即還原。
+  useEffect(() => {
+    if (!apiRef.current.setSelection) return;
+    const nd = selNode ? (topo?.nodes || []).find((x) => x.id === selNode) : null;
+    if (nd && nd.kind === "occurrence") {
+      previewGroupRef.current = nd.id;
+      apiRef.current.setSelection([...(selRef.current || []), nd.id], { zoom: false });
+    } else if (previewGroupRef.current) {
+      previewGroupRef.current = null;
+      apiRef.current.setSelection(selRef.current || [], { zoom: false });
+    }
+  }, [selNode, topo]);
+
+  // 面標記三層:候選(不設限)→ 預設集(散佈取樣 6/件)→ 可見(依 markerMode)。
+  // 單件模型候選=全部面;組合件要先圈選零件,候選=被圈選那幾件的面。
   const isAsm = (topo?.overall?.shapeCount || 0) > 1;
-  const faceMarkers = useMemo(() => {
+  const markerCandidates = useMemo(() => {
     const faceNodes = (topo?.nodes || []).filter(
       (n) => n.kind === "face" && Array.isArray(n.row?.center),
     );
-    if (!isAsm) return faceNodes.slice(0, MARKERS_PER_PART);
+    if (!isAsm) return faceNodes;
     if (!selParts.length) return [];
-    const out = [];
-    const perPart = {};
-    for (const n of faceNodes) {
-      if (out.length >= MARKERS_TOTAL) break;
+    return faceNodes.filter((n) => {
       const occ = n.ownerOcc;
-      if (!occ) continue;
-      const pid = selParts.find((p) => occ === p || occ.startsWith(`${p}.`));
-      if (!pid) continue;
-      perPart[pid] = (perPart[pid] || 0) + 1;
-      if (perPart[pid] > MARKERS_PER_PART) continue;
-      out.push(n);
-    }
-    return out;
+      return occ && selParts.some((p) => occ === p || occ.startsWith(`${p}.`));
+    });
   }, [topo, isAsm, selParts]);
+
+  const defaultMarkerIds = useMemo(() => {
+    if (!isAsm) return new Set(spreadPick(markerCandidates, MARKERS_PER_PART).map((n) => n.id));
+    const ids = new Set();
+    for (const pid of selParts) {
+      if (ids.size >= MARKERS_TOTAL) break;
+      const own = markerCandidates.filter(
+        (n) => n.ownerOcc === pid || n.ownerOcc.startsWith(`${pid}.`),
+      );
+      for (const n of spreadPick(own, MARKERS_PER_PART)) {
+        if (ids.size >= MARKERS_TOTAL) break;
+        ids.add(n.id);
+      }
+    }
+    return ids;
+  }, [markerCandidates, isAsm, selParts]);
+
+  const faceMarkers = useMemo(() => {
+    if (markerMode === "all") return markerCandidates;
+    if (markerMode === "none") return [];
+    if (markerMode === "custom") return markerCandidates.filter((n) => markerPick.has(n.id));
+    return markerCandidates.filter((n) => defaultMarkerIds.has(n.id));
+  }, [markerMode, markerPick, markerCandidates, defaultMarkerIds]);
+  const visibleMarkerIds = useMemo(() => new Set(faceMarkers.map((n) => n.id)), [faceMarkers]);
   markersRef.current = [];
+  markerProbeRef.current = {
+    mode: markerMode,
+    visible: faceMarkers.length,
+    total: markerCandidates.length,
+  };
+
+  // 圈選改變 = 候選面換了一批 → 顯示模式回預設(custom 勾選集是針對舊候選的)
+  useEffect(() => {
+    setMarkerMode("default");
+    setMarkerPick(new Set());
+  }, [selParts]);
+
+  // hover 面填色只靠標記/面板列的 onMouseLeave 熄滅,但 hover 來源可能在滑鼠
+  // 還沒離開時就 unmount(切換圈選、topo 換掉)——mouseleave 永不觸發,青色
+  // 預覽就永久卡住。候選集裡已沒有這個 rowIndex 時強制熄滅。
+  useEffect(() => {
+    if (hoverFaceRow == null) return;
+    const valid = markerCandidates.some((n) => {
+      const ri = n.ref ? (n.ref.rowIndex ?? n.ref.pickData?.rowIndex) : null;
+      return ri === hoverFaceRow;
+    });
+    if (!valid) setHoverFaceRow(null);
+  }, [markerCandidates, hoverFaceRow]);
+
+  // 面板勾選:以「目前可見集」為基底增減,一動就進 custom 模式
+  const toggleMarker = (id) => {
+    const next = new Set(visibleMarkerIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setMarkerPick(next);
+    setMarkerMode("custom");
+  };
 
   const ver = canvas.ver || (topo ? "v1" : "");
   // 選取集合 → {pid,label,token}(token 給 cad_measure/cad_align;單件模型無 shape 節點時退回 #pid)
@@ -175,10 +365,49 @@ export default function Canvas3D({ canvas, propsOpen, selNode, dispatch, onBring
       </div>
 
       {empty ? (
-        <div className="canvas-empty">
-          <span className="canvas-empty-box">3D</span>
-          <span className="canvas-empty-text">產出後,模型會在這裡出現</span>
-        </div>
+        running ? (
+          // 產圖進行中(還沒有模型):把 AI 的詳細處理進度攤在視圖區。
+          <div className="canvas-progress">
+            <span className="prog-eyebrow">GENERATING · 產圖中</span>
+            <div className="prog-stages">
+              {STAGES.map(([cn, en], i) => {
+                const st = i < stageIdx ? "done" : i === stageIdx ? "cur" : "pending";
+                return (
+                  <div className="prog-stage" data-state={st} key={en}>
+                    <span className="prog-dot" data-state={st}>
+                      {st === "done" ? "✓" : i + 1}
+                    </span>
+                    <span className="prog-cn">{cn}</span>
+                    <span className="prog-en">{en}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="prog-live">
+              <span className="live-dot" />
+              <span>{live?.text || "思考中…"}</span>
+            </div>
+            {(toolFeed || []).length > 0 && (
+              <div className="prog-feed">
+                {toolFeed.map((t) => (
+                  <div className="prog-tool" key={t.id} data-status={t.status}>
+                    <span className="prog-tool-ic">
+                      {t.status === "done" ? "✓" : t.status === "error" ? "✕" : "…"}
+                    </span>
+                    <span className="prog-tool-label">{t.label || t.name}</span>
+                    {t.ms ? <span className="prog-tool-ms">{(t.ms / 1000).toFixed(1)}s</span> : null}
+                    {t.note ? <span className="prog-tool-note">{t.note}</span> : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="canvas-empty">
+            <span className="canvas-empty-box">3D</span>
+            <span className="canvas-empty-text">產出後,模型會在這裡出現</span>
+          </div>
+        )
       ) : (
         <>
           <span className="model-ghost">{(canvas.name || "MODEL").toUpperCase()}</span>
@@ -186,6 +415,7 @@ export default function Canvas3D({ canvas, propsOpen, selNode, dispatch, onBring
           <div className="markers">
             {faceMarkers.map((n, i) => {
               const token = n.ref?.copyText || n.label;
+              const rowIndex = n.ref ? (n.ref.rowIndex ?? n.ref.pickData?.rowIndex) : null;
               return (
                 <a
                   key={n.id}
@@ -196,21 +426,121 @@ export default function Canvas3D({ canvas, propsOpen, selNode, dispatch, onBring
                   }}
                   title={citedTokens.has(token) ? `${n.label} · 已帶入對話` : n.label}
                   onClick={() => onBringToChat(token, n.label)}
+                  onMouseEnter={() => Number.isInteger(rowIndex) && setHoverFaceRow(rowIndex)}
+                  onMouseLeave={() =>
+                    setHoverFaceRow((cur) => (cur === rowIndex ? null : cur))
+                  }
                 >
                   <span className="pick-diamond" />
                 </a>
               );
             })}
           </div>
+          {running && (
+            <div className="canvas-progress-strip">
+              <span className="live-dot" />
+              <span>{live?.text || "回合進行中…"}</span>
+            </div>
+          )}
+          {canvas.status === "loading" && (
+            <div className="canvas-loading">
+              <span className="live-dot" />
+              <span>載入 3D 模型…</span>
+            </div>
+          )}
+          {/* 匯出/轉檔是背景 spawn Python(OCCT 冷啟動首次較久)→ 中央明顯提示,
+              視線在畫布也看得到;完成即消失(觸發下載)、失敗走對話 notify。 */}
+          {exportNote && (
+            <div className="canvas-export-note">
+              <span className="live-dot" />
+              <span className="canvas-export-main">{exportNote}</span>
+              <span className="canvas-export-sub">首次轉檔較久,請稍候(不會離開此畫面)</span>
+            </div>
+          )}
           <span className="orbit-hint">⟳ 拖曳旋轉</span>
           <div className="canvas-tools" data-drawer={propsOpen}>
+            <a className="tool-chip" data-on={gridOn} onClick={toggleGrid}>
+              ⊞ 網格
+            </a>
+            <a className="tool-chip" data-on={axesOn} onClick={toggleAxes}>
+              ⤱ 座標軸
+            </a>
             <a className="tool-chip" data-on={orbit} onClick={toggleOrbit}>
               ⟳ 環繞
+            </a>
+            <a
+              className="tool-chip marker-toggle"
+              data-on={pickerOpen}
+              onClick={() => setPickerOpen((v) => !v)}
+            >
+              ◇ 面標記 {faceMarkers.length}/{markerCandidates.length}
             </a>
             {motionReady && (
               <a className="tool-chip motion-toggle" data-on={playing} onClick={togglePlay}>
                 {playing ? "⏸ 停止" : "▶ 運動示意"}
               </a>
+            )}
+            {pickerOpen && (
+              <div className="marker-panel">
+                <div className="marker-panel-acts">
+                  <a
+                    data-on={markerMode === "default"}
+                    onClick={() => {
+                      setMarkerMode("default");
+                      setMarkerPick(new Set());
+                    }}
+                  >
+                    預設
+                  </a>
+                  <a data-on={markerMode === "all"} onClick={() => setMarkerMode("all")}>
+                    全部
+                  </a>
+                  <a data-on={markerMode === "none"} onClick={() => setMarkerMode("none")}>
+                    隱藏
+                  </a>
+                </div>
+                {markerCandidates.length === 0 ? (
+                  <div className="marker-panel-hint">
+                    {isAsm ? "先點擊圈選零件,才會列出可選面" : "此模型沒有可選面"}
+                  </div>
+                ) : (
+                  <div className="marker-panel-list">
+                    {markerCandidates.map((n) => {
+                      const token = n.ref?.copyText || n.label;
+                      const rowIndex = n.ref ? (n.ref.rowIndex ?? n.ref.pickData?.rowIndex) : null;
+                      const ownerTag = isAsm
+                        ? selInfos.find(
+                            (s) => n.ownerOcc === s.pid || n.ownerOcc.startsWith(`${s.pid}.`),
+                          )?.label || ""
+                        : "";
+                      return (
+                        <label
+                          key={n.id}
+                          className="marker-row"
+                          data-cited={citedTokens.has(token) || undefined}
+                          onMouseEnter={() =>
+                            Number.isInteger(rowIndex) && setHoverFaceRow(rowIndex)
+                          }
+                          onMouseLeave={() =>
+                            setHoverFaceRow((cur) => (cur === rowIndex ? null : cur))
+                          }
+                        >
+                          <input
+                            type="checkbox"
+                            checked={visibleMarkerIds.has(n.id)}
+                            onChange={() => toggleMarker(n.id)}
+                          />
+                          <span className="marker-row-label">{n.label}</span>
+                          {ownerTag ? <span className="marker-row-owner">{ownerTag}</span> : null}
+                          {citedTokens.has(token) ? (
+                            <span className="marker-row-cited">已帶入</span>
+                          ) : null}
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             )}
           </div>
           {playing && <span className="motion-note">運動示意 · 等速往復 · 非物理模擬</span>}
@@ -242,6 +572,19 @@ export default function Canvas3D({ canvas, propsOpen, selNode, dispatch, onBring
                   帶入對話{selInfos.length > 1 ? ` (${selInfos.length})` : ""}
                 </a>
               )}
+              {isAsm && onExportParts
+                ? ["step", "stl"].map((f) => (
+                    <a
+                      key={f}
+                      className="sel-action sel-export"
+                      data-busy={partsBusy || undefined}
+                      title={`把圈選的 ${selInfos.length} 件各自匯出為 ${f.toUpperCase()}(多件打包 zip)`}
+                      onClick={() => !partsBusy && !running && onExportParts(selInfos, f)}
+                    >
+                      {partsBusy ? "⤓ 匯出中…" : `⤓ ${f.toUpperCase()}`}
+                    </a>
+                  ))
+                : null}
               <a className="sel-action sel-clear" onClick={() => selectPart(null)}>
                 ✕
               </a>
@@ -267,6 +610,41 @@ export default function Canvas3D({ canvas, propsOpen, selNode, dispatch, onBring
               citedTokens={citedTokens}
             />
           )}
+        </>
+      )}
+
+      {/* 選擇題(clarify)= 焦點模式:scrim 壓暗背景(進度面板/「3D」佔位圖/模型皆可)+
+          置中聚光燈卡,使用者的作答重心。左欄同步反灰為凍結上下文(App.jsx data-frozen)。
+          空畫布也顯示——左欄那張卡已被降級(反灰),這裡才是 active 焦點,非重複。
+          AI 還在講也能點;佇列會等回合結束自動送出。 */}
+      {clarify && (
+        <>
+          <div className="canvas-clarify-scrim" />
+          <div className="canvas-clarify">
+            <span className="canvas-clarify-kicker">◈ 需要你決定</span>
+            <p className="canvas-clarify-q">{clarify.q}</p>
+            {(clarify.opts || []).length > 0 && (
+              <div className="canvas-clarify-opts">
+                {clarify.opts.map((op, i) => (
+                  <a
+                    key={i}
+                    className="canvas-clarify-opt"
+                    onClick={() => onSubmitText?.(op.value || op.label)}
+                  >
+                    {op.label}
+                  </a>
+                ))}
+              </div>
+            )}
+            {clarify.suggested && (
+              <a
+                className="canvas-clarify-suggest"
+                onClick={() => onSubmitText?.(clarify.suggested)}
+              >
+                ✦ 用建議組合:{clarify.suggested}
+              </a>
+            )}
+          </div>
         </>
       )}
     </div>

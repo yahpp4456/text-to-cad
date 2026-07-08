@@ -59,11 +59,56 @@ export function resolveGcDays(env = process.env) {
   return Number.isFinite(days) ? days : 7;
 }
 
+// 每 session 版本快照數上限(versions/v*;超過刪最舊)。參數滑桿每次套用都是一版,
+// 大組合件一版快照可達數 MB,長 session 不設限會吃掉 GB 級磁碟。預設 30;設 0 → 不設限。
+export function resolveMaxSnapshots(env = process.env) {
+  const raw = String(env.CADCHAT_MAX_SNAPSHOTS || "").trim();
+  if (!raw) return 30;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) ? n : 30;
+}
+
 // agent 用的模型。未設定 → 回 null,交給 SDK(= 你 Claude Code CLI 的全域預設,
 // 會跟著 /model 變,不穩定)。建議在 .env.local 明確設 CADCHAT_MODEL。
 export function resolveModel(env = process.env) {
   const m = String(env.CADCHAT_MODEL || "").trim();
   return m || null;
+}
+
+// agent 推理 effort(傳給 query({effort}))。預設 xhigh。只有支援 effort 的模型有效
+// (Opus 4.6+/Fable 5/Sonnet 4.6+);不支援的模型 SDK 會靜默降級。非法值 → 預設 xhigh。
+export function resolveEffort(env = process.env) {
+  const raw = String(env.CADCHAT_EFFORT || "").trim().toLowerCase();
+  return ["low", "medium", "high", "xhigh", "max"].includes(raw) ? raw : "xhigh";
+}
+
+// agent extended thinking(可見的深度思考;傳給 query({thinking}))。**預設關閉**——
+// 避免長停頓,深度由 effort 控。off/disabled/0/no/(空/非法) → 停用;adaptive/on/auto →
+// 自適應(Claude 自己決定要不要想);正整數 → 固定 budgetTokens。恆回傳一個 config 物件。
+export function resolveThinking(env = process.env) {
+  const raw = String(env.CADCHAT_THINKING ?? "").trim().toLowerCase();
+  if (raw === "adaptive" || raw === "on" || raw === "auto") return { type: "adaptive" };
+  const n = Number.parseInt(raw, 10);
+  if (Number.isFinite(n) && n > 0) return { type: "enabled", budgetTokens: n };
+  return { type: "disabled" };
+}
+
+// ── 教訓系統(lessons)──
+// 總開關:CADCHAT_LESSONS=0 → 錄製/摘要/蒸餾全部 no-op。
+export function lessonsEnabled(env = process.env) {
+  return String(env.CADCHAT_LESSONS ?? "").trim() !== "0";
+}
+
+// 同 signature 未蒸餾案例達此門檻 → turn 結束後自動蒸餾。預設 3。
+export function resolveLessonThreshold(env = process.env) {
+  const raw = Number.parseInt(String(env.CADCHAT_LESSON_THRESHOLD || "").trim(), 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 3;
+}
+
+// 蒸餾用模型(可指定便宜模型);未設 → 跟 CADCHAT_MODEL。
+export function resolveLessonModel(env = process.env) {
+  const m = String(env.CADCHAT_LESSONS_MODEL || "").trim();
+  return m || resolveModel(env);
 }
 
 // 認證解析:雙模式。API key(產品路徑,Commercial Terms 按量計費)優先於

@@ -9,6 +9,13 @@ import { loadRenderGlb, loadRenderSelectorBundle } from "cadjs/lib/renderAssetCl
 import { buildSelectorRuntime } from "cadjs/lib/selectors/runtime";
 import { applyPartVisualState } from "cadjs/lib/viewer/partVisualState";
 import { autoZoomFrameForBounds, focusedDisplayRecordsBounds } from "cadjs/lib/viewer/autoZoom";
+import { niceGridStep, updateGridHelper } from "cadjs/lib/viewer/stageGrid";
+import { syncDisplayMeshFaceIds } from "cadjs/lib/viewer/selectorPickGroups";
+import {
+  buildFaceFillGeometryFromDisplayMeshes,
+  REFERENCE_SELECTED_COLOR,
+  REFERENCE_SELECTED_FILL_OPACITY,
+} from "cadjs/lib/viewer/referenceGeometry";
 
 export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFrame, onPickPart } = {}) {
   const liveRef = useRef({});
@@ -70,6 +77,37 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
         .add(new THREE.Vector3(1, -1, 0.8).normalize().multiplyScalar(radius * 3.2));
       controls.target.copy(center);
       controls.update();
+
+      // 地板網格:複用 viewer 的 shader 網格(有限圓盤、格距貼齊模型尺度、拉遠不會
+      // 變成無限蜘蛛網)。顏色壓暗配藍圖底,透明度低於模型不搶戲。
+      const gridRt = { THREE, scene: viewport.scene };
+      const floorZ = Array.isArray(model.bounds?.min) ? Number(model.bounds.min[2]) || 0 : 0;
+      updateGridHelper(gridRt, undefined, radius, floorZ, undefined, undefined, {
+        floorSettings: {
+          // 淺色藍圖底 → 柔和藍灰線,major(center)略深;壓低透明度不搶模型
+          grid: { enabled: true, centerColor: "#8fa5bf", cellColor: "#c0cbda", opacity: 0.5 },
+        },
+      });
+      // cad-chat 不把模型 recenter 到原點 → fade 圓盤與載體平面要跟著模型中心走
+      // (stageGrid 建構時 uGridCenter 固定 [0,0],假設模型已置中)。
+      // 另把格距換成 1/2/5 nice 刻度(約模型半徑 1/6,如 50mm)——預設 density 的
+      // cell ≈ 1.8R 對單一模型視角太稀,量不出尺寸感。
+      const gridMesh = gridRt.gridHelper || null;
+      if (gridMesh) {
+        gridMesh.position.set(center.x, center.y, floorZ);
+        const uu = gridMesh.material?.uniforms || {};
+        if (uu.uGridCenter) uu.uGridCenter.value = [center.x, center.y];
+        if (uu.uCellSize) uu.uCellSize.value = niceGridStep(radius / 6);
+      }
+      // 座標系:世界原點三軸(X 紅 / Y 綠 / Z 藍)——CAD 產生器的座標原點有語義。
+      const axes = new THREE.AxesHelper(radius * 1.2);
+      viewport.scene.add(axes);
+      const setGrid = (on) => {
+        if (gridMesh) gridMesh.visible = !!on;
+      };
+      const setAxes = (on) => {
+        axes.visible = !!on;
+      };
 
       const ro =
         typeof ResizeObserver === "function"
@@ -172,6 +210,65 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
         console.warn("[cad-chat] selector bundle unavailable", err?.message || err);
       }
 
+      // 面級填色高亮(cad-viewer 同款機制):faceRuns → 每三角形 faceIds →
+      // 抽該面三角形建 overlay 填色 mesh。舊 bundle 無 faceRuns 時整段靜默降級
+      // (菱形照常,只是不填色)。
+      if (runtime) {
+        try {
+          syncDisplayMeshFaceIds({ displayRecords: model.displayRecords || [] }, meshData, runtime);
+        } catch (err) {
+          console.warn("[cad-chat] faceIds sync 失敗(面填色停用)", err?.message || err);
+        }
+      }
+      const faceFill = { group: null };
+      const setFaceHighlights = (entries) => {
+        const records = model.displayRecords || [];
+        const parent = records[0]?.mesh?.parent || viewport.scene;
+        if (!faceFill.group) {
+          faceFill.group = new THREE.Group();
+          faceFill.group.renderOrder = 24;
+          parent.add(faceFill.group);
+        }
+        for (const child of [...faceFill.group.children]) {
+          faceFill.group.remove(child);
+          child.geometry?.dispose?.();
+          child.material?.dispose?.();
+        }
+        if (!runtime?.faceReferenceByRowIndex) return;
+        // faceFillOffset 需要 camera/modelGroup/modelRadius 才會沿法向偏移防 z-fighting
+        const fillRt = { displayRecords: records, camera, modelGroup: parent, modelRadius: radius };
+        for (const e of entries || []) {
+          const reference = runtime.faceReferenceByRowIndex.get(Number(e.rowIndex));
+          if (!reference) continue;
+          const geometry = buildFaceFillGeometryFromDisplayMeshes(fillRt, THREE, reference);
+          if (!geometry) continue;
+          const material = new THREE.MeshBasicMaterial({
+            color: e.color || REFERENCE_SELECTED_COLOR,
+            transparent: true,
+            opacity: Number.isFinite(e.opacity) ? e.opacity : REFERENCE_SELECTED_FILL_OPACITY,
+            depthTest: true,
+            depthWrite: false,
+            polygonOffset: true,
+            polygonOffsetFactor: -2,
+            polygonOffsetUnits: -2,
+            side: THREE.DoubleSide,
+            toneMapped: false,
+          });
+          const fillMesh = new THREE.Mesh(geometry, material);
+          fillMesh.renderOrder = 25;
+          faceFill.group.add(fillMesh);
+        }
+      };
+      const faceFillCount = () => faceFill.group?.children.length || 0;
+      // 除錯/煙測探針:faceRuns 映射鏈路各環節的健康度
+      const faceFillDebug = () => ({
+        refs: runtime?.faceReferenceByRowIndex?.size || 0,
+        runs: runtime?.proxy?.faceRuns?.length || 0,
+        runCols: runtime?.proxy?.faceRunColumns || null,
+        synced: (model.displayRecords || []).filter((r) => r?.mesh?.userData?.faceIds).length,
+        records: (model.displayRecords || []).length,
+      });
+
       liveRef.current = {
         model,
         viewport,
@@ -179,6 +276,9 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
         ro,
         camera,
         canvasEl,
+        gridMesh,
+        axes,
+        faceFill,
         onPointerDown,
         onClick,
         onDblClick,
@@ -189,7 +289,21 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
       };
       if (!disposed) {
         onStatus?.("ready");
-        onReady?.({ camera, host, runtime, viewport, model, setSelection, setAutoRotate });
+        onReady?.({
+          camera,
+          host,
+          runtime,
+          viewport,
+          model,
+          setSelection,
+          setAutoRotate,
+          setGrid,
+          setAxes,
+          setFaceHighlights,
+          faceFillCount,
+          faceFillDebug,
+          chrome: { grid: gridMesh, axes }, // dev/測試檢視用(visible 斷言)
+        });
       }
     })();
 
@@ -206,6 +320,23 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
         }
         s.ro?.disconnect();
         s.controls?.dispose?.();
+        if (s.faceFill?.group) {
+          for (const child of [...s.faceFill.group.children]) {
+            child.geometry?.dispose?.();
+            child.material?.dispose?.();
+          }
+          s.faceFill.group.parent?.remove(s.faceFill.group);
+          s.faceFill.group = null;
+        }
+        if (s.gridMesh) {
+          s.gridMesh.parent?.remove(s.gridMesh);
+          s.gridMesh.geometry?.dispose?.();
+          s.gridMesh.material?.dispose?.();
+        }
+        if (s.axes) {
+          s.axes.parent?.remove(s.axes);
+          s.axes.dispose?.();
+        }
         s.viewport?.dispose?.();
         s.model?.dispose?.();
         s.canvasEl?.remove();

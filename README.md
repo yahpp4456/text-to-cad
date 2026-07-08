@@ -31,6 +31,33 @@ A skills library for CAD, robotics, and hardware design agents
 
 </div>
 
+---
+
+> ## 🧭 Fork note — primary focus is `apps/cad-chat`
+>
+> This is a **Windows self-use fork** (origin `yahpp4456`, upstream
+> `earthtojake`). The active, day-to-day work here is **`apps/cad-chat`** — a
+> local web *conversational CAD* app: describe a part in the browser → the
+> **Claude Agent SDK** (subscription OAuth or API key) drives the text-to-cad
+> pipeline below → a real STEP/GLB model appears and is validated → iterate by
+> text, geometry picks, or parameter sliders.
+>
+> The **CAD Skills library documented below is the pipeline that cad-chat
+> drives**, not the primary deliverable in this fork. If you are an agent reading
+> this repo, start here:
+>
+> - **App docs:** [`apps/cad-chat/README.md`](apps/cad-chat/README.md) —
+>   architecture, endpoints, MOTION contract, import/merge flows.
+> - **Working rules:** [`CLAUDE.md`](CLAUDE.md) fork-local overrides — branch is
+>   `開發`, **never commit unless explicitly asked**, `.venv/Scripts/python.exe`,
+>   no symlinks. A nested `apps/cad-chat/CLAUDE.md` auto-loads inside that subtree.
+> - **Before editing cad-chat:** load the `cad-chat-verify` skill
+>   (`.claude/skills/cad-chat-verify/SKILL.md`) for the layered verify flow.
+>
+> Everything below this note is the upstream CAD Skills README, kept as-is.
+
+---
+
 # CAD Skills
 
 CAD Skills is a library of agent skills for generating, inspecting, sourcing,

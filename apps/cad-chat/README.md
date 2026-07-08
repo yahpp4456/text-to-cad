@@ -49,6 +49,12 @@ npm run build && npm run serve   # 正式(serve dist/)
 打開 `http://127.0.0.1:8788/`,在左側輸入框描述零件即可。若上方出現「尚未設定認證」
 橫幅,表示兩種憑證都沒設 —— 完成上面的一次性設定並重啟伺服器。
 
+**agent 調校(`.env.local`,改後重啟)**:`CADCHAT_MODEL`(模型別名/ID)、
+`CADCHAT_EFFORT`(推理 effort `low|medium|high|xhigh|max`,**預設 xhigh**;只有支援
+effort 的模型有效,否則 SDK 靜默降級)、`CADCHAT_THINKING`(深度思考
+`off|disabled|adaptive|<正整數 budgetTokens>`,**預設 off**——不做可見深度思考、避免長
+停頓,深度由 effort 控)。三者只作用於主 agent(`runner.mjs`);教訓蒸餾 agent 用 SDK 預設。
+
 ## 架構
 
 - **單一埠 `node:http` 伺服器**(`src/server/`):dev 委派 Vite middlewareMode,prod serve `dist/`。
@@ -60,6 +66,11 @@ npm run build && npm run serve   # 正式(serve dist/)
     裸 STEP 按需以 `--kind` 轉隱藏 topology GLB)。
   - `POST /api/import` / `POST /api/open-project`:匯入元件進 session `imported/`、
     開既有專案(複製樹到新 session + 同步重建 rehydrate)。
+  - `POST /api/save-project`(`{sessionId,name,overwrite?}`):把 session 產物存成
+    `models/<name>/`(與 open-project 互為讀寫方向;已存在回 `error:"exists"` 待確認覆蓋)。
+  - `POST /api/revert-version`(`{sessionId,ver}`):回退到 vK 快照——複回頂層+重建驗證,
+    產生新版 v{N+1}=vK 複本(歷史線性)。
+  - `GET /api/session-info?id=`:唯讀探測 session 是否還救得回來(前端開機還原用)。
 - **Agent**(`src/server/agent/`):`query()` 依認證模式傳憑證(`agentEnv`),掛 in-process MCP 工具
   (`emit_*` 推進 UI + `cad_import/cad_build/cad_validate/cad_source_part/cad_present/
   cad_measure/cad_align/cad_export` 實跑 `.venv` 的 `scripts/step`、`scripts/inspect`、
@@ -135,10 +146,155 @@ MOTION = {
   →align 取 delta 落定位常數(edits)→INTENDED_CONTACT/MOTION 宣告→重建+掃掠驗證。
   無 constraint solver,結合=相對定位+接觸宣告+掃掠驗證。
 
+## 教訓系統(自我遞迴演化,2026-07-07)
+
+驗證出紅色 → 記案例 → 決定性分類 → 達門檻自動蒸餾 → 注入系統提示,讓未來生成避開
+同錯。是 `skills/cad/references/lessons.md`(L-1~L-5 人工帳本)的執行時期動態版。
+
+- **記錄**:build 失敗 / validate 非 skip 的 FAIL / 回合錯誤 / 參數重生失敗全記
+  (per-turn 記憶體 buffer,turn 尾一次落盤;錄製層 no-throw,絕不擋 turn)。
+  同 turn 後續成功會把前面的失敗連結成**失敗→修法配對**(附 `emit_retry` 自診與
+  edits 摘要,蒸餾的最高價值原料)。刻意不記:open-project/revert 重建的紅
+  (歷史產物非生成教訓)、measure/align 等工具使用錯誤、**使用者中斷/斷線殺掉的
+  子程序**(`signal.aborted` 守衛,人為中止不是生成失敗;漏網的 killed 子程序另分型
+  `build:killed`)。interrupt 後新舊 turn 交錯時,flush 以 buffer 身份比對,只刷自己的。
+- **分類(signature)**:`build:<Exc>[:subtype]` / `validate:<checkId>[:subtype]` /
+  `turn:*`——例外類+穩定訊息前綴,AssertionError 依 geometry_checks 訊息分
+  interference / invalid-solid / motion-clear(不分型會蒸成一鍋糊)。
+- **蒸餾**:同 signature 未蒸餾案例 ≥3(`CADCHAT_LESSON_THRESHOLD`)→ turn 結束後
+  fire-and-forget 一次 LLM call(`CADCHAT_LESSONS_MODEL` 可指定便宜模型,未設跟
+  CADCHAT_MODEL)→ 教訓{標題/根因一句話/預防規則}。single-flight;輸出不合法
+  (bad_output)**連敗 2 次即退避**——自動蒸餾放棄該叢集不再重燒,面板標
+  「自動已停,可手動」,手動 force 不受限、成功清計數。自動蒸餾**只建新條**且有
+  同 signature 去重防線(不只靠 LLM 自覺 duplicateOf);改寫既有條文僅限面板
+  「重新蒸餾」(人工)。`duplicateOfStatic` → 建成 disabled;`duplicateOf` →
+  併入既有教訓(altSignatures)。
+- **注入**:active 教訓 top-10(依 caseCount)組成「# 累積教訓」段(~1000 字上限、
+  依 id 排序、**行內不放活計數**——digest 字串只在教訓集合真的變動時才變,系統提示
+  前綴 cache 不因命中計數遞增而失效;附「與上方規則衝突以上方為準」從屬聲明),
+  每 turn 重算進系統提示。已有教訓的 signature 再犯 → 直接連結+計數(**計數仍漲=
+  教訓沒用=停用它**,免費的有效性訊號,面板可見)。
+- **儲存**:單一 `models/.cadchat/lessons.json`(gitignored、GC 只刪目錄所以平面檔
+  永存、tmp+rename 原子寫、損毀改名 `.corrupt-*` 留證重建、案例 200 筆有界修剪)。
+- **UI**:Header「📚 教訓」面板——列教訓(狀態/案例數/修復數/★ 畢業候選)、
+  停用/啟用/刪除(**刪除=連結案例一併移除**,要再累積新紅才會重蒸;否則下一 turn
+  就從舊案例把同文教訓原樣蒸回來)、單條「重新蒸餾」、「立即蒸餾」(門檻 1,
+  結果誠實回報含 skipped)。**待蒸餾案例區**按 signature 分組列出每筆未蒸餾案例
+  (id/note/來源),可**逐筆刪除**(二段確認)剔除雜訊/誤記的紅——只刪 pending,
+  已連結教訓的案例由「刪除教訓」連帶處理(單刪會讓 caseCount 失真)。★ 畢業候選=
+  值得**人工**升級進 lessons.md 或決定性檢查——系統永不自動改 skill 檔。dev 鉤
+  `window.__cadLessons`。
+- **API**:`GET /api/lessons`(pending 分組帶逐筆 `cases[]`)、`GET /api/lessons/digest`
+  (與注入 prompt 完全相同的字串,驗證用)、`POST /api/lessons/{distill,redistill,
+  update,delete,delete-case}`(`delete-case` 刪單筆未蒸餾案例,壞/已連結 id → 404)。
+- **開關**:`CADCHAT_LESSONS=0` 整個子系統停用(錄製/蒸餾/注入全 no-op)。
+
+## 煙測(Playwright,`tests/smoke/`)
+
+對著**跑中的 dev server** 驗證 UI 互動與免 LLM 的 API 鏈路(90+ 斷言)。前置:
+`npm run dev`(8788,`CADCHAT_BASE` 可覆蓋)、fixture 為實體檔
+(`git lfs checkout models/motorized_linear_stage models/xyz_pickplace_gantry`)。
+
+```bash
+# repo 根執行(Windows 記得 PYTHONUTF8=1,否則 cp950 會炸)
+PYTHONUTF8=1 .venv/Scripts/python.exe apps/cad-chat/tests/smoke/run_all.py
+```
+
+server 不可達預設跳過(exit 0);`CADCHAT_SMOKE=1` 改為視為失敗。
+`smoke_queue_live.py` 消耗兩個真 LLM 回合,`CADCHAT_SMOKE_LLM=1` 才跑。
+截圖與 handoff 檔寫 `tests/smoke/.out/`(gitignored)。單支可獨立跑
+(versions 先於 restore)。不接 `scripts/test/test.sh`(CI 面不動)。
+
+給 AI 的完整驗證流程(分層金字塔、新需求擴充決策樹、失敗分流)見
+`.claude/skills/cad-chat-verify/SKILL.md`;通用 Playwright 自我驗證機制
+(dev 鉤模式、反 flake 規則)見其 `references/playwright-self-verify.md`。
+
+## 面標記顯示控制(2026-07-04)
+
+- **候選不設限 + 預設 6 + 手動面板**:面菱形候選=全部可選面(組合件為被圈選件
+  在屬性樹列出的面,12/件),預設仍只顯示 6 顆/件(總 12)——但這 6 顆改用
+  **最遠點取樣**挑「空間上散得開」的面:同軸疊在中心的外圓柱/頂底面只入選一兩個,
+  名額讓給孔壁等散佈特徵(修掉「法蘭 7 面取前 6,第 4 個孔沒菱形」)。
+- **「◇ 面標記 n/N」chip** 開啟面板:預設/全部/隱藏三段快切 + 逐面 checkbox
+  (一動即 custom 模式);列 hover = 3D 面填色預覽(認面不用猜),已帶入的面
+  標 amber「已帶入」。換模型或改圈選即重置回預設。dev 鉤 `__cadMarkers.state()`。
+
+## 面高亮 / GROUP 預覽 / 下載(2026-07-04)
+
+- **點菱形 → 對應面填色**:面標記 hover 時該面亮 emit 青(預覽)、帶入對話後持續亮
+  amber,chips 移除即熄。機制與 cad-viewer 同款(selector bundle 的 faceRuns →
+  `mesh.userData.faceIds` → 抽該面三角形建半透明 overlay mesh);舊 GLB 無 faceRuns
+  時靜默降級(只亮菱形)。
+- **屬性樹 GROUP → 3D 高亮全後代**:點中繼節點(如馬達)3D 同步亮其所有子件——
+  occurrenceId 是點分前綴,`applyPartVisualState` 前綴感知,直接餵群組 id;
+  預覽不佔 4 件圈選名額。
+- **下載**:VERSIONS 時間軸 active 版旁「⤓ STEP / STL / 3MF」。STEP 直接下載
+  (`/api/asset?…&download=<檔名>` 加 Content-Disposition);STL/3MF 走
+  `POST /api/export {sessionId, ver?, format}`——用**該版快照的 STEP** 直接 mesh
+  (免 LLM、不重跑產生器)。轉檔在 `.exports/<ver|current>/` 工作區跑(輸入 STEP
+  複製進去、輸出也落在那裡再經 asset 下載):step CLI 的 `--force` 會重生隱藏
+  GLB/topology sidecar,直接在 `versions/vK/` 裡跑會改寫凍結快照。
+- **拆件匯出(2026-07-04)**:`POST /api/export-parts {sessionId, ver?, occs?,
+  format: step|stl}` → `export_parts.py`(cadpy scene API 讀既有 STEP:occurrence
+  id 對定位後形狀,GROUP=子樹 Compound、保留世界定位)。1 件=單檔、多件=zip
+  (entry 用零件 label,撞名加序號)。兩個入口:①3D 圈選零件 → nameplate
+  「⤓ STEP / ⤓ STL」匯出**選中那幾件**(?glb= 預覽無 session 時藏鈕);
+  ②VERSIONS 的「⤓ 零件包」= 整機每零件一檔打包 zip(組合件才出現,STEP 格式,
+  子組合件如馬達=一個 compound 檔不炸葉)。
+
+## 跨重整續聊 + 版本快照真回退(2026-07-04)
+
+- **跨重整/重啟續聊**:前端把工作狀態(對話/版本/畫布/參數)throttle 落
+  `localStorage["cadchat.session.v1"]`,開機經 `/api/session-info` 驗證後回灌;
+  server 端 `session.json`(workdir 內)持久化 `sdkSessionId/version/lastName/imports`,
+  同 id 重掛(`getOrCreateSession`)自動 hydrate → SDK `resume` 跨伺服器重啟有效
+  (transcript 在 `~/.claude/projects/` 落盤,實測重啟後 AI 記得對話內容)。
+  產物被 GC/刪除時誠實降級:hydrate 驗 `<lastName>.py` 存在才還原 sdkSessionId;
+  resume 失敗轉 `_rehydrateNote` 接續產物模式(丟對話記憶、保工作成果)。
+  「＋ 新對話」清 localStorage 快照。
+- **版本快照真回退**:`emitPresent` 每版把產物凍結到 `versions/v{N}/`(py/step/glb/
+  asm.json + meta.json),`glbUrl` 指快照 → VERSIONS 切舊版看到**真舊檔**(此前檔名
+  覆蓋,切舊版其實看到最新幾何)。切到舊版出現「⟲ 回到 vK 繼續」→
+  `/api/revert-version` 把快照複回工作基準、重建驗證、以新版收尾——「看的版」與
+  「改的基準」從此一致。`save-project`/`open-project` 複製時排除 `versions/`、
+  `.exports/` 與 `session.json`(存的是成品不是歷史;session.json 是 session 私有
+  中繼資料,不得進 git 追蹤的 models/<name>/)。每版快照 ~80KB(小件)~2.7MB
+  (大組合件);數量上限 `CADCHAT_MAX_SNAPSHOTS`(預設 30,設 0 不設限)超過刪最舊
+  ——參數滑桿每次套用都是一版,不設限長 session 會吃到 GB 級;被剪掉的舊版同
+  「較舊的 session 產物」:縮圖/下載 404、revert 誠實回「沒有快照可回退」。
+  快照建立失敗(磁碟滿等)會 emit error 卡明講「此版無法回退」,不再靜默退回頂層檔。
+  其餘隨 session GC 回收。
+
+## 視圖體驗 + 檔案概念(2026-07-04)
+
+- **網格 + 座標系**:3D 視圖預設顯示地板網格(複用 viewer 的 shader grid:有限圓盤、
+  貼齊模型中心;格距 patch 成 1/2/5 nice 刻度 ≈ 半徑/6)與世界原點 `AxesHelper`
+  (X 紅 / Y 綠 / Z 藍)。畫布工具 chips「⊞ 網格」「⤱ 座標軸」可各自開關。
+- **進度進視圖**:產圖中空畫布顯示五階段直列 + live 活動文字 + 最近工具卡
+  (`.canvas-progress`);已有模型的改版重建顯示頂部細條;GLB 載入中有 loading 提示。
+- **選擇題 = 視圖聚光燈焦點模式**:`emit_clarify` 除左欄對話卡(`ADD_ITEM`)外同步掛
+  `state.clarify`(`SET_CLARIFY`)。待答時 `state.clarify != null`(唯一真相,只由 `ADD_USER`
+  清)驅動兩側:①右欄 `.canvas` 疊區塊級 scrim(`.canvas-clarify-scrim`,z10,`rgba(18,26,44,.42)`
+  壓暗進度面板/「3D」佔位圖/模型)+ 置中聚光燈卡(`.canvas-clarify`,z11,青邊 glow + 一次性
+  入場動畫)=**作答焦點**;②左欄 `.conv-col[data-frozen="true"]` 把 `.conv`/`.composer`
+  `opacity:0.5` **反灰凍結**為上下文(不用 `pointer-events:none`,`.conv-scroll` 仍可上捲、左欄
+  inline 選項仍是備援作答;`:focus-within` 一點輸入框即恢復全亮——輸入框刻意不 disable,仍可
+  自由打自訂答案)。凍結期抑制 `Conversation` 的 auto-scroll。任何送出(`ADD_USER`)清 clarify →
+  焦點卡卸載、左欄淡回,平滑退場。空畫布也顯示焦點卡(左欄那張已被降級反灰,視圖才是 active
+  焦點,非重複)。
+- **搶答不再報錯(409 修復)**:`useChatStream` 加 in-flight 佇列——回合進行中再
+  send(點選項/任何路徑)一律入佇列,回合結束自動依序送出;不會再打出並發
+  `/api/chat` 撞 409「session busy」,也不會讓第二個 send 的 END_RUN 收掉第一回合
+  還在串流的氣泡。interrupt 會清空佇列。(使用者當時回報為「408」,實為 409。)
+- **另存專案 / 新對話**:Header「⤓ 另存專案」(有 session 產物時出現)→
+  `/api/save-project` 存成 `models/<name>/`,之後可從「開啟檔案」載回續改;
+  「＋ 新對話」一鍵清空對話/畫布/版本並斷開 session(不必重新整理頁面)。
+  對話文字紀錄不落盤(跨重整續聊為後續項目)。
+
 ## 組合件互動補完(2026-07-04)
 
-- **面標記閘門**:組合件先雙擊圈選零件,才顯示**該零件**的面菱形(每件 6、總 12);
-  單件模型維持直接顯示。點菱形帶入對話。
+- **面標記閘門**:組合件先雙擊圈選零件,才顯示**該零件**的面菱形(預設每件 6、
+  總 12;可由「◇ 面標記」面板改,見上節);單件模型維持直接顯示。點菱形帶入對話。
 - **已帶入高亮**:composer 的 chips(`pickRefs`)= 單一真相——token 還掛著就高亮
   (菱形 amber 脈衝、樹節點 ⊹、名牌/抽屜按鈕轉「✓ 已帶入」),移除 chip 或送出即熄。
 - **occurrence 巢狀樹**:屬性抽屜由 `runtime.occurrences`(parentId)建樹,複合件

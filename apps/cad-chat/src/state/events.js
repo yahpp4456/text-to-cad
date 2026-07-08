@@ -59,6 +59,11 @@ export function handleEvent(dispatch, type, data = {}) {
         type: "ADD_ITEM",
         item: { type: "clarify", q: data.q, opts: data.opts || [], suggested: data.suggested || "" },
       });
+      // 同步掛上視圖區的 actionable 卡(任何使用者送出即視為已回答,由 ADD_USER 清掉)
+      dispatch({
+        type: "SET_CLARIFY",
+        clarify: { q: data.q, opts: data.opts || [], suggested: data.suggested || "" },
+      });
       break;
     case "tool":
       dispatch({ type: "UPSERT_TOOL", id: data.id, patch: data });
@@ -109,6 +114,7 @@ export function handleEvent(dispatch, type, data = {}) {
           type: data.type || "",
           partCount: data.partCount,
           source: data.source || "generated",
+          snapshot: data.snapshot, // false = 無凍結快照(JSON 路徑經 App.jsx 直傳,兩邊欄位要一致)
         },
       });
       break;

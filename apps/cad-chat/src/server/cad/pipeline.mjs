@@ -3,9 +3,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { MODELS_ROOT } from "../config.mjs";
+import { MODELS_ROOT, resolveMaxSnapshots } from "../config.mjs";
+import { persistSession } from "../sessions.mjs";
 import { resolveInside } from "./paths.mjs";
-import { spawnPython } from "./python.mjs";
+import { scrubPaths, spawnPython } from "./python.mjs";
 
 const STEP_DIR = "skills/cad/scripts/step";
 const INSPECT_DIR = "skills/cad/scripts/inspect";
@@ -97,7 +98,9 @@ export function applyEdits(session, name, edits) {
 // 複製(非引用):session 自包含,rehydrate=整目錄複製;envelope path 基準是 .py
 // 所在目錄,"imported/x.step" 直接合法。撞名附序號;內容相同直接重用(冪等)。
 // ---------------------------------------------------------------------------
-export function importStepIntoSession(session, modelsRelFile) {
+// 匯入來源驗證(不碰 session):handleImport 先驗 file 再 getOrCreateSession,
+// 否則 ghost sessionId + 壞檔的失敗請求會在磁碟留下剛 mint 的空 session 目錄。
+export function resolveImportSource(modelsRelFile) {
   const clean = String(modelsRelFile || "")
     .replace(/\\/g, "/")
     .replace(/^models\//, "");
@@ -115,6 +118,13 @@ export function importStepIntoSession(session, modelsRelFile) {
     return { ok: false, error: "檔案不存在" };
   }
   if (!st.isFile()) return { ok: false, error: "不是檔案" };
+  return { ok: true, srcAbs };
+}
+
+export function importStepIntoSession(session, modelsRelFile) {
+  const src0 = resolveImportSource(modelsRelFile);
+  if (!src0.ok) return src0;
+  const srcAbs = src0.srcAbs;
 
   const importDir = path.join(session.workdir, "imported");
   fs.mkdirSync(importDir, { recursive: true });
@@ -367,19 +377,80 @@ export function paramDefsFromGenerator(session, name) {
   return defs;
 }
 
+// 每版快照:把頂層產物凍結到 versions/v{N}/,讓時間軸切舊版看「真舊檔」、
+// 回退(revert-version)有原料。selector 拓撲內嵌 GLB,快照 .glb 點選即完整。
+export function snapshotDir(session, verNum) {
+  return path.join(session.workdir, "versions", `v${verNum}`);
+}
+function snapshotVersion(session, name, verNum, { type, partCount }) {
+  const n = sanitizeName(name);
+  const dir = snapshotDir(session, verNum);
+  fs.mkdirSync(dir, { recursive: true });
+  for (const f of [`${n}.py`, `${n}.step`, `.${n}.step.glb`, `${n}.asm.json`, `.${n}.step.js`]) {
+    const src = path.join(session.workdir, f);
+    if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, f));
+  }
+  fs.writeFileSync(
+    path.join(dir, "meta.json"),
+    JSON.stringify({ name: n, type, partCount, ts: Date.now() }),
+    "utf8",
+  );
+  return `${session.workdirRel}/versions/v${verNum}/.${n}.step.glb`;
+}
+
+// 快照數量有界:超過上限(resolveMaxSnapshots,預設 30)刪最舊的 v* 目錄。
+// 沒有它,參數滑桿的每次套用都複製整組 STEP+GLB(大組合件數 MB/版),長 session
+// 會無上限吃磁碟直到快照開始失敗。被剪掉的舊版行為同「較舊的 session 產物」:
+// 時間軸縮圖/下載 404、revert 回誠實的「沒有快照可回退」。
+function pruneSnapshots(session, keep) {
+  if (!Number.isFinite(keep) || keep <= 0) return;
+  const root = path.join(session.workdir, "versions");
+  let names;
+  try {
+    names = fs.readdirSync(root).filter((n) => /^v\d+$/.test(n));
+  } catch {
+    return; // 尚無 versions/
+  }
+  names.sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+  for (const n of names.slice(0, Math.max(0, names.length - keep))) {
+    try {
+      fs.rmSync(path.join(root, n), { recursive: true, force: true });
+    } catch {
+      /* 單一目錄刪失敗不擋(下次再剪) */
+    }
+  }
+}
+
 // 呈現:bump 版本並 emit artifact / version / present 三事件(MCP present 與參數重生共用)。
 export function emitPresent(session, name, emit) {
   session.version += 1;
   session.lastName = name;
   const ver = `v${session.version}`;
   const stepRel = relTarget(session, name, ".step");
-  // 版本 cache-buster:同名重生時 GLB 路徑不變,不加 &v= 前端 glbUrl 相同
-  // 就不會重載(useEffect 以 glbUrl 為 dep),畫布會卡在舊模型 + loading。
-  const gUrl = `${glbUrlFor(session, name)}&v=${session.version}`;
-  const ghost =
-    (name || "PART").replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase() || "PART";
   // 檔案類型(元件/組合件)由 manifest 決定性推導,隨三事件送進前端 badge
   const { type, partCount } = readTypeFor(session, name);
+  // glbUrl 指本版快照(每版路徑天然唯一);快照失敗(磁碟滿等)誠實退回頂層檔
+  // ——此時保留 &v= cache-buster 的原始用途(同路徑重生時逼前端重載)。
+  let fileRel;
+  let snapshotOk = true;
+  try {
+    fileRel = snapshotVersion(session, name, session.version, { type, partCount });
+  } catch (err) {
+    snapshotOk = false;
+    console.warn(`[cad-chat] 版本快照失敗(退回頂層檔):${err?.message || err}`);
+    fileRel = glbRel(session, name);
+    // 退回頂層檔的後果不能無聲吞掉:此版在時間軸會永遠跟著「最新」幾何走、
+    // 無法回退——使用者(常見原因:磁碟滿)必須當下知道。
+    emit("error", {
+      message: `${ver} 的版本快照建立失敗(${scrubPaths(String(err?.message || err))}):此版無法回退,時間軸縮圖將跟隨最新幾何。`,
+    });
+  }
+  // 成敗都剪(pruneSnapshots 內部全 try/catch,不會拋):持續失敗 regime(磁碟滿)
+  // 下半成品 v* 目錄也要有界,而且剪掉舊快照釋放的空間可能就是下一版自癒的空間。
+  pruneSnapshots(session, resolveMaxSnapshots());
+  const gUrl = `/api/asset?file=${encodeURIComponent(fileRel)}&v=${session.version}`;
+  const ghost =
+    (name || "PART").replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase() || "PART";
   emit("artifact", {
     ver, name, code: name, ghost, formats: ["STEP", "GLB"],
     type, partCount, source: "generated",
@@ -387,14 +458,16 @@ export function emitPresent(session, name, emit) {
   emit("version", {
     id: ver,
     name,
-    file: glbRel(session, name),
+    file: fileRel,
     glbUrl: gUrl,
     formats: ["STEP", "GLB"],
     type,
     partCount,
     source: "generated",
+    snapshot: snapshotOk, // false = 本版無凍結快照(退回頂層檔,無法回退)
   });
   emit("present", { ver, name, code: name, file: stepRel, glbUrl: gUrl, type });
+  persistSession(session); // version/lastName 剛變動 → 落盤(重整/重啟後計數不歸零)
   return { ver, glbUrl: gUrl };
 }
 

@@ -23,12 +23,14 @@ from cadpy.geometry_checks import (  # noqa: E402
 from cadpy.parts import (  # noqa: E402
     ball_screw,
     deep_groove_bearing,
+    gripper,
     linear_guide,
     pneumatic_cylinder,
     stepper_motor,
 )
 from cadpy.parts.ball_screw import check_geometry as check_ball_screw  # noqa: E402
 from cadpy.parts.deep_groove_bearing import check_geometry as check_bearing  # noqa: E402
+from cadpy.parts.gripper import check_geometry as check_gripper  # noqa: E402
 from cadpy.parts.linear_guide import check_geometry as check_linear_guide  # noqa: E402
 from cadpy.parts.pneumatic_cylinder import check_geometry as check_cylinder  # noqa: E402
 from cadpy.parts.stepper_motor import check_geometry as check_stepper  # noqa: E402
@@ -169,6 +171,56 @@ class BallScrewGeometryTests(unittest.TestCase):
         # travel is screw_len - nut_len = 160; 180 runs off the screw
         with self.assertRaises(ValueError):
             ball_screw(**self.DIMS, nut_pos=180)
+
+
+class GripperGeometryTests(unittest.TestCase):
+    def test_body_and_two_jaws_valid_with_only_intended_contacts(self) -> None:
+        g = gripper(bore=20, stroke=10, opening=4)
+        self.assertEqual(
+            [c.label for c in g.children],
+            ["gripper_body", "gripper_jaw_a", "gripper_jaw_b"],
+        )
+        assert_all_valid(g, label="gripper part")
+        # exactly the two seated fingers overlap the body; the fingers never touch
+        report = enumerate_interferences(g)
+        pairs = {frozenset((p.a, p.b)) for p in report.overlaps}
+        self.assertEqual(
+            pairs,
+            {
+                frozenset(("gripper_body", "gripper_jaw_a")),
+                frozenset(("gripper_body", "gripper_jaw_b")),
+            },
+        )
+        self.assertNotIn(
+            frozenset(("gripper_jaw_a", "gripper_jaw_b")), pairs
+        )  # the fingers must not collide
+        # undeclared -> the gate must FAIL; declared via check_geometry -> pass
+        with self.assertRaises(AssertionError):
+            assert_no_interference(g)
+        check_gripper(g)  # no raise
+
+    def test_check_passes_closed_and_fully_open_with_sweep(self) -> None:
+        sweep = dict(bore=20, stroke=10, samples=16)
+        check_gripper(gripper(bore=20, stroke=10, opening=0), sweep_args=sweep)
+        check_gripper(gripper(bore=20, stroke=10, opening=10), sweep_args=sweep)
+
+    def test_all_catalog_grippers_pass(self) -> None:
+        from cadpy.parts.specs_io import load_specs
+
+        for row in load_specs("grippers"):
+            g = gripper(bore=row["bore"], stroke=row["stroke"], opening=row["stroke"])
+            check_gripper(
+                g, sweep_args=dict(bore=row["bore"], stroke=row["stroke"], samples=8)
+            )
+
+    def test_known_bad_body_too_short_is_rejected(self) -> None:
+        # a body_l that cannot host the fingers at full open must raise
+        with self.assertRaises(ValueError):
+            gripper(bore=20, stroke=10, body_l=20)
+
+    def test_known_bad_opening_beyond_stroke_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            gripper(bore=20, stroke=10, opening=12)
 
 
 if __name__ == "__main__":

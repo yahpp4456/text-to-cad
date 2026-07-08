@@ -159,5 +159,40 @@ class XyzPickPlaceGantryGateTests(unittest.TestCase):
             -m.CYL_STROKE, delta=1.0)  # nozzle 0 fires down on its own extension
 
 
+class LinearPickStationGateTests(unittest.TestCase):
+    """Gripper dogfood gate: a SELECTED linear guide + SELECTED parallel gripper
+    assemble AND travel (carriage traverse + jaw open) penetration-free over both
+    sweeps -- the gripper family's capstone, mirroring the other families'."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.m = _load_model("linear_pick_station", "linear_pick_station")
+
+    def test_consumes_two_selected_families(self):
+        for spec in (self.m.GUIDE_SPEC, self.m.GRIPPER_SPEC):
+            self.assertIn("model", spec)
+            self.assertGreater(spec["selected_for"]["margin"], 1.0)
+        # a linear guide and a gripper, not the same catalog row
+        self.assertNotEqual(self.m.GUIDE_SPEC["model"], self.m.GRIPPER_SPEC["model"])
+
+    def test_full_assembly_check_geometry_passes(self):
+        self.m.check_geometry(self.m.gen_step())  # validity + interference + 2 sweeps
+
+    def test_carriage_and_jaws_actually_travel(self):
+        # anti-vacuous: the carriage displaces by the full traverse, and a finger by
+        # half the gripper stroke, so both swept DOFs really exercise motion (a
+        # static scene swept N times would prove nothing).
+        def lo(frame, name):
+            return dict(frame)[name].bounding_box().min.X
+
+        seat = self.m.pose(0.0, 0.0)
+        self.assertAlmostEqual(
+            lo(self.m.pose(1.0, 0.0), "guide_block") - lo(seat, "guide_block"),
+            self.m.TRAVERSE, delta=1.0)
+        self.assertAlmostEqual(
+            lo(self.m.pose(0.0, 1.0), "gripper_jaw_a") - lo(seat, "gripper_jaw_a"),
+            -self.m.G_STROKE / 2.0, delta=0.01)  # jaw_a opens toward -X
+
+
 if __name__ == "__main__":
     unittest.main()
