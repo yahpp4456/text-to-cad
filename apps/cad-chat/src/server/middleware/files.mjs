@@ -118,7 +118,17 @@ async function handleOpen(body, res) {
   const dir = path.dirname(abs);
   const base = path.basename(abs);
   const relDir = path.relative(MODELS_ROOT, dir).split(path.sep).join("/");
-  const assetUrl = (rel) => `/api/asset?file=${encodeURIComponent(rel)}`;
+  // glbUrl 帶檔案 mtime buster(同 emitPresent 的 &v= 慣例):同一檔重複開啟時,
+  // 檔案沒變=同 URL(前端不重載),外部重生過=新 URL(逼前端真重載)。
+  const assetUrl = (rel, srcAbs) => {
+    let v = "";
+    try {
+      v = `&v=${Math.round(fs.statSync(srcAbs).mtimeMs)}`;
+    } catch {
+      /* stat 失敗保守降級成無 buster,開檔仍可用 */
+    }
+    return `/api/asset?file=${encodeURIComponent(rel)}${v}`;
+  };
 
   if (ext === ".glb") {
     const stem = base.replace(/\.glb$/i, "");
@@ -127,7 +137,7 @@ async function handleOpen(body, res) {
       name: stem,
       type: typeFromManifest(dir, stem) || "",
       file: fileParam,
-      glbUrl: assetUrl(fileParam),
+      glbUrl: assetUrl(fileParam, abs),
     });
     return;
   }
@@ -142,9 +152,24 @@ async function handleOpen(body, res) {
   const glbRel = relDir && relDir !== "." ? `${relDir}/${glbName}` : glbName;
   const mfType = typeFromManifest(dir, stem);
 
-  if (!fs.existsSync(glbAbs)) {
-    // 裸 STEP:scripts/step 對直接 STEP 目標必須帶 --kind(part|assembly)
-    const kind = body?.kind === "assembly" || body?.kind === "part" ? body.kind : null;
+  // 重轉條件:GLB 缺席,或 STEP 比 GLB 新「超過偏斜窗」(外部改寫 STEP 而舊 GLB
+  // 還在——只看缺席會拿舊 GLB 的 mtime buster,靜默呈現舊幾何)。偏斜窗必要:
+  // git/LFS checkout 同批寫檔時 dotfile GLB 排序在前先落地,STEP 毫秒級較新,
+  // 嚴格比較會把每個剛 hydrate 的 fixture 誤判 stale(重跑 tessellation,無
+  // manifest 的還退到 kind_required)。真正的外部改寫與再開啟至少分鐘級。
+  const REGEN_SKEW_MS = 10_000;
+  let needRegen = !fs.existsSync(glbAbs);
+  if (!needRegen) {
+    try {
+      needRegen = fs.statSync(glbAbs).mtimeMs + REGEN_SKEW_MS < fs.statSync(abs).mtimeMs;
+    } catch {
+      needRegen = true;
+    }
+  }
+  if (needRegen) {
+    // 裸 STEP:scripts/step 對直接 STEP 目標必須帶 --kind(part|assembly);
+    // 有組合件 manifest 就不再問(manifest 權威),否則要求前端二選一。
+    const kind = body?.kind === "assembly" || body?.kind === "part" ? body.kind : mfType;
     if (!kind) {
       sendJson(res, 200, { ok: false, error: "kind_required" });
       return;
@@ -171,7 +196,7 @@ async function handleOpen(body, res) {
     // 類型:manifest 優先;無 manifest 時採使用者指定的 kind(推導值,badge 誠實標示來源)
     type: mfType || (body?.kind === "assembly" || body?.kind === "part" ? body.kind : ""),
     file: fileParam,
-    glbUrl: assetUrl(glbRel),
+    glbUrl: assetUrl(glbRel, glbAbs),
   });
 }
 

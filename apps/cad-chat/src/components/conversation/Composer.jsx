@@ -3,6 +3,9 @@ import React, { useEffect, useRef, useState } from "react";
 export default function Composer({
   running,
   pickRefs = [],
+  pendingImages = [], // [{id,name,url,status:"uploading"|"ready"|"error",error?}] 附件縮圖 chips
+  onAttachFiles,
+  onRemoveImage,
   prefill,
   onPrefillConsumed,
   onRemovePick,
@@ -12,7 +15,11 @@ export default function Composer({
 }) {
   const [draft, setDraft] = useState("");
   const inputRef = useRef(null);
-  const canSend = !running && draft.trim().length > 0;
+  const fileRef = useRef(null);
+  const uploading = pendingImages.some((p) => p.status === "uploading");
+  const hasImg = pendingImages.some((p) => p.status === "ready");
+  // 上傳中不可送(imageRefs 還沒拿到 rel);純圖無文字可送
+  const canSend = !running && !uploading && (draft.trim().length > 0 || hasImg);
 
   // 點規格 chip → 預填草稿並聚焦,讓使用者接著打修正值。
   useEffect(() => {
@@ -28,9 +35,22 @@ export default function Composer({
 
   const submit = () => {
     const text = draft.trim();
-    if (!text || running) return;
+    if ((!text && !hasImg) || running || uploading) return;
     onSubmit(text);
     setDraft("");
+  };
+
+  // 貼上圖片(Ctrl+V 截圖/複製的圖檔)→ 走同一條附件上傳路徑
+  const onPaste = (e) => {
+    if (!onAttachFiles) return;
+    const files = Array.from(e.clipboardData?.items || [])
+      .filter((it) => it.kind === "file")
+      .map((it) => it.getAsFile())
+      .filter((f) => f && f.type.startsWith("image/"));
+    if (files.length) {
+      e.preventDefault();
+      onAttachFiles(files);
+    }
   };
 
   const onKey = (e) => {
@@ -41,7 +61,21 @@ export default function Composer({
   };
 
   return (
-    <div className="composer">
+    <div
+      className="composer"
+      onDragOver={onAttachFiles ? (e) => e.preventDefault() : undefined}
+      onDrop={
+        onAttachFiles
+          ? (e) => {
+              e.preventDefault();
+              const files = Array.from(e.dataTransfer?.files || []).filter((f) =>
+                f.type.startsWith("image/"),
+              );
+              if (files.length) onAttachFiles(files);
+            }
+          : undefined
+      }
+    >
       {pickRefs.length > 0 && (
         <div className="pick-chips">
           {pickRefs.map((r) => (
@@ -59,7 +93,45 @@ export default function Composer({
           )}
         </div>
       )}
+      {pendingImages.length > 0 && (
+        <div className="img-chips">
+          {pendingImages.map((im) => (
+            <span className="img-chip" key={im.id} data-status={im.status}>
+              {im.url ? <img src={im.url} alt="" /> : <span className="img-ph" />}
+              <span className="img-name" title={im.error || im.name}>
+                {im.status === "error" ? `⚠ ${im.name}` : im.name}
+              </span>
+              <a className="pick-clear" onClick={() => onRemoveImage?.(im.id)}>
+                ✕
+              </a>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="composer-row">
+        {onAttachFiles && (
+          <>
+            <input
+              ref={fileRef}
+              type="file"
+              className="composer-file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              style={{ display: "none" }}
+              onChange={(e) => {
+                if (e.target.files?.length) onAttachFiles(e.target.files);
+                e.target.value = ""; // 清掉才能重選同一檔
+              }}
+            />
+            <a
+              className="composer-btn attach"
+              title="附加圖片(也可直接貼上 / 拖放)"
+              onClick={() => fileRef.current?.click()}
+            >
+              ⌲
+            </a>
+          </>
+        )}
         <textarea
           rows={1}
           ref={inputRef}
@@ -67,6 +139,7 @@ export default function Composer({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKey}
+          onPaste={onPaste}
           placeholder="描述零件,或追加修改（Enter 送出）…"
         />
         {running ? (
@@ -77,6 +150,7 @@ export default function Composer({
           <a
             className="composer-btn send"
             data-active={canSend}
+            title={uploading ? "圖片上傳中…" : undefined}
             onClick={canSend ? submit : undefined}
           >
             ↑

@@ -194,5 +194,38 @@ class LinearPickStationGateTests(unittest.TestCase):
             -self.m.G_STROKE / 2.0, delta=0.01)  # jaw_a opens toward -X
 
 
+class SteeringBoxGateTests(unittest.TestCase):
+    """Gear-family dogfood gate: the steering-box rotary actuator's pinion and
+    rack come from cadpy.parts.gear with the closed-form mesh phase, so the
+    mesh must be interference-free with ZERO declared contacts (the family's
+    selling point vs block teeth), and the module's own check_geometry rolls
+    the coupled stroke/swing through the whole 90 deg travel."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.m = _load_model("steering_box_rack_pinion", "steering_box_rack_pinion")
+
+    def test_mesh_needs_no_intended_contact(self):
+        self.assertEqual(list(self.m.INTENDED_CONTACT), [])
+
+    def test_travel_matches_pure_rolling(self):
+        import math
+
+        self.assertAlmostEqual(
+            self.m.STROKE,
+            self.m.RP * math.radians(self.m.PARAMS["swing_deg"]),
+            places=9,
+        )
+
+    def test_motion_declares_coupled_dofs(self):
+        dofs = {d["id"]: d for d in self.m.MOTION["dofs"]}
+        self.assertEqual(dofs["swing"]["couple"], "stroke")
+        self.assertEqual(dofs["swing"]["type"], "revolute")
+        self.assertAlmostEqual(dofs["stroke"]["travel"], -self.m.STROKE, places=9)
+
+    def test_geometry_and_rolling_sweep(self):
+        self.m.check_geometry(self.m.gen_step())
+
+
 if __name__ == "__main__":
     unittest.main()

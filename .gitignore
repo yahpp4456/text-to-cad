@@ -33,6 +33,10 @@ coverage
 *.swp
 *.step.glb.lock
 *.stp.glb.lock
+# build 收割 sidecar(MOTION+parts;cad-chat 設計模式用)——隱藏 GLB 是刻意提交的
+# fixture,meta 不是,任何 gen_step build 都會重生它
+*.step.meta.json
+*.stp.meta.json
 tmp/
 
 # Local printer credentials

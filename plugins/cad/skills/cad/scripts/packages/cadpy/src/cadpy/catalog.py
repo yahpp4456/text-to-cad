@@ -277,6 +277,12 @@ def hidden_glb_path_for_step_path(step_path: Path) -> Path:
     return (base.parent / f".{base.name}.glb").resolve()
 
 
+def hidden_meta_path_for_step_path(step_path: Path) -> Path:
+    """build 收割 sidecar(`.{name}.step.meta.json`):MOTION+parts,cad-chat 設計模式零 spawn 用。"""
+    base = step_path.resolve()
+    return (base.parent / f".{base.name}.meta.json").resolve()
+
+
 def legacy_explorer_artifact_path_for_step_path(step_path: Path, suffix: str) -> Path:
     base = step_path.resolve()
     artifact_name = EXPLORER_ARTIFACT_FILENAMES.get(suffix)

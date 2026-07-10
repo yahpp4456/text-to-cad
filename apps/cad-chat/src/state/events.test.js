@@ -1,0 +1,63 @@
+// events.js 事件→action 映射單元測(node --test,fake dispatch 收集 actions):
+// spec/clarify 的字面 \n 防禦正規化與 assumed 透傳、clarify 雙 dispatch。
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import { handleEvent } from "./events.js";
+
+function collect(type, data) {
+  const actions = [];
+  handleEvent((a) => actions.push(a), type, data);
+  return actions;
+}
+
+test("spec 事件:ADD_ITEM + SET_TURN_SPEC 雙 dispatch,chips 字面 \\n 已正規化", () => {
+  const actions = collect("spec", {
+    chips: [{ k: "導軌", v: "HGR15\\n雙軌", assumed: true }],
+  });
+  assert.equal(actions.length, 2);
+  const [add, turn] = actions;
+  assert.equal(add.type, "ADD_ITEM");
+  assert.equal(add.item.type, "spec");
+  assert.equal(add.item.chips[0].v, "HGR15\n雙軌"); // 字面 \n → 真換行
+  assert.equal(add.item.chips[0].assumed, true);
+  assert.equal(turn.type, "SET_TURN_SPEC");
+  assert.deepEqual(turn.chips, add.item.chips); // 兩路吃同一份正規化資料
+});
+
+test("params_values 事件:SET_PARAM_VALUES 單 dispatch(regen 回滾滑桿拉回);缺 values 給空物件", () => {
+  const actions = collect("params_values", { values: { w: 20, h: 10 } });
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].type, "SET_PARAM_VALUES");
+  assert.deepEqual(actions[0].values, { w: 20, h: 10 });
+  const bare = collect("params_values", {});
+  assert.deepEqual(bare[0].values, {});
+});
+
+test("spec 事件:assumed 只在嚴格 === true 透傳(亂型別不擴散)", () => {
+  const actions = collect("spec", {
+    chips: [
+      { k: "a", v: "1", assumed: "yes" },
+      { k: "b", v: "2" },
+    ],
+  });
+  assert.equal("assumed" in actions[0].item.chips[0], false);
+  assert.equal("assumed" in actions[0].item.chips[1], false);
+});
+
+test("clarify 事件:ADD_ITEM(左欄紀錄)+ SET_CLARIFY(精靈)雙 dispatch,全欄位正規化", () => {
+  const actions = collect("clarify", {
+    q: "行程已明確\\n・負載:中載", // 使用者截圖的實際症狀
+    opts: [{ label: "中載\\n標準", value: "採用中載\\n標準" }],
+    suggested: "全部\\n建議值",
+  });
+  assert.equal(actions.length, 2);
+  const [add, set] = actions;
+  assert.equal(add.type, "ADD_ITEM");
+  assert.equal(add.item.q, "行程已明確\n・負載:中載");
+  assert.equal(add.item.opts[0].label, "中載\n標準");
+  assert.equal(add.item.opts[0].value, "採用中載\n標準"); // value 會被原樣送回,必須乾淨
+  assert.equal(set.type, "SET_CLARIFY");
+  assert.equal(set.clarify.q, add.item.q);
+  assert.equal(set.clarify.suggested, "全部\n建議值");
+});

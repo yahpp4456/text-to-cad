@@ -10,6 +10,9 @@ export default function PropertiesDrawer({
   dispatch,
   onBringToChat,
   citedTokens,
+  partDisplay = {},
+  onCycleDisplay,
+  onPickPart,
 }) {
   const nodes = topo?.nodes || [];
   const sel = nodes.find((n) => n.id === selNode) || nodes[0] || null;
@@ -110,16 +113,22 @@ export default function PropertiesDrawer({
               }
               const expandable = n.childCount > 0;
               const isCited = !!tokenOf(n) && cited.has(tokenOf(n));
+              // 零件級節點(有 occurrenceId):點擊連動 3D 圈選(殼擋住 raycast 時
+              // 從樹選內部件的逃生口)+ 眼睛三態(solid→半透明→隱藏,透視外殼用)
+              const occId = n.kind === "shape" ? n.row?.occurrenceId : null;
+              const eye = occId ? partDisplay[occId] || "solid" : null;
               return (
                 <a
                   key={n.id}
                   className="tree-node"
                   data-active={n.id === sel?.id}
                   data-cited={isCited || undefined}
+                  data-display={eye && eye !== "solid" ? eye : undefined}
                   style={{ paddingLeft: 8 + n.depth * 16 }}
                   onClick={() => {
                     dispatch({ type: "SELECT_NODE", id: n.id });
                     if (expandable) toggleExpand(n.id);
+                    if (occId) onPickPart?.(occId, "toggle");
                   }}
                 >
                   {expandable && (
@@ -128,6 +137,25 @@ export default function PropertiesDrawer({
                   <span className="tree-label">{n.label}</span>
                   {isCited && <span className="tree-cited" title="已帶入對話">⊹</span>}
                   <span className="tree-kind">{n.kindEn}</span>
+                  {occId && (
+                    <span
+                      className="tree-eye"
+                      data-state={eye}
+                      title={
+                        eye === "solid"
+                          ? "顯示中 · 點擊轉半透明(透視)"
+                          : eye === "ghost"
+                            ? "半透明中(點擊穿透) · 點擊轉隱藏"
+                            : "已隱藏 · 點擊恢復顯示"
+                      }
+                      onClick={(e) => {
+                        e.stopPropagation(); // 別觸發整列的圈選/展開
+                        onCycleDisplay?.(occId);
+                      }}
+                    >
+                      {eye === "solid" ? "●" : eye === "ghost" ? "◍" : "○"}
+                    </span>
+                  )}
                 </a>
               );
             })}

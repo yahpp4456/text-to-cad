@@ -3,7 +3,9 @@
 //   POST /api/open-project  {dir, generator?}      — 開既有專案:複製樹到新 session + 重建
 //   POST /api/save-project  {sessionId, name, overwrite?} — session 產物存成 models/<name>/
 //   POST /api/revert-version {sessionId, ver}             — 回退到 vK 快照(產生新版=vK 複本)
-//   POST /api/export        {sessionId, ver?, format}     — 快照/頂層 STEP → STL/3MF(免 LLM)
+//   POST /api/export        {sessionId, ver?, format}     — 快照/頂層 STEP → STL/3MF(免 LLM;
+//                            內建匯出閘:未驗證先自動完整驗證,未過擋下)
+//   POST /api/validate-ver  {sessionId, ver?}              — 匯出閘單獨入口(STEP 直下載把關用)
 // 與 agent 的 cad_import 工具收斂到同一份 pipeline.importStepIntoSession。
 // save ↔ open-project 互為讀寫方向:存出去的專案可再開回來續改。
 import fs from "node:fs";
@@ -19,8 +21,9 @@ import {
   probeSessionOnDisk,
   releaseBusy,
 } from "../sessions.mjs";
-import { scrubPaths, spawnPython } from "../cad/python.mjs";
+import { condenseTraceback, scrubPaths, spawnPython } from "../cad/python.mjs";
 import {
+  decorateChecks,
   emitPresent,
   importStepIntoSession,
   inspectFacts,
@@ -29,10 +32,12 @@ import {
   runStep,
   runValidate,
   sanitizeName,
+  validateSnapshotFull,
 } from "../cad/pipeline.mjs";
 
 const REBUILD_TIMEOUT_MS = 300_000; // 開專案同步重建上限(大組合件 tessellation 較久)
 const FACTS_TIMEOUT_MS = 30_000;
+const VALIDATE_TIMEOUT_MS = 120_000; // 「精算此版」完整驗證含運動掃掠(75s 閘)+ 餘裕
 
 async function handleImport(body, res) {
   // 先驗來源檔再取 session:getOrCreateSession 會 mint 目錄,壞檔的失敗請求
@@ -171,7 +176,7 @@ async function handleOpenProject(body, res) {
       ok: false,
       sessionId: session.sessionId,
       name,
-      error: `重建失敗:${(step.stderr || "").trim().slice(-400) || `exit ${step.exitCode}`}(session 已保留,可用對話修復)`,
+      error: `重建失敗:${condenseTraceback(step.stderr, { generatorName: name }) || `exit ${step.exitCode}`}(session 已保留,可用對話修復)`,
     });
     return;
   }
@@ -254,7 +259,7 @@ async function handleRevertVersion(body, res) {
     if (!step.ok) {
       sendJson(res, 200, {
         ok: false,
-        error: `回退重建失敗:${(step.stderr || "").trim().slice(-400) || `exit ${step.exitCode}`}(頂層檔已還原成 ${ver},可用對話修復)`,
+        error: `回退重建失敗:${condenseTraceback(step.stderr, { generatorName: name }) || `exit ${step.exitCode}`}(頂層檔已還原成 ${ver},可用對話修復)`,
       });
       return;
     }
@@ -366,6 +371,67 @@ function resolveExportBase(session, rawVer, res) {
   return { name, kind, baseAbs, baseRel };
 }
 
+// 匯出閘:未驗證的基準在出檔前自動補跑完整驗證,通過才放行(產圖收斂單一快路徑後,
+// 一般產出不再跑 full 驗證——把關移到「出口」,匯出的東西必然驗過)。verified 真相:
+//   頂層(無 ver)= session._lastValidate(full 且 ok)且基準未漂移(_geomDirty);
+//   快照版 vN    = session._verifiedVers memo(emitPresent 對 full 驗證出生的版本
+//                  登記;閘驗過後補登)。皆 in-memory 與 session 同壽命:伺服器重啟
+//                  後首次匯出會重驗一次,冪等無害。
+// 回 { ok, ran, ver, partCount?, checks? };ok=false = 驗證未過,呼叫端拒絕出檔。
+async function ensureVerifiedForExport(session, base, rawVer) {
+  const ver = rawVer ? String(rawVer) : "";
+  const memo = (session._verifiedVers ||= new Set());
+  const entryDirty = session._geomDirty; // 入場快照:漂移守衛只認「驗證期間才變 dirty」
+  const isCurrent = !!ver && ver === `v${session.version}` && !entryDirty;
+  const topVerified = !!(
+    session._lastValidate?.full &&
+    session._lastValidate.ok &&
+    session._lastValidate.name === base.name &&
+    !entryDirty
+  );
+  // 已驗過即免重跑:快照 memo 命中,或(最新版/頂層)頂層已 full 驗過且未漂移
+  const already = ver ? memo.has(ver) || (isCurrent && topVerified) : topVerified;
+  if (already) {
+    if (ver) memo.add(ver);
+    return { ok: true, ran: false, ver: ver || null };
+  }
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), VALIDATE_TIMEOUT_MS);
+  let val;
+  try {
+    // 「最新版且基準未漂移」= 頂層內容與快照相同 → 走精算同款 runValidate(頂層有
+    // imported/,含匯入件的組合件也驗得動;順帶更新 _lastValidate)。只有舊版快照才
+    // 驗快照本體(自足產生器 OK;倚賴 imported/ 的舊版會誠實紅在「產生器執行」——
+    // 此時先「回到此版繼續」再匯出即可,README 有記)。
+    val =
+      ver && !isCurrent
+        ? await validateSnapshotFull(session, ver, base.name, { signal: ac.signal })
+        : await runValidate(session, base.name, { signal: ac.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+  // 漂移守衛:頂層/最新版路徑驗的是活檔——interrupt 提早放行 busy 後,新 turn 的
+  // runStep 可能在驗證窗內改寫頂層(_geomDirty false→true 的轉變)。此時結果描述的
+  // 是「別的幾何」,不得進 memo、不得放行(凍結快照路徑驗 versions/vN,天然免疫)。
+  // 入場就 dirty 的裸 API 無 ver 路徑不算漂移:驗的本來就是活頂層,結果如實。
+  const drifted = (!ver || isCurrent) && !entryDirty && session._geomDirty;
+  if (val.ok && ver && !drifted) memo.add(ver);
+  return {
+    ok: val.ok && !drifted,
+    ran: true,
+    stale: drifted || undefined,
+    ver: ver || null,
+    partCount: val.partCount,
+    checks: decorateChecks(val.checks || []).map((c) => ({
+      label: c.label,
+      icon: c.icon,
+      color: c.color,
+      note: c.noteText,
+      skipped: !!c.skipped,
+    })),
+  };
+}
+
 async function handleExport(body, res) {
   if (!body?.sessionId) {
     sendJson(res, 400, { ok: false, error: "缺 sessionId" });
@@ -391,6 +457,24 @@ async function handleExport(body, res) {
 
   const busyToken = acquireBusy(session);
   try {
+    // 匯出閘:未驗證 → 自動補跑完整驗證;未過 → 擋下不出檔
+    let gate;
+    try {
+      gate = await ensureVerifiedForExport(session, base, body?.ver);
+    } catch (err) {
+      sendJson(res, 200, { ok: false, error: `匯出前驗證失敗:${scrubPaths(String(err?.message || err))}` });
+      return;
+    }
+    if (!gate.ok) {
+      sendJson(res, 200, {
+        ok: false,
+        error: gate.stale
+          ? "匯出中止:驗證期間工作基準被改動(中斷/新回合搶先),請重試。"
+          : "匯出已擋下:此版本未通過完整幾何驗證(逐項見驗證卡)。",
+        gate,
+      });
+      return;
+    }
     // 輸入 STEP 複製到轉檔工作區再跑(絕不污染快照/工作基準,見 makeExportScratch)
     let scratch;
     try {
@@ -423,7 +507,7 @@ async function handleExport(body, res) {
       });
       return;
     }
-    sendJson(res, 200, { ok: true, file: outRel, format, name });
+    sendJson(res, 200, { ok: true, file: outRel, format, name, gate });
   } finally {
     // 落盤一筆 session.json:gcSessions 只看頂層 mtime,重複匯出只寫 .exports/<key>/
     // 第二層,不 touch 頂層的話「最近只做匯出」的活 session 會被啟動 GC 誤判過期。
@@ -469,6 +553,24 @@ async function handleExportParts(body, res) {
 
   const busyToken = acquireBusy(session);
   try {
+    // 匯出閘:與 /api/export 同一道(拆件也是「出檔」)
+    let gate;
+    try {
+      gate = await ensureVerifiedForExport(session, base, body?.ver);
+    } catch (err) {
+      sendJson(res, 200, { ok: false, error: `匯出前驗證失敗:${scrubPaths(String(err?.message || err))}` });
+      return;
+    }
+    if (!gate.ok) {
+      sendJson(res, 200, {
+        ok: false,
+        error: gate.stale
+          ? "匯出中止:驗證期間工作基準被改動(中斷/新回合搶先),請重試。"
+          : "匯出已擋下:此版本未通過完整幾何驗證(逐項見驗證卡)。",
+        gate,
+      });
+      return;
+    }
     // 輸入 STEP 唯讀(export_parts.py 只讀場景),但輸出/暫存目錄一律指到轉檔
     // 工作區——別在 versions/vK/ 快照目錄裡堆 zip/暫存(凍結快照保持純淨)。
     let scratch;
@@ -511,7 +613,7 @@ async function handleExportParts(body, res) {
     }
     // 腳本以 cwd(REPO_ROOT)相對路徑寫出;Windows 會回反斜線 → 正規化給 asset 用
     const fileRel = String(out.file || "").replace(/\\/g, "/");
-    sendJson(res, 200, { ok: true, file: fileRel, format, name: base.name, parts: out.parts || [] });
+    sendJson(res, 200, { ok: true, file: fileRel, format, name: base.name, parts: out.parts || [], gate });
   } finally {
     persistSession(session); // touch 頂層 mtime,防啟動 GC 誤判(同 handleExport)
     releaseBusy(session, busyToken);
@@ -563,6 +665,91 @@ function handleSaveProject(body, res) {
   sendJson(res, 200, { ok: true, dir: name });
 }
 
+// POST /api/validate {sessionId} — 對 session 當前頂層產物跑「完整」幾何驗證(含運動掃掠),
+// 不重新產生(快路徑產物已寫精確 STEP)。給版本上的「精算此版」用:快速迭代後一鍵
+// 補做真驗證;通過後匯出/下載免等閘(memo 由 emitPresent/匯出閘管理)。
+async function handleValidate(body, res) {
+  const session = requireExistingSession(body, res);
+  if (!session) return;
+  if (!session.lastName) {
+    sendJson(res, 400, { ok: false, error: "目前沒有可驗證的產物(先讓 AI 產出模型)" });
+    return;
+  }
+  if (!fs.existsSync(path.join(session.workdir, `${session.lastName}.py`))) {
+    sendJson(res, 404, { ok: false, error: "產物不存在(可能已被清理)" });
+    return;
+  }
+  if (session.busy) {
+    sendJson(res, 409, { ok: false, error: "session 忙碌中(等目前回合結束)" });
+    return;
+  }
+  const name = session.lastName;
+  const busyToken = acquireBusy(session);
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), VALIDATE_TIMEOUT_MS);
+  try {
+    const val = await runValidate(session, name, { signal: ac.signal }); // 一律 full 驗證
+    // interrupt 在驗證窗口把鎖撤走(殺了 python、新 turn 可能已接手):作廢,不動 session 狀態。
+    if (session._busyToken !== busyToken) {
+      sendJson(res, 200, { ok: false, error: "驗證被中斷" });
+      return;
+    }
+    if (val.partCount > 0) session.lastPartCount = val.partCount;
+    // 精算通過且基準未漂移 → 最新版進匯出閘 memo(之後匯出/下載免等閘重驗)
+    if (val.ok && !session._geomDirty && session.version > 0) {
+      (session._verifiedVers ||= new Set()).add(`v${session.version}`);
+    }
+    const decorated = decorateChecks(val.checks || []);
+    sendJson(res, 200, {
+      ok: true,
+      validateOk: val.ok,
+      // 頂層基準漂移(上輪 build 後被中斷、沒走到 present):此結果驗的是漂移幾何,
+      // 前端不得把它標到最新版本快照上(不 MARK_VERSION_VERIFIED、不掛 motion)。
+      stale: !!session._geomDirty,
+      partCount: val.partCount,
+      checks: decorated.map((c) => ({
+        label: c.label,
+        icon: c.icon,
+        color: c.color,
+        note: c.noteText,
+        skipped: !!c.skipped,
+      })),
+      motion: val.motion || null,
+    });
+  } catch (err) {
+    sendJson(res, 200, { ok: false, error: `驗證失敗:${scrubPaths(String(err?.message || err))}` });
+  } finally {
+    clearTimeout(timer);
+    persistSession(session); // touch 頂層 mtime,防啟動 GC 誤判
+    releaseBusy(session, busyToken);
+  }
+}
+
+// POST /api/validate-ver {sessionId, ver?} — 對指定版本快照(或頂層)跑匯出閘同款
+// 完整驗證並登記 memo。給前端 STEP 直下載把關:/api/asset 是裸 GET 沒有閘,前端
+// 下載未驗證版的 STEP 前先打這裡,verified=true 才觸發下載(單人本機 app,閘是
+// UX 契約,不是安全邊界——直接敲 asset URL 仍可繞過,README 有記)。
+async function handleValidateVer(body, res) {
+  const session = requireExistingSession(body, res);
+  if (!session) return;
+  if (session.busy) {
+    sendJson(res, 409, { ok: false, error: "session 忙碌中(等目前回合結束)" });
+    return;
+  }
+  const base = resolveExportBase(session, body?.ver, res);
+  if (!base) return;
+  const busyToken = acquireBusy(session);
+  try {
+    const gate = await ensureVerifiedForExport(session, base, body?.ver);
+    sendJson(res, 200, { ok: true, verified: gate.ok, gate });
+  } catch (err) {
+    sendJson(res, 200, { ok: false, error: `驗證失敗:${scrubPaths(String(err?.message || err))}` });
+  } finally {
+    persistSession(session); // touch 頂層 mtime,防啟動 GC 誤判(同 handleValidate)
+    releaseBusy(session, busyToken);
+  }
+}
+
 export function projectMiddleware() {
   return function project(req, res, next) {
     const url = parseUrl(req);
@@ -573,6 +760,8 @@ export function projectMiddleware() {
       "/api/revert-version": handleRevertVersion,
       "/api/export": handleExport,
       "/api/export-parts": handleExportParts,
+      "/api/validate": handleValidate,
+      "/api/validate-ver": handleValidateVer,
     };
     const handler = req.method === "POST" ? routes[url.pathname] : null;
     if (!handler) {

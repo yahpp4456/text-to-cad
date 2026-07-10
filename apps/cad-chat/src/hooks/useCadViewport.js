@@ -40,6 +40,22 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
       }
       if (disposed) return;
 
+      // 載入後整段初始化也要設防:renderModel 的 new WebGLRenderer 在 WebGL
+      // context 建立失敗(硬體加速關閉/GPU 重置/遠端桌面)會直接 throw——
+      // 不接住的話 onStatus 永遠停在 reducer 已設的 "loading",浮層卡死。
+      try {
+        await initViewport(meshData);
+      } catch (err) {
+        if (!disposed) {
+          console.error("[cad-chat] viewport 初始化失敗", err);
+          onStatus?.("error");
+        }
+        // 半成品 canvas 別留在 host(liveRef 尚未寫入,effect cleanup 掃不到)
+        host.querySelector("canvas.cad-canvas")?.remove();
+      }
+    })();
+
+    async function initViewport(meshData) {
       const model = buildModel(THREE, meshData, {});
       const camera = new THREE.PerspectiveCamera(
         48,
@@ -134,9 +150,16 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
         pointerV.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
         pointerV.y = -(((ev.clientY - rect.top) / rect.height) * 2 - 1);
         raycaster.setFromCamera(pointerV, camera);
+        // hidden 已因 mesh.visible=false 被濾;ghost(半透明)也要點擊穿透——
+        // 透視的意義就是選得到內部件(要再選外殼從物件樹點)。
         const meshes = (model.displayRecords || [])
           .map((r) => r.mesh)
-          .filter((m) => m && m.visible !== false);
+          .filter(
+            (m) =>
+              m &&
+              m.visible !== false &&
+              !idInSet(String(m.userData?.partId || ""), displayState.ghost),
+          );
         const hit = raycaster.intersectObjects(meshes, false)[0];
         const partId = hit?.object?.userData?.partId;
         return partId ? String(partId) : null;
@@ -173,15 +196,46 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
       // 選取視覺:選中件高亮、其餘 ghost(重用 viewer 的單一視覺狀態驅動)。
       // 接受單一 partId 或陣列(多選);zoom=true 才把鏡頭推至選取集合的聯合 bbox
       // (單擊圈選不動鏡頭,雙擊才推近)。
+      // 逐件顯示三態(物件樹眼睛):solid(預設)/ ghost(半透明,可透視外殼)/
+      // hidden——與圈選是兩個正交來源,合流在同一次 applyPartVisualState:
+      // hidden 走原生 hiddenPartIds;ghost 走 record.effectStyle.opacity
+      // (cad-chat 內 effectStyle 無其他寫入者,直接 set/null 安全)。
+      const GHOST_OPACITY = 0.16;
+      const displayState = { ghost: new Set(), hidden: new Set() };
+      let curSelIds = [];
+      const idInSet = (partId, set) => {
+        const pid = String(partId || "");
+        for (const c of set) if (pid === c || pid.startsWith(`${c}.`)) return true;
+        return false;
+      };
+      const applyVisual = () => {
+        const records = model.displayRecords || [];
+        for (const rec of records) {
+          rec.effectStyle = idInSet(rec.partId, displayState.ghost)
+            ? { opacity: GHOST_OPACITY, edgeOpacity: 0.3 }
+            : null;
+        }
+        applyPartVisualState(THREE, records, {
+          focusedPartId: curSelIds.length ? curSelIds[curSelIds.length - 1] : null,
+          selectedPartIds: curSelIds,
+          hiddenPartIds: [...displayState.hidden],
+          showEdges: true,
+        });
+      };
+      const setPartDisplay = (map) => {
+        displayState.ghost = new Set(
+          Object.keys(map || {}).filter((k) => map[k] === "ghost"),
+        );
+        displayState.hidden = new Set(
+          Object.keys(map || {}).filter((k) => map[k] === "hidden"),
+        );
+        applyVisual();
+      };
       const setSelection = (partIds, { zoom = false } = {}) => {
         const ids = (Array.isArray(partIds) ? partIds : partIds ? [partIds] : []).map(String);
         const records = model.displayRecords || [];
-        applyPartVisualState(THREE, records, {
-          focusedPartId: ids.length ? ids[ids.length - 1] : null,
-          selectedPartIds: ids,
-          hiddenPartIds: [],
-          showEdges: true,
-        });
+        curSelIds = ids;
+        applyVisual();
         if (zoom && ids.length) {
           const bounds = focusedDisplayRecordsBounds(records, {
             partIds: new Set(ids),
@@ -296,6 +350,7 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
           viewport,
           model,
           setSelection,
+          setPartDisplay,
           setAutoRotate,
           setGrid,
           setAxes,
@@ -305,7 +360,7 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
           chrome: { grid: gridMesh, axes }, // dev/測試檢視用(visible 斷言)
         });
       }
-    })();
+    }
 
     return () => {
       disposed = true;

@@ -1,4 +1,5 @@
 // 把 SSE 事件映射成 store actions。
+import { unescapeNewlines } from "../lib/clarifyText.js";
 
 // busy 事件的 what(工具名) → 進行中活動列的友善文字。
 const TOOL_LABELS = {
@@ -45,26 +46,39 @@ export function handleEvent(dispatch, type, data = {}) {
     case "ai":
       dispatch({ type: "AI_FINALIZE", text: data.text });
       break;
-    case "spec":
-      dispatch({ type: "ADD_ITEM", item: { type: "spec", chips: data.chips || [] } });
+    case "spec": {
+      // 防禦性正規化(server choke point 已做一次;這裡兜 server 未重啟/舊事件)。
+      // assumed 只在嚴格 === true 時透傳(結構化旗標,模型亂給型別不擴散)。
+      const chips = (data.chips || []).map((c) => ({
+        k: unescapeNewlines(c?.k),
+        v: unescapeNewlines(c?.v),
+        ...(c?.assumed === true ? { assumed: true } : {}),
+      }));
+      dispatch({ type: "ADD_ITEM", item: { type: "spec", chips } });
+      // 記進 turnSpec:clarify 到達時精靈的步驟 1 資料來源
+      dispatch({ type: "SET_TURN_SPEC", chips });
       break;
+    }
     case "plan":
       dispatch({
         type: "ADD_ITEM",
         item: { type: "plan", steps: data.steps || [], count: (data.steps || []).length, open: true },
       });
       break;
-    case "clarify":
-      dispatch({
-        type: "ADD_ITEM",
-        item: { type: "clarify", q: data.q, opts: data.opts || [], suggested: data.suggested || "" },
-      });
-      // 同步掛上視圖區的 actionable 卡(任何使用者送出即視為已回答,由 ADD_USER 清掉)
-      dispatch({
-        type: "SET_CLARIFY",
-        clarify: { q: data.q, opts: data.opts || [], suggested: data.suggested || "" },
-      });
+    case "clarify": {
+      // 防禦性正規化字面 \n(q 進 pre-line 渲染;opts/suggested 會被原樣送回)
+      const q = unescapeNewlines(data.q);
+      const opts = (data.opts || []).map((o) => ({
+        label: unescapeNewlines(o?.label),
+        value: unescapeNewlines(o?.value),
+      }));
+      const suggested = unescapeNewlines(data.suggested || "");
+      dispatch({ type: "ADD_ITEM", item: { type: "clarify", q, opts, suggested } });
+      // 同步掛上視圖區的兩步精靈(任何使用者送出即視為已回答,由 ADD_USER 清掉;
+      // specs 由 reducer 從 turnSpec 併入)
+      dispatch({ type: "SET_CLARIFY", clarify: { q, opts, suggested } });
       break;
+    }
     case "tool":
       dispatch({ type: "UPSERT_TOOL", id: data.id, patch: data });
       break;
@@ -115,6 +129,9 @@ export function handleEvent(dispatch, type, data = {}) {
           partCount: data.partCount,
           source: data.source || "generated",
           snapshot: data.snapshot, // false = 無凍結快照(JSON 路徑經 App.jsx 直傳,兩邊欄位要一致)
+          // 產圖模式戳記(server versionStamp 權威發;舊事件無欄位 → undefined 三態)
+          mode: data.mode === "actual" ? "actual" : data.mode === "design" ? "design" : undefined,
+          verified: typeof data.verified === "boolean" ? data.verified : undefined,
         },
       });
       break;
@@ -130,6 +147,10 @@ export function handleEvent(dispatch, type, data = {}) {
       break;
     case "params":
       dispatch({ type: "SET_PARAMS", defs: data.defs || [] });
+      break;
+    case "params_values":
+      // regen 失敗回滾:server 把滑桿值拉回磁碟真相(defs 不動,不降級 emit_params 品質)
+      dispatch({ type: "SET_PARAM_VALUES", values: data.values || {} });
       break;
     case "motion":
       dispatch({ type: "SET_MOTION", motion: data });

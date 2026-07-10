@@ -12,16 +12,18 @@ import {
   paramDefsFromGenerator,
   runStep,
   runValidate,
+  runValidateDesign,
   rewriteParams,
   sanitizeName,
   writeGenerator,
 } from "../cad/pipeline.mjs";
-import { spawnPython } from "../cad/python.mjs";
+import { condenseTraceback, spawnPython } from "../cad/python.mjs";
+import { unescapeNewlines } from "../../lib/clarifyText.js";
 import {
   noteBuildSuccess,
   noteFixAttempt,
-  noteRetry,
   noteValidateSuccess,
+  noteRetry,
   recordApplyFailure,
   recordBuildFailure,
   recordCheckFailure,
@@ -57,10 +59,17 @@ export function buildCadchatServer({ session, emit, signal }) {
       ),
       tool(
         "emit_spec",
-        "把解析到的規格丟成可點擊修正的 chips。",
-        { chips: z.array(z.object({ k: z.string(), v: z.string() })) },
+        "把解析到的規格丟成可點擊修正的 chips;你自行假設(使用者未給)的值標 assumed:true,v 不要再寫「(假設)」字樣。",
+        { chips: z.array(z.object({ k: z.string(), v: z.string(), assumed: z.boolean().optional() })) },
         async ({ chips }) => {
-          emit("spec", { chips });
+          // choke point 正規化:模型可能在 tool JSON 寫字面 \n(雙重跳脫),原樣轉手會直接印在 UI。
+          emit("spec", {
+            chips: chips.map((c) => ({
+              k: unescapeNewlines(c.k),
+              v: unescapeNewlines(c.v),
+              ...(c.assumed === true ? { assumed: true } : {}),
+            })),
+          });
           return result({ ok: true });
         },
       ),
@@ -84,7 +93,16 @@ export function buildCadchatServer({ session, emit, signal }) {
         async ({ question, options, suggested }) => {
           // 硬閘門:提問後本回合禁止再建模(見下方各 cad_* 工具的檢查)。
           session._clarifyPending = true;
-          emit("clarify", { q: question, opts: options || [], suggested: suggested || "" });
+          // choke point 正規化字面 \n;opts 的 label/value 與 suggested 會被原樣
+          // 送回當使用者回覆,一併處理。
+          emit("clarify", {
+            q: unescapeNewlines(question),
+            opts: (options || []).map((o) => ({
+              label: unescapeNewlines(o.label),
+              value: unescapeNewlines(o.value),
+            })),
+            suggested: unescapeNewlines(suggested || ""),
+          });
           return result({ ok: true, awaiting: true, note: "已提問,請結束本回合等待使用者回答。" });
         },
       ),
@@ -154,7 +172,7 @@ export function buildCadchatServer({ session, emit, signal }) {
       ),
       tool(
         "cad_source_part",
-        "選用標準件。requirement 鍵(依 family):cylinder={load_N,stroke_mm,pressure_bar?,action?=push|pull|double} bearing={shaft_dia,radial_load_N?} stepper={torque_Nm} linear_guide={load_N,rail_len} ball_screw={load_N,travel,target_speed_mm_s,accuracy?} gripper={grip_force_N,opening_mm,pressure_MPa?}(平行氣爪)。",
+        "選用標準件。requirement 鍵(依 family):cylinder={load_N,stroke_mm,pressure_bar?,action?=push|pull|double} bearing={shaft_dia,radial_load_N?} stepper={torque_Nm} linear_guide={load_N,rail_len} ball_screw={load_N,travel,target_speed_mm_s,accuracy?} gripper={grip_force_N,opening_mm,pressure_MPa?}(平行氣爪) gear={torque_Nm,shaft_dia?,teeth_min?}(正齒輪,容許轉矩取彎曲/齒面耐久較小者)。",
         { family: z.string(), requirement: z.record(z.string(), z.any()).optional() },
         async ({ family, requirement }) => {
           const gated = clarifyGate();
@@ -206,6 +224,9 @@ export function buildCadchatServer({ session, emit, signal }) {
               return result({ ok: false, error: r.error });
             }
           } else if (params) {
+            // 此路徑 build 失敗刻意不回滾(對照 chat.mjs deterministicRegen 的
+            // buildOrRollback):agent 拿到 stderr 後通常接著 edits 修,背後把
+            // PARAMS 還原會讓它「參數已套上」的心智模型錯位。
             const r = rewriteParams(session, part, params);
             if (!r.ok) {
               recordApplyFailure(session, { part, kind: "params", error: r.error });
@@ -232,7 +253,8 @@ export function buildCadchatServer({ session, emit, signal }) {
             if (!signal?.aborted) {
               recordBuildFailure(session, { part, exitCode: res.exitCode, stderr: res.stderr, source: "build" });
             }
-            emit("tool", { id, status: "error", note: (res.stderr || "").slice(-400), ms: res.ms });
+            // note 給人看(縮成例外摘要);回 agent 的 stderr 保留完整尾段供修碼
+            emit("tool", { id, status: "error", note: condenseTraceback(res.stderr, { generatorName: part }), ms: res.ms });
             return result({ ok: false, exitCode: res.exitCode, stderr: (res.stderr || "").slice(-1500) });
           }
           noteBuildSuccess(session); // 同 turn 前面的 build 失敗至此閉環
@@ -251,22 +273,31 @@ export function buildCadchatServer({ session, emit, signal }) {
       ),
       tool(
         "cad_validate",
-        "跑幾何驗證(有效實體 / 干涉 / 拓撲;自交/壁厚標 SKIP),回傳逐項清單。",
+        "快速結構驗證:讀 build 自檢結果與 MOTION 宣告(干涉/掃掠等幾何細檢由使用者精算/匯出閘執行,回合內標 SKIP 屬正常),回傳逐項清單。",
         { name: z.string().optional() },
         async ({ name }) => {
           const gated = clarifyGate();
           if (gated) return gated;
           const part = name || n();
           session._valAttempt = (session._valAttempt || 0) + 1;
-          const { ok, checks, motion, partCount, ms } = await runValidate(session, part, { signal });
+          // 一律快路徑:零 spawn(build sidecar 直讀;缺 sidecar 內部退回 --motion-only)。
+          // 完整驗證(inspect ∥ validate.py 掃掠)由「精算此版」與匯出閘承擔。
+          const { ok, checks, motion, partCount, ms, design } = await runValidateDesign(
+            session,
+            part,
+            { signal },
+          );
           if (partCount > 0) session.lastPartCount = partCount; // 規模分級(決定性)
-          // 教訓案例:每顆真的 FAIL 的檢查一筆;全綠則閉環本 turn 全部失敗案例。
-          // 中斷殺掉的 validate.py 會產出幽靈紅(parse 失敗/generator error),不記。
+          // 教訓案例:每顆真的 FAIL 的檢查一筆(快路徑的紅只可能來自 --motion-only
+          // fallback);中斷殺掉的 validate.py 會產出幽靈紅,不記。閉環:零 spawn 的
+          // 全 skipped 是空洞綠不算真成功;fallback(design 旗標缺席=真 spawn 過)
+          // 的綠才閉環 validate 類案例——精算/匯出閘跑在 turn 外,接不到 recorder,
+          // 那邊的紅綠不進教訓迴圈(已知限制,README 教訓章有記)。
           if (!signal?.aborted) {
             for (const c of checks) {
               if (!c.skipped && !c.ok) recordCheckFailure(session, { part, check: c, partCount, source: "validate" });
             }
-            if (ok) noteValidateSuccess(session);
+            if (ok && !design) noteValidateSuccess(session);
           }
           const decorated = decorateChecks(checks);
           emit("validate", {
@@ -401,6 +432,36 @@ export function buildCadchatServer({ session, emit, signal }) {
           const out = `${session.workdirRel}/${part}.${format}`;
           const flag = { stl: "--stl", "3mf": "--3mf", glb: "--glb" }[format];
           emit("tool", { id, name: `cad.export(${format})`, label: "匯出", status: "running" });
+          // 匯出閘(與 /api/export 同一不變式:出檔的東西必然驗過):頂層當前產物
+          // 未經 full 驗證(或驗的是別件/基準已漂移)→ 先補跑完整驗證;未過 → 拒絕
+          // 出檔並把 checks 回給 agent 自修——agent 這條出口不得繞過閘。
+          const lv = session._lastValidate;
+          if (!(lv && lv.full && lv.ok && lv.name === part && !session._geomDirty)) {
+            const val = await runValidate(session, part, { signal });
+            if (val.partCount > 0) session.lastPartCount = val.partCount;
+            const dec = decorateChecks(val.checks || []);
+            emit("validate", {
+              ok: val.ok,
+              attempt: session._valAttempt || 1,
+              ms: val.ms,
+              partCount: val.partCount,
+              checks: dec.map((c) => ({
+                label: c.label,
+                icon: c.icon,
+                color: c.color,
+                note: c.noteText,
+                skipped: !!c.skipped,
+              })),
+            });
+            if (!val.ok || signal?.aborted) {
+              emit("tool", { id, status: "error", note: "匯出已擋下:完整驗證未過(見驗證卡)。" });
+              return result({
+                ok: false,
+                error: "匯出閘:完整幾何驗證未過,不得出檔;先修復未過項再匯。",
+                checks: val.checks,
+              });
+            }
+          }
           const res = await spawnPython("skills/cad/scripts/step", [target, flag, out, "--force"], {
             session,
             signal,

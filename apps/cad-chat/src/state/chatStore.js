@@ -1,4 +1,6 @@
 // 頂層狀態(useReducer),鏡射設計稿 DCLogic.state。
+import { pendingClarifyFromItems } from "../lib/clarifyText.js";
+
 export const initialState = {
   _seq: 0,
   sessionId: null,
@@ -6,7 +8,8 @@ export const initialState = {
   running: false,
   stageIdx: -1, // 驅動 StageStepper(D)
   items: [], // 對話 transcript
-  versions: [], // [{ id:'v1', name, glbUrl, formats }]
+  // verified 由 server versionStamp 發(三態:undefined=未知,舊快照/opened 檔)
+  versions: [], // [{ id:'v1', name, glbUrl, formats, verified? }]
   activeVer: null,
   // type: "part" | "assembly" | ""(未知,藏 badge);source: "generated" | "opened"
   canvas: { glbUrl: "", name: "", code: "", ver: "", status: "empty", type: "", source: "" }, // status: empty|loading|ready|error
@@ -19,7 +22,10 @@ export const initialState = {
   // 運動宣告(validate 後由後端決定性發出;forVer 在 PRESENT 時蓋上 → 版本切換
   // 或跳過 validate 的 present 自動不顯示播放鈕,不需清理邏輯)
   motion: null, // { name, dofs, forVer } | null
-  clarify: null, // { q, opts, suggested } 視圖區選擇題卡(ADD_USER 即視為已回答)
+  // 視圖區兩步精靈的資料(ADD_USER 即視為已回答);id 由 reducer mint,React key
+  // 用它管精靈 remount(跨回合連續 clarify 自動歸零 step/edits);specs 併自 turnSpec。
+  clarify: null, // { id, q, opts, suggested, specs } | null
+  turnSpec: null, // 本回合最新 emit_spec 的 chips(START_RUN 清空;SET_CLARIFY 併進 clarify.specs)
 };
 
 function nextId(state) {
@@ -51,13 +57,21 @@ export function reducer(state, action) {
         clarify: null, // 任何送出=已回答選擇題(對齊 server 端 _clarifyPending 新 turn 重設)
         items: [
           ...state.items,
-          { type: "user", id, text: action.text, ref: action.ref || "" },
+          // images:附件縮圖 [{url,name}](/api/asset URL;RESTORE 原樣回灌,GC 後破圖走降級)
+          {
+            type: "user",
+            id,
+            text: action.text,
+            ref: action.ref || "",
+            images: action.images || [],
+          },
         ],
       };
     }
 
     case "START_RUN":
-      return { ...state, running: true, phase: "running", live: { text: "思考中…" } };
+      // turnSpec 清空:精靈只信「本回合」的規格快照——沒新 emit_spec 就不再要求確認舊規格
+      return { ...state, running: true, phase: "running", live: { text: "思考中…" }, turnSpec: null };
 
     case "END_RUN":
       return {
@@ -173,17 +187,35 @@ export function reducer(state, action) {
     }
 
     case "ADD_VERSION": {
+      // 撞 id 以「新版本物件取代」而非保留舊的:唯一撞號源是對話中途 open-project
+      // (新 session 版號從 v1 重起)——保留舊物件會把伺服端權威 stamp
+      // (verified/glbUrl/name)靜默丟棄 → 假 badge。
+      // 重複事件重放(同內容)取代=冪等,語意不變。
       const exists = state.versions.some((v) => v.id === action.version.id);
       return {
         ...state,
-        versions: exists ? state.versions : [...state.versions, action.version],
+        versions: exists
+          ? state.versions.map((v) => (v.id === action.version.id ? action.version : v))
+          : [...state.versions, action.version],
         activeVer: action.version.id,
       };
     }
 
+    // 精算成功(full 驗證全過)→ 該版翻成已驗證(badge 琥珀→綠)。id 不存在天然 no-op。
+    case "MARK_VERSION_VERIFIED":
+      return {
+        ...state,
+        versions: state.versions.map((v) =>
+          v.id === action.id ? { ...v, verified: true } : v,
+        ),
+      };
+
     case "SELECT_VERSION": {
       const v = state.versions.find((x) => x.id === action.id);
       if (!v) return state;
+      // 同 glbUrl 保留現有 status:useCadViewport 只依賴 glbUrl,URL 沒變不會重載,
+      // 設 "loading" 就永遠等不到 ready(重複開同檔的檢視版、點已啟用的 chip 都會踩)。
+      const sameUrl = v.glbUrl === state.canvas.glbUrl;
       return {
         ...state,
         activeVer: v.id,
@@ -191,8 +223,9 @@ export function reducer(state, action) {
           ...state.canvas,
           glbUrl: v.glbUrl,
           name: v.name,
+          code: v.name, // 不繼承前一個模型的 code(版本物件無獨立 code,各路徑 code===name)
           ver: v.id,
-          status: "loading",
+          status: sameUrl ? state.canvas.status : "loading",
           type: v.type || "",
           source: v.source || "",
         },
@@ -212,7 +245,8 @@ export function reducer(state, action) {
           name: action.name || state.canvas.name,
           code: action.code || state.canvas.code,
           ver: action.ver || state.canvas.ver,
-          status: "loading",
+          // 同 glbUrl 保留現有 status(同 SELECT_VERSION 的理由;重複開同一檔會走到這)
+          status: action.glbUrl === state.canvas.glbUrl ? state.canvas.status : "loading",
           type: action.fileType || "", // 未帶類型就藏 badge(誠實,不繼承舊模型的)
           source: action.source || "generated",
         },
@@ -241,6 +275,18 @@ export function reducer(state, action) {
     case "CLEAR_PARAMS_DIRTY":
       return { ...state, params: { ...state.params, dirty: false } };
 
+    // regen 失敗回滾:server 把滑桿值拉回磁碟真相(params_values 事件)。
+    // 只 merge defs 已知鍵(defs 是 UI 真相,未知鍵沒有滑桿可顯示);清 dirty——
+    // 目前值就是磁碟值,沒有「未套用的調整」。
+    case "SET_PARAM_VALUES": {
+      if (!state.params.defs.length) return state;
+      const values = { ...state.params.values };
+      for (const [k, v] of Object.entries(action.values || {})) {
+        if (k in values && Number.isFinite(Number(v))) values[k] = Number(v);
+      }
+      return { ...state, params: { ...state.params, values, dirty: false } };
+    }
+
     case "ADD_PICKREF": {
       const ref = action.pickRef;
       if (!ref?.token) return state;
@@ -260,17 +306,37 @@ export function reducer(state, action) {
     case "SELECT_NODE":
       return { ...state, selNode: action.id };
 
-    case "SET_CLARIFY":
-      return { ...state, clarify: action.clarify || null };
+    case "SET_TURN_SPEC":
+      return { ...state, turnSpec: action.chips || null };
+
+    case "SET_CLARIFY": {
+      if (!action.clarify) return { ...state, clarify: null };
+      // mint 遞增 id(精靈 remount key);specs 放 spread 前 → 煙測注入可覆寫
+      const { seq } = nextId(state);
+      return {
+        ...state,
+        _seq: seq,
+        clarify: { id: `c${seq}`, specs: state.turnSpec, ...action.clarify },
+      };
+    }
 
     // 跨重整續聊:回灌 localStorage 快照。暫態欄位一律收斂(不還原 running/live/
-    // clarify/pickRefs);_seq 取 max 防新訊息 id 撞還原的 items。
+    // pickRefs);_seq 取 max 防新訊息 id 撞還原的 items。clarify 例外:transcript
+    // 尾端有「未答」的 clarify → re-arm 精靈(連同同段最近 spec),重整後浮卡/左欄
+    // 凍結一致重現;已答(clarify 後有 user)不 re-arm。
     case "RESTORE": {
       const s = action.snapshot || {};
       const items = (Array.isArray(s.items) ? s.items : []).map((it) =>
         it?.streaming ? { ...it, streaming: false } : it,
       );
-      const versions = Array.isArray(s.versions) ? s.versions : [];
+      const pendingClarify = pendingClarifyFromItems(items);
+      // verified 三態 normalize:舊快照無欄位 → undefined(未知,不顯 badge)——
+      // 絕不能預設 false,否則舊資料全掛「未驗證」誤報。舊快照的 mode 欄位(雙模式
+      // 時代遺留)原樣透傳、無人讀取。
+      const versions = (Array.isArray(s.versions) ? s.versions : []).map((v) => ({
+        ...v,
+        verified: typeof v?.verified === "boolean" ? v.verified : undefined,
+      }));
       return {
         ...initialState,
         sessionId: s.sessionId || null,
@@ -285,10 +351,24 @@ export function reducer(state, action) {
           ? { defs: s.params.defs, values: s.params.values || {}, dirty: false }
           : { ...initialState.params },
         motion: s.motion?.dofs?.length ? s.motion : null,
+        clarify: pendingClarify ? { id: `c_restored_${items.length}`, ...pendingClarify } : null,
         stageIdx: versions.length ? 4 : -1,
         phase: versions.length ? "done" : "idle",
       };
     }
+
+    // 對話中途換 session(open-project 開新 session):版本/運動/參數歸零,對話與
+    // 畫布保留。舊 session 的 v* chip 若殘留,latestGen 會指向它——「精算此版」
+    // 驗的是新 session 幾何卻 MARK 舊版(假 badge)、舊 chip 的匯出/回退拿新
+    // sessionId 找不到快照必 404;新 session 的 v1 又與舊 v1 撞號互蓋。
+    case "CLEAR_WORKSPACE":
+      return {
+        ...state,
+        versions: [],
+        activeVer: null,
+        motion: null,
+        params: { ...initialState.params },
+      };
 
     // 「新對話」:回到初始狀態(對話/版本/畫布/參數/選取/運動/選擇題全清)。
     case "RESET":

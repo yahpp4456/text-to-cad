@@ -29,6 +29,7 @@ from cadpy.catalog import (
     StepImportOptions,
     cad_ref_from_step_path,
     find_source_by_path,
+    hidden_meta_path_for_step_path,
     iter_cad_sources,
     normalize_step_color,
     normalize_cad_ref,
@@ -1106,6 +1107,53 @@ def _run_geometry_acceptance_check(
     logger.debug(f"check_geometry passed: {_display_path(script_path)}")
 
 
+BUILD_META_SCHEMA_VERSION = 1
+
+
+def _harvest_build_meta(module: object, raw_payload: object) -> dict[str, object]:
+    """從已執行過的 gen_step 收割模組層 MOTION + parts labels(cad-chat sidecar)。
+
+    純資料收割:label 取法(``_as_named_parts``)與正規化(``cadpy.motion_decl``)
+    都和 cad-chat 的 validate harness 同源,build 側 sidecar 與 validate.py 不可能
+    分歧。不做幾何運算(bbox/faceCount 在此不可得,刻意不算)。
+    """
+    from cadpy.geometry_checks import _as_named_parts
+    from cadpy.motion_decl import normalize_motion, playback_motion
+
+    try:
+        labels = [name for name, _ in _as_named_parts(raw_payload)]
+    except Exception:  # noqa: BLE001 — 鏡射 validate.py 的 ("part", payload) fallback
+        labels = ["part"]
+    motion, errs = normalize_motion(getattr(module, "MOTION", None), labels)
+    return {
+        "schemaVersion": BUILD_META_SCHEMA_VERSION,
+        "parts": labels,
+        "partCount": len(labels),
+        "motion": playback_motion(motion),
+        "motionErrs": errs,
+    }
+
+
+def _write_build_meta_sidecar(
+    module: object,
+    raw_payload: object,
+    *,
+    step_path: Path,
+    logger: CliLogger,
+) -> None:
+    """best-effort 寫 `.{name}.step.meta.json` sidecar。絕不 raise:sidecar 失敗
+    不能弄掛一個好的 build(消費端會退回 spawn validate harness)。tmp +
+    Path.replace 原子寫,被中斷也不會留半寫 JSON。"""
+    try:
+        meta = _harvest_build_meta(module, raw_payload)
+        target = hidden_meta_path_for_step_path(step_path)
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(target)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"build meta sidecar write failed (non-fatal): {exc}")
+
+
 def _run_script_generator_inner(
     spec: EntrySpec,
     generator_name: str,
@@ -1121,6 +1169,13 @@ def _run_script_generator_inner(
     generator = getattr(module, generator_name, None)
     if not callable(generator):
         raise RuntimeError(f"{_display_path(spec.script_path)} does not define callable {generator_name}()")
+    if generator_name == "gen_step" and spec.step_path is not None:
+        # sidecar 防 stale:先清舊 meta,之後任何一步失敗(generator 例外/acceptance
+        # gate 拒收/STEP 沒落地)磁碟上都不會殘留上一版的收割。
+        try:
+            hidden_meta_path_for_step_path(spec.step_path).unlink(missing_ok=True)
+        except OSError:
+            pass
     with logger.timed(f"run {generator_name} {spec.source_ref}"):
         raw_payload = generator()
 
@@ -1175,6 +1230,10 @@ def _run_script_generator_inner(
         raise RuntimeError(
             f"{_display_path(spec.script_path)} did not write {_display_path(spec.dxf_path)}"
         )
+    if generator_name == "gen_step" and spec.step_path is not None:
+        # 收割 MOTION+parts sidecar(cad-chat 設計模式零 spawn 的資料來源);
+        # 放在 STEP existence check 之後 = 只有真的產出成功才寫。no-throw。
+        _write_build_meta_sidecar(module, raw_payload, step_path=spec.step_path, logger=logger)
     return generated_scene if generator_name == "gen_step" else None
 
 

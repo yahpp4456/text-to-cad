@@ -20,9 +20,11 @@
   background: rgba(255, 255, 255, 0.62);
   border-right: 1px solid var(--line);
 }
-/* clarify 待答 → 左欄反灰凍結為「上下文」,把作答重心讓給視圖聚光燈卡。
+/* clarify 待答 → 左欄反灰凍結為「上下文」,把作答重心讓給視圖的兩步精靈(唯一作答面;
+   左欄澄清卡是被動紀錄,選項 .static 不可點)。
    淡化的是 .conv/.composer 兩個內容節點(非 .conv-col 本身)→ 保留欄底色與 border-right。
-   不用 pointer-events:none:.conv-scroll 仍要能上捲讀歷史、左欄 inline 選項仍是備援作答路徑。
+   不用 pointer-events:none:.conv-scroll 仍要能上捲讀歷史;精靈故障的逃生口是 composer
+   直接打字送出(ADD_USER 即視為已答)。
    :focus-within 讓一點進輸入框即恢復全亮,化解「灰卻可打字」的混合訊號(輸入框刻意不 disable)。 */
 .conv-col[data-frozen="true"] .conv,
 .conv-col[data-frozen="true"] .composer {
@@ -387,6 +389,31 @@
   background: var(--ink);
   padding: 11px 15px;
   clip-path: polygon(0 0, 100% 0, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+  /* anywhere(非 break-word):參與 min-content 計算,flex-end 欄裡的無空白長
+     token(套用參數 JSON)才會真的縮回欄內,而非往左溢出到不可捲達區 */
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+/* user 訊息附圖縮圖列(bubble 上方靠右);GC 後 404 → .broken dashed 降級 */
+.user-imgs {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.user-img {
+  max-height: 110px;
+  max-width: 200px;
+  border: 1px solid #d8deea;
+  background: #fff;
+}
+.user-img.broken {
+  min-width: 90px;
+  min-height: 56px;
+  border-style: dashed;
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 4px;
 }
 .msg-ai {
   display: flex;
@@ -406,6 +433,7 @@
   color: #3a4255;
   padding-top: 2px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere; /* error 事件文字可能含無空白長 token */
 }
 .ai-error {
   color: var(--danger);
@@ -586,6 +614,8 @@
   font-size: 10.5px;
   color: var(--danger);
   background: color-mix(in oklab, var(--danger) 6%, #fff);
+  white-space: pre-wrap; /* condenseTraceback 的多行摘要 */
+  overflow-wrap: anywhere;
 }
 .tool-outputs {
   display: flex;
@@ -782,6 +812,26 @@
   align-self: flex-start;
 }
 .type-badge[data-type="part"] {
+  color: var(--part);
+  border-color: color-mix(in oklab, var(--part) 55%, var(--line));
+}
+/* 版本驗證狀態 badge(三態:undefined 不渲染;琥珀=未驗證、綠=已驗證) */
+.ver-verify {
+  font-family: var(--font-eyebrow);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  align-self: flex-start;
+  white-space: nowrap;
+}
+.ver-verify[data-state="unverified"] {
+  color: var(--amber);
+  border-color: color-mix(in oklab, var(--amber) 55%, var(--line));
+  background: color-mix(in oklab, var(--amber) 8%, #fff);
+}
+.ver-verify[data-state="verified"] {
   color: var(--part);
   border-color: color-mix(in oklab, var(--part) 55%, var(--line));
 }
@@ -1244,6 +1294,7 @@
 .clarify-q {
   font-size: 13px;
   line-height: 1.55;
+  white-space: pre-line; /* 問題文字的真換行要斷行(tools.mjs 已把字面 \n 正規化成真換行) */
 }
 .clarify-opts {
   display: flex;
@@ -1266,6 +1317,20 @@
 .clarify-opt.suggested {
   color: var(--emit);
   border-color: color-mix(in oklab, var(--emit) 45%, transparent);
+}
+/* 左欄澄清卡=被動紀錄:選項只是「當時給過哪些選擇」的存檔,不可點(作答面在畫布精靈) */
+.clarify-opt.static {
+  cursor: default;
+  pointer-events: none;
+  opacity: 0.75;
+}
+.clarify-live {
+  margin-left: auto;
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--emit);
 }
 
 /* ===================== Composer ===================== */
@@ -1312,6 +1377,55 @@
 .pick-clear-all:hover {
   color: var(--danger);
 }
+/* composer 附件圖片縮圖 chips(選檔即上傳;uploading 半透明、error 紅框) */
+.img-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 9px;
+}
+.img-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-eyebrow);
+  font-size: 11px;
+  padding: 4px 8px;
+  background: #fff;
+  border: 1px solid #d8deea;
+}
+.img-chip img,
+.img-chip .img-ph {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  background: #eef1f6;
+}
+.img-chip[data-status="uploading"] {
+  opacity: 0.55;
+}
+.img-chip[data-status="uploading"] .img-ph {
+  animation: img-ph-pulse 0.9s ease-in-out infinite alternate;
+}
+@keyframes img-ph-pulse {
+  from {
+    background: #eef1f6;
+  }
+  to {
+    background: #d8deea;
+  }
+}
+.img-chip[data-status="error"] {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.img-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .composer-row {
   display: flex;
   align-items: flex-end;
@@ -1346,6 +1460,16 @@
 }
 .composer-btn.send {
   background: #c2cad8;
+}
+.composer-btn.attach {
+  background: #fff;
+  border: 1px solid #d8deea;
+  color: var(--text-muted);
+  font-size: 15px;
+}
+.composer-btn.attach:hover {
+  color: var(--ink);
+  border-color: var(--ink);
 }
 .composer-btn.send[data-active="true"] {
   background: var(--ink);
@@ -1649,6 +1773,7 @@
   font-size: 13.5px;
   line-height: 1.55;
   color: var(--ink);
+  white-space: pre-line; /* 同 .clarify-q:真換行要斷行 */
 }
 .canvas-clarify-opts {
   display: flex;
@@ -1676,6 +1801,116 @@
   user-select: none;
 }
 .canvas-clarify-suggest:hover { text-decoration: underline; }
+/* ---- 兩步精靈(ClarifyWizard;容器沿用 .canvas-clarify) ---- */
+.cw-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.cw-steps {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+}
+.cw-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  background: #f4f7fb;
+  border: 1px solid #dfe6f0;
+  padding: 5px 11px;
+  clip-path: var(--chamfer-pill);
+}
+.cw-chip[data-assumed] {
+  cursor: pointer;
+  border-color: color-mix(in oklab, var(--amber) 55%, #dfe6f0);
+  background: color-mix(in oklab, var(--amber) 6%, #fff);
+}
+.cw-chip[data-assumed]:hover {
+  border-color: var(--amber);
+}
+.cw-chip[data-edited] {
+  border-color: color-mix(in oklab, var(--part) 55%, #dfe6f0);
+  background: color-mix(in oklab, var(--part) 6%, #fff);
+}
+.chip-assumed {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 8.5px;
+  letter-spacing: 1px;
+  color: color-mix(in oklab, var(--amber) 80%, var(--ink));
+  background: color-mix(in oklab, var(--amber) 16%, #fff);
+  padding: 1px 5px;
+  clip-path: var(--chamfer-pill);
+}
+.chip-assumed.edited {
+  color: color-mix(in oklab, var(--part) 70%, var(--ink));
+  background: color-mix(in oklab, var(--part) 14%, #fff);
+}
+.cw-chip-input {
+  font: inherit;
+  font-weight: 700;
+  width: 120px;
+  padding: 1px 4px;
+  border: 1px solid var(--amber);
+  background: #fff;
+  outline: none;
+}
+.cw-chip-ok {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--part);
+  user-select: none;
+}
+.cw-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cw-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex: 1;
+}
+.cw-confirm {
+  cursor: pointer;
+  flex: none;
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: #fff;
+  background: var(--emit);
+  padding: 7px 14px;
+  clip-path: var(--chamfer-pill);
+  user-select: none;
+}
+.cw-edited {
+  font-size: 11.5px;
+  color: color-mix(in oklab, var(--part) 70%, var(--ink));
+}
+.cw-fixes-only {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--part);
+  user-select: none;
+}
+.cw-fixes-only:hover { text-decoration: underline; }
+.cw-back {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-muted);
+  user-select: none;
+}
+.cw-back:hover { color: var(--ink); }
 .viewport {
   position: absolute;
   inset: 0;
@@ -1924,6 +2159,32 @@
 .tree-node[data-cited="true"] {
   border-left-color: var(--amber);
 }
+/* 眼睛三態(透視):solid=灰點、ghost=琥珀半實、hidden=空圈+標籤刪除線 */
+.tree-eye {
+  flex: none;
+  margin-left: 4px;
+  font-size: 11px;
+  line-height: 1;
+  color: #c3cbd8;
+  cursor: pointer;
+}
+.tree-eye:hover {
+  color: var(--text);
+}
+.tree-eye[data-state="ghost"] {
+  color: var(--amber);
+}
+.tree-eye[data-state="hidden"] {
+  color: #8b93a3;
+}
+.tree-node[data-display="ghost"] .tree-label {
+  color: var(--amber);
+}
+.tree-node[data-display="hidden"] .tree-label {
+  color: #a3acba;
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
 .tree-more {
   font-size: 10px;
   color: #a3acba;
@@ -2171,6 +2432,12 @@
 .version-dl[data-busy="true"] {
   opacity: 0.55;
   cursor: default;
+}
+/* 工作基準未驗證時「✓ 精算此版」琥珀微強調(補驗引導的視覺閉環) */
+.version-dl[data-attn] {
+  color: var(--amber);
+  border-color: color-mix(in oklab, var(--amber) 55%, var(--line));
+  background: color-mix(in oklab, var(--amber) 8%, #fff);
 }
 .version-chip {
   cursor: pointer;

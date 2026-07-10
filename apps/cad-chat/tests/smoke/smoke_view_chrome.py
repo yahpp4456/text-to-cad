@@ -51,11 +51,18 @@ with sync_playwright() as p:
     page.wait_for_timeout(200)
     c.check("回合結束 → 細條消失", page.locator(".canvas-progress-strip").count() == 0)
 
-    # clarify 焦點模式(注入 → 置中卡 + scrim + 左欄凍結 → 清除)
+    # clarify 焦點模式(注入 → 置中卡 + scrim + 左欄凍結 → 清除)。
+    # 無 specs 的注入 → 精靈退化單步:既有選擇器(q/opt/suggest)不變(回歸鎖)。
+    # 同時注入 ADD_ITEM:左欄澄清卡已降為被動紀錄(選項 .static 不可點+作答中指路)。
     page.evaluate(
-        """() => window.__cadDispatch({ type: 'SET_CLARIFY', clarify: {
-             q: '軸徑要用哪一種?', opts: [{label: '8mm'}, {label: '12mm', value: '用 12mm 軸'}],
-             suggested: '8mm + 行程 100mm' } })"""
+        """() => { window.__cadDispatch({ type: 'ADD_ITEM', item: {
+             type: 'clarify', q: '軸徑要用哪一種?\\n・8 或 12',
+             opts: [{label: '8mm'}, {label: '12mm', value: '用 12mm 軸'}],
+             suggested: '8mm + 行程 100mm' } });
+           window.__cadDispatch({ type: 'SET_CLARIFY', clarify: {
+             q: '軸徑要用哪一種?\\n・8 或 12',
+             opts: [{label: '8mm'}, {label: '12mm', value: '用 12mm 軸'}],
+             suggested: '8mm + 行程 100mm' } }); }"""
     )
     page.wait_for_timeout(200)
     card = page.locator(".canvas-clarify")
@@ -64,14 +71,33 @@ with sync_playwright() as p:
         c.check("問題文字正確", "軸徑" in card.locator(".canvas-clarify-q").inner_text())
         c.check("兩顆選項按鈕", card.locator(".canvas-clarify-opt").count() == 2)
         c.check("建議按鈕存在", card.locator(".canvas-clarify-suggest").count() == 1)
+        c.check("無 specs → 單步(不出步驟列)", card.locator(".cw-steps").count() == 0)
+        # 字面 \n 修復的渲染端:真換行必須真的斷行(CSS pre-line)
+        ws = card.locator(".canvas-clarify-q").evaluate("el => getComputedStyle(el).whiteSpace")
+        c.check("問題文字 white-space: pre-line", ws == "pre-line", ws)
     # 焦點模式:scrim 壓暗背景 + 左欄反灰凍結
     c.check("視圖 scrim 出現", page.locator(".canvas-clarify-scrim").count() == 1)
     c.check("左欄反灰凍結", page.locator('.conv-col[data-frozen="true"]').count() == 1)
+    # 左欄澄清卡 = 被動紀錄:選項全 static(pointer-events none)+「作答中」指路
+    lc = page.locator(".clarify-card")
+    c.check("左欄澄清紀錄卡存在", lc.count() == 1)
+    if lc.count():
+        static_n = lc.locator(".clarify-opt.static").count()
+        live_n = lc.locator(".clarify-opt:not(.static)").count()
+        c.check("左欄選項全部 static(不可點)", static_n == 3 and live_n == 0, f"{static_n}/{live_n}")
+        pe = lc.locator(".clarify-opt.static").first.evaluate("el => getComputedStyle(el).pointerEvents")
+        c.check("static 選項 pointer-events: none", pe == "none", pe)
+        c.check("待答中顯示「作答中」指路", "作答中" in lc.locator(".clarify-live").inner_text())
+        ws2 = lc.locator(".clarify-q").evaluate("el => getComputedStyle(el).whiteSpace")
+        c.check("左欄問題文字亦 pre-line", ws2 == "pre-line", ws2)
     page.evaluate("() => window.__cadDispatch({ type: 'ADD_USER', text: '8mm' })")
     page.wait_for_timeout(200)
     c.check("ADD_USER → clarify 卡消失", page.locator(".canvas-clarify").count() == 0)
     c.check("ADD_USER → scrim 消失", page.locator(".canvas-clarify-scrim").count() == 0)
     c.check("ADD_USER → 左欄解除凍結", page.locator('.conv-col[data-frozen="true"]').count() == 0)
+    c.check("答完 →「作答中」指路消失(紀錄卡保留)",
+            page.locator(".clarify-card").count() == 1
+            and page.locator(".clarify-live").count() == 0)
 
     c.check("A頁無 JS 錯誤", not errors, "; ".join(errors[:3]))
     page.screenshot(path=out_path("smoke_view_chrome_model.png"))

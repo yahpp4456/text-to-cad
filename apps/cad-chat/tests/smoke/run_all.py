@@ -17,14 +17,25 @@ from _util import BASE, HERE, server_alive
 # versions 先於 restore:restore 吃 versions 產出的 .out/versions_session.json
 ORDER = [
     "smoke_view_chrome.py",
+    "smoke_clarify_wizard.py",
+    "smoke_upload.py",
+    "smoke_verify_gate.py",
     "smoke_asm_ui.py",
     "smoke_occ_tree.py",
     "smoke_click_select.py",
+    "smoke_part_visibility.py",
+    "smoke_open_dedupe.py",
     "smoke_versions.py",
     "smoke_restore.py",
     "smoke_lessons.py",
 ]
-LLM_GATED = ["smoke_queue_live.py"]  # 消耗訂閱/API 回合
+# 消耗訂閱/API 回合
+LLM_GATED = [
+    "smoke_queue_live.py",
+    "smoke_revolute_live.py",
+    "smoke_gear_rackpinion_live.py",
+    "smoke_image_clarify_live.py",
+]
 
 if not server_alive():
     msg = (

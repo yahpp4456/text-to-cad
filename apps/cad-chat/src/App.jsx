@@ -111,7 +111,10 @@ export default function App() {
   const [saveOpen, setSaveOpen] = useState(false);
   const [lessonsOpen, setLessonsOpen] = useState(false);
   const [exporting, setExporting] = useState(null); // "v2:stl" | null(匯出中鎖鈕)
-  const openSeqRef = useRef(0); // opened 版本 id(o1,o2…),與伺服端 v* 分軌不相撞
+  // 附件圖片(composer 暫態,刻意不進 reducer/localStorage 快照;選檔即上傳,
+  // 送出時只帶輕量 rel)。status: uploading | ready | error。
+  const [pendingImages, setPendingImages] = useState([]);
+  const imgSeqRef = useRef(0);
 
   useEffect(() => {
     fetch("/api/health")
@@ -149,22 +152,36 @@ export default function App() {
 
   const submitText = useCallback(
     (text) => {
-      if (!text || !text.trim()) return;
+      const ready = pendingImages.filter((p) => p.status === "ready");
+      if ((!text || !text.trim()) && ready.length === 0) return;
+      if (pendingImages.some((p) => p.status === "uploading")) return; // Composer 已擋,雙保險
       const pickRefs = state.pickRefs;
       dispatch({
         type: "ADD_USER",
         text,
         ref: pickRefs.map((r) => r.label || r.token).join("、"),
+        images: ready.map(({ url, name }) => ({ url, name })), // 縮圖進 transcript
       });
       dispatch({ type: "CLEAR_PICKREFS" });
-      send({ text, pickRefs });
+      setPendingImages([]);
+      send({
+        text,
+        pickRefs,
+        imageRefs: ready.length ? ready.map((p) => p.rel) : undefined,
+      });
     },
-    [send, state.pickRefs],
+    [send, state.pickRefs, pendingImages],
   );
 
   const applyParams = useCallback(() => {
     dispatch({ type: "CLEAR_PARAMS_DIRTY" });
-    dispatch({ type: "ADD_USER", text: `套用參數 ${JSON.stringify(state.params.values)}` });
+    dispatch({
+      type: "ADD_USER",
+      // 顯示用 k=v(server payload 仍是 send 的 params 物件,與此無關)
+      text: `套用參數 ${Object.entries(state.params.values)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("、")}`,
+    });
     send({ text: "", params: state.params.values });
   }, [send, state.params.values]);
 
@@ -213,6 +230,48 @@ export default function App() {
     [state.running, state.sessionId, setSessionId, notify],
   );
 
+  // 附加圖片(附件鈕/貼上/拖放共用):選檔即上傳 → 縮圖 chip 用 /api/asset URL。
+  // 位元組只傳這一次;送訊息只帶 rel,佇列/409 重試不重傳。無 session 時 server
+  // 順手建並回傳(同 /api/import 模式,前端採納)。上限 4 張/訊息。
+  const attachImages = useCallback(
+    async (files) => {
+      const room = 4 - pendingImages.length;
+      for (const f of Array.from(files).slice(0, Math.max(0, room))) {
+        const id = `img${++imgSeqRef.current}`;
+        setPendingImages((prev) => [
+          ...prev,
+          { id, name: f.name || "image", status: "uploading", rel: null, url: null },
+        ]);
+        try {
+          const r = await fetch(
+            `/api/upload-image?sessionId=${encodeURIComponent(state.sessionId || "")}&name=${encodeURIComponent(f.name || "image")}`,
+            {
+              method: "POST",
+              headers: { "content-type": f.type || "application/octet-stream" },
+              body: f,
+            },
+          );
+          const j = await r.json().catch(() => ({}));
+          if (!j.ok) throw new Error(j.error || `上傳失敗(HTTP ${r.status})`);
+          if (j.sessionId && j.sessionId !== state.sessionId) {
+            setSessionId(j.sessionId);
+            dispatch({ type: "SET_SESSION", sessionId: j.sessionId });
+          }
+          setPendingImages((prev) =>
+            prev.map((p) => (p.id === id ? { ...p, status: "ready", rel: j.rel, url: j.url } : p)),
+          );
+        } catch (err) {
+          setPendingImages((prev) =>
+            prev.map((p) =>
+              p.id === id ? { ...p, status: "error", error: String(err?.message || err) } : p,
+            ),
+          );
+        }
+      }
+    },
+    [state.sessionId, setSessionId, pendingImages.length],
+  );
+
   // 開既有專案:新 session + 伺服端同步重建,回應帶 version/present/params/motion。
   const openProject = useCallback(
     async (dirRel) => {
@@ -228,6 +287,10 @@ export default function App() {
         if (j.sessionId) {
           setSessionId(j.sessionId);
           dispatch({ type: "SET_SESSION", sessionId: j.sessionId });
+          // 換了 session 就清舊工作區(版本/運動/參數;對話保留):舊 session 的
+          // v* chip 對新 sessionId 全是死引用(精算標錯版、匯出/回退 404、v1 撞號)。
+          // 重建失敗(!j.ok)也已換 session,同樣要清。
+          dispatch({ type: "CLEAR_WORKSPACE" });
         }
         if (!j.ok) {
           notify(j.error || "開啟專案失敗", true);
@@ -260,31 +323,46 @@ export default function App() {
   );
 
   // 開檔看圖(免 LLM):/api/open 回應 → 走 ?glb= 捷徑同款 dispatch。
-  const openFile = useCallback((r) => {
-    openSeqRef.current += 1;
-    const id = `o${openSeqRef.current}`;
-    dispatch({
-      type: "ADD_VERSION",
-      version: {
-        id,
-        name: r.name,
+  // 同一檔重複開啟去重:沿用既有檢視版的 id(ADD_VERSION 撞 id=取代),時間軸不長
+  // 出 o1/o2/o3 分身。glbUrl 帶檔案 mtime buster:檔案沒變=同 URL(不重載、status
+  // 保留),外部重生過=新 URL(觸發真重載換新幾何)。
+  const openFile = useCallback(
+    (r) => {
+      const existing = state.versions.find(
+        (v) => v.source === "opened" && v.file && v.file === r.file,
+      );
+      // 序號從現有版本推導(不用 mount 期 ref):RESTORE 還原的 o1/o2 仍在時間軸,
+      // ref 歸零會再 mint o1 撞號、靜默取代別檔的檢視版。
+      const nextSeq =
+        state.versions.reduce((m, v) => {
+          const mt = /^o(\d+)$/.exec(String(v.id || ""));
+          return mt ? Math.max(m, Number(mt[1])) : m;
+        }, 0) + 1;
+      const id = existing?.id || `o${nextSeq}`;
+      dispatch({
+        type: "ADD_VERSION",
+        version: {
+          id,
+          name: r.name,
+          glbUrl: r.glbUrl,
+          file: r.file,
+          formats: /\.(step|stp)$/i.test(r.file || "") ? ["STEP", "GLB"] : ["GLB"],
+          type: r.type || "",
+          source: "opened",
+        },
+      });
+      dispatch({
+        type: "PRESENT",
         glbUrl: r.glbUrl,
-        file: r.file,
-        formats: /\.(step|stp)$/i.test(r.file || "") ? ["STEP", "GLB"] : ["GLB"],
-        type: r.type || "",
+        name: r.name,
+        code: r.name,
+        ver: id,
+        fileType: r.type || "",
         source: "opened",
-      },
-    });
-    dispatch({
-      type: "PRESENT",
-      glbUrl: r.glbUrl,
-      name: r.name,
-      code: r.name,
-      ver: id,
-      fileType: r.type || "",
-      source: "opened",
-    });
-  }, []);
+      });
+    },
+    [state.versions],
+  );
 
   const handlers = useMemo(
     () => ({
@@ -338,18 +416,42 @@ export default function App() {
     [state.running, state.sessionId, notify],
   );
 
+  // 匯出閘結果落地:通過 → 版本 badge 轉綠(**不看 ran**——server memo 命中時
+  // ran=false 但同樣代表「此版已驗」,client 端 badge 可能因舊快照落後,要同步);
+  // 閘真的跑了 → 另出一張驗證卡。
+  const applyGate = useCallback((gate, verFallback) => {
+    if (!gate) return;
+    const id = gate.ver || verFallback;
+    if (gate.ok && id) dispatch({ type: "MARK_VERSION_VERIFIED", id });
+    if (!gate.ran) return;
+    dispatch({
+      type: "ADD_ITEM",
+      item: { type: "validate", ok: gate.ok !== false, partCount: gate.partCount, checks: gate.checks || [] },
+    });
+  }, []);
+
   // 免 LLM 匯出:版本快照 STEP → STL/3MF,成功後以 asset download 觸發瀏覽器下載。
+  // 匯出閘在 server 端:未驗證版會先自動完整驗證(未過 → 擋下,gate.checks 進驗證卡)。
   const exportVersion = useCallback(
     async (ver, format) => {
       if (state.running || exporting) return;
+      // session 綁定:閘驗證最長 2 分鐘,期間開專案/新對話不擋 exporting——回來時
+      // session 已換人就整包作廢(MARK/驗證卡/下載都不做,否則污染新對話還可能把
+      // 新 session 撞號的 v1 偽標成已驗證、繞過 STEP 閘)。
+      const startSession = state.sessionId;
+      if (state.versions.find((x) => x.id === ver)?.verified !== true) {
+        notify("此版尚未驗證:匯出前自動精算中(含運動掃掠,約數秒~分鐘)…");
+      }
       setExporting(`${ver}:${format}`);
       try {
         const r = await fetch("/api/export", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ sessionId: state.sessionId, ver, format }),
+          body: JSON.stringify({ sessionId: startSession, ver, format }),
         });
         const j = await r.json();
+        if (stateRef.current.sessionId !== startSession) return; // 對話已切換:作廢
+        if (j.gate) applyGate(j.gate, ver);
         if (!j.ok) {
           notify(j.error || "匯出失敗", true);
           return;
@@ -360,13 +462,71 @@ export default function App() {
         a.click();
         a.remove();
       } catch {
-        notify("無法連線到本機伺服器", true);
+        if (stateRef.current.sessionId === startSession) notify("無法連線到本機伺服器", true);
       } finally {
         setExporting(null);
       }
     },
-    [state.running, state.sessionId, exporting, notify],
+    [state.running, state.sessionId, state.versions, exporting, notify, applyGate],
   );
+
+  // 最新的自產版本(= 精算/回退的工作基準;與 VersionTimeline 內同式)
+  const latestGen = useMemo(
+    () => [...state.versions].reverse().find((v) => v.source !== "opened"),
+    [state.versions],
+  );
+
+  // 精算此版:對頂層工作基準跑「完整」幾何驗證(含運動掃掠),不重新產生。
+  // 快路徑迭代後一鍵補做真驗證;結果落成一張驗證卡並刷新運動示意。
+  const validateVersion = useCallback(async () => {
+    if (state.running || exporting) return;
+    // session 綁定:精算可跑數分鐘,期間 openProject/newChat 不擋 exporting——
+    // 回來時 session 已換人就整包作廢(否則 MARK/SET_MOTION/驗證卡污染新對話)。
+    const startSession = state.sessionId;
+    setExporting("validate");
+    notify("精算此版:完整幾何驗證中(含運動掃掠,約數秒~分鐘)…");
+    try {
+      const r = await fetch("/api/validate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: startSession }),
+      });
+      const j = await r.json();
+      if (stateRef.current.sessionId !== startSession) return; // 對話已切換:結果作廢
+      if (!j.ok) {
+        notify(j.error || "驗證失敗", true);
+        return;
+      }
+      dispatch({
+        type: "ADD_ITEM",
+        item: { type: "validate", ok: j.validateOk, partCount: j.partCount, checks: j.checks || [] },
+      });
+      // /api/validate 驗的是 session「頂層工作基準」= latestGen 的內容(與使用者眼前
+      // 選的 active 是誰無關)——motion/verified 一律綁 latestGen,不綁 canvas.ver
+      // (檢視舊版時綁 canvas.ver 會把新幾何的運動宣告掛到舊模型上)。
+      // j.stale = 頂層基準已漂移(上輪 build 後被中斷、沒 present):結果只出驗證卡,
+      // 不標記版本、不掛 motion——標了就是把「別的幾何」的判定記到快照版上。
+      if (!j.stale && latestGen) {
+        dispatch({
+          type: "SET_MOTION",
+          motion: { name: latestGen.name, dofs: j.motion?.dofs || [], forVer: latestGen.id },
+        });
+        if (j.validateOk) dispatch({ type: "MARK_VERSION_VERIFIED", id: latestGen.id });
+      }
+      notify(
+        j.stale
+          ? `精算完成:${j.validateOk ? "全部通過" : "有未過項(見驗證卡)"}——但目前工作基準與最新版本快照不一致(上輪可能被中斷),結果不標記到版本;請重新產圖後再精算。`
+          : j.validateOk
+            ? "精算完成:全部通過"
+            : "精算完成:有未過項(見驗證卡)",
+        !j.validateOk,
+      );
+    } catch {
+      if (stateRef.current.sessionId === startSession) notify("無法連線到本機伺服器", true);
+    } finally {
+      setExporting(null);
+    }
+  }, [state.running, exporting, state.sessionId, latestGen, notify]);
 
   // 拆件匯出:圈選零件(selInfos 給定)或整機零件包(null → 全部)→ STEP/STL,
   // 多件 zip。ver 用使用者眼前那一版(canvas.ver 是版本快照 id 時)。
@@ -380,6 +540,10 @@ export default function App() {
         notify("目前檢視的是開啟的檔案,拆件匯出僅支援本對話產生的版本(請先切回 v* 版本)", true);
         return;
       }
+      const startSession = state.sessionId; // session 綁定,同 exportVersion
+      if (state.versions.find((x) => x.id === state.canvas.ver)?.verified !== true) {
+        notify("此版尚未驗證:匯出前自動精算中(含運動掃掠,約數秒~分鐘)…");
+      }
       setExporting(`parts:${format}`);
       try {
         const occs = (selInfos || [])
@@ -389,9 +553,11 @@ export default function App() {
         const r = await fetch("/api/export-parts", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ sessionId: state.sessionId, ver, format, occs }),
+          body: JSON.stringify({ sessionId: startSession, ver, format, occs }),
         });
         const j = await r.json();
+        if (stateRef.current.sessionId !== startSession) return; // 對話已切換:作廢
+        if (j.gate) applyGate(j.gate, ver);
         if (!j.ok) {
           notify(j.error || "拆件匯出失敗", true);
           return;
@@ -406,12 +572,52 @@ export default function App() {
         a.click();
         a.remove();
       } catch {
-        notify("無法連線到本機伺服器", true);
+        if (stateRef.current.sessionId === startSession) notify("無法連線到本機伺服器", true);
       } finally {
         setExporting(null);
       }
     },
-    [state.running, state.sessionId, state.canvas.ver, state.canvas.source, exporting, notify],
+    [state.running, state.sessionId, state.canvas.ver, state.canvas.source, state.versions, exporting, notify, applyGate],
+  );
+
+  // STEP 直下載的匯出閘:/api/asset 是裸 GET 沒有閘,未驗證版先打 /api/validate-ver
+  // (memo 命中=秒回;沒驗過=自動精算),verified 才觸發下載。已驗證版與開檔檢視版
+  // 在 VersionTimeline 端直接走 href,不進這裡。
+  const downloadStep = useCallback(
+    async (v, rel) => {
+      if (state.running || exporting) return;
+      const startSession = state.sessionId;
+      setExporting("stepdl");
+      notify("此版尚未驗證:下載前自動精算中(含運動掃掠,約數秒~分鐘)…");
+      try {
+        const r = await fetch("/api/validate-ver", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sessionId: startSession, ver: v.id }),
+        });
+        const j = await r.json();
+        if (stateRef.current.sessionId !== startSession) return; // 對話已切換:作廢
+        if (!j.ok) {
+          notify(j.error || "驗證失敗", true);
+          return;
+        }
+        applyGate(j.gate, v.id);
+        if (!j.verified) {
+          notify("下載已擋下:此版本未通過完整幾何驗證(逐項見驗證卡)。", true);
+          return;
+        }
+        const a = document.createElement("a");
+        a.href = `/api/asset?file=${encodeURIComponent(rel)}&download=${encodeURIComponent(`${v.name}_${v.id}.step`)}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } catch {
+        if (stateRef.current.sessionId === startSession) notify("無法連線到本機伺服器", true);
+      } finally {
+        setExporting(null);
+      }
+    },
+    [state.running, state.sessionId, exporting, notify, applyGate],
   );
 
   // 另存專案:session 產物 → models/<name>/(server 端 copy;成功後可從開啟檔案載回)
@@ -443,6 +649,7 @@ export default function App() {
   // 新對話:斷開 session、前端狀態全清(不必重新整理頁面),續聊快照一併作廢。
   const newChat = useCallback(() => {
     if (state.running) return;
+    setPendingImages([]); // 圖屬於舊 session(rel 對新 session 無效);遲到的上傳回應 no-op
     resetSession();
     dispatch({ type: "RESET" });
     try {
@@ -626,6 +833,9 @@ export default function App() {
           <Composer
             running={state.running}
             pickRefs={state.pickRefs}
+            pendingImages={pendingImages}
+            onAttachFiles={attachImages}
+            onRemoveImage={(id) => setPendingImages((prev) => prev.filter((p) => p.id !== id))}
             prefill={state.prefill}
             onPrefillConsumed={() => dispatch({ type: "CLEAR_PREFILL" })}
             onRemovePick={(token) => dispatch({ type: "REMOVE_PICKREF", token })}
@@ -656,9 +866,13 @@ export default function App() {
             partsBusy={exporting === "parts:step" || exporting === "parts:stl"}
             exportNote={
               exporting
-                ? exporting.startsWith("parts:")
-                  ? `正在匯出零件檔(${(exporting.split(":")[1] || "").toUpperCase()})…`
-                  : `正在轉出 ${(exporting.split(":")[1] || "").toUpperCase()} 檔…`
+                ? exporting === "validate"
+                  ? "精算此版:完整幾何驗證中…"
+                  : exporting === "stepdl"
+                    ? "下載前驗證中(未驗證版的匯出閘)…"
+                    : exporting.startsWith("parts:")
+                      ? `正在匯出零件檔(${(exporting.split(":")[1] || "").toUpperCase()})…`
+                      : `正在轉出 ${(exporting.split(":")[1] || "").toUpperCase()} 檔…`
                 : null
             }
             motion={
@@ -677,6 +891,8 @@ export default function App() {
             onSelect={(id) => dispatch({ type: "SELECT_VERSION", id })}
             onRevert={revertVersion}
             onExport={state.sessionId ? exportVersion : null}
+            onDownloadStep={state.sessionId ? downloadStep : null}
+            onValidate={state.sessionId ? validateVersion : null}
             onExportParts={
               state.sessionId && state.canvas.type === "assembly"
                 ? () => exportParts(null, "step")

@@ -24,6 +24,7 @@ import { projectMiddleware } from "./middleware/project.mjs";
 import { chatMiddleware } from "./middleware/chat.mjs";
 import { interruptMiddleware } from "./middleware/interrupt.mjs";
 import { lessonsMiddleware } from "./middleware/lessons.mjs";
+import { uploadMiddleware } from "./middleware/upload.mjs";
 
 loadDotEnvLocal();
 
@@ -37,6 +38,7 @@ const middlewares = [
   assetMiddleware(),
   filesMiddleware(),
   projectMiddleware(),
+  uploadMiddleware(),
   chatMiddleware(),
   interruptMiddleware(),
   lessonsMiddleware(),

@@ -1,17 +1,23 @@
 // POST /api/chat — 起/續一個 agent turn,以 SSE 串流回前端。
-// body: { message?, sessionId?, pickRef?, params? }
+// body: { message?, sessionId?, pickRef?, params?, imageRefs? }
+import fs from "node:fs";
+import path from "node:path";
+
 import { resolveAuth } from "../config.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
 import { acquireBusy, getOrCreateSession, persistSession, releaseBusy } from "../sessions.mjs";
-import { scrubPaths } from "../cad/python.mjs";
+import { condenseTraceback, scrubPaths } from "../cad/python.mjs";
+import { resolveInside } from "../cad/paths.mjs";
+import { MAX_IMAGE_BYTES, sniffImageType } from "../images.mjs";
 import { openSse } from "../sse.mjs";
 import { runTurn } from "../agent/runner.mjs";
 import {
+  buildOrRollback,
   decorateChecks,
   emitPresent,
+  paramValuesFromGenerator,
   rewriteParams,
-  runStep,
-  runValidate,
+  runValidateDesign,
 } from "../cad/pipeline.mjs";
 import {
   beginTurnRecorder,
@@ -61,10 +67,12 @@ export function chatMiddleware() {
     // 教訓案例:本 turn 的紅色先進記憶體 buffer,finally 一次落盤(涵蓋 agent 與參數重生兩路)。
     // 持有 rec 引用:interrupt 提早放行 busy 後新 turn 可能先 begin,舊 turn 的 finally
     // 只准 flush 自己的 buffer(lessons.mjs 以身份比對防呆)。
+    const imgCount = Array.isArray(body.imageRefs) ? body.imageRefs.length : 0;
     const lessonRec = beginTurnRecorder(session, {
       userText:
-        String(body.message || "").trim() ||
-        (body.params ? `(參數重生 ${JSON.stringify(body.params)})` : ""),
+        (String(body.message || "").trim() ||
+          (body.params ? `(參數重生 ${JSON.stringify(body.params)})` : "")) +
+        (imgCount ? `(含 ${imgCount} 張圖)` : ""),
     });
 
     const sse = openSse(res);
@@ -77,10 +85,12 @@ export function chatMiddleware() {
     });
 
     try {
+      const img = readImageBlocks(body, session);
       const paramsOnly =
         body.params &&
         Object.keys(body.params).length > 0 &&
-        (!body.message || !String(body.message).trim());
+        (!body.message || !String(body.message).trim()) &&
+        img.blocks.length === 0; // 帶圖訊息絕不走決定性重生路(圖必須進 agent)
 
       if (paramsOnly && session.lastName) {
         // 掛 abort controller:瀏覽器斷線 / interrupt 時要能殺掉重生的 Python 子程序。
@@ -95,7 +105,12 @@ export function chatMiddleware() {
         // 被 interrupt 的 regen 早退時別回 ok:true 誤報成功
         sse.end({ ok: !abort.signal.aborted, version: session.version });
       } else {
-        const { ok } = await runTurn({ session, emit, message: buildUserText(body, session) });
+        const { ok } = await runTurn({
+          session,
+          emit,
+          message: buildUserText(body, session, img),
+          imageBlocks: img.blocks,
+        });
         sse.end({ ok, version: session.version });
       }
     } catch (err) {
@@ -118,7 +133,42 @@ export function chatMiddleware() {
   };
 }
 
-export function buildUserText(body, session) {
+// body.imageRefs(輕量 rel,如 "uploads/xxx.png")→ 從 session workdir 讀檔組
+// API image content blocks。雙重沙箱:強制 uploads/ 前綴 + resolveInside;
+// media_type 重嗅探(不信副檔名,容忍手放檔案);超限/嗅探失敗丟棄、缺檔記 missing。
+export function readImageBlocks(body, session) {
+  const refs = Array.isArray(body?.imageRefs) ? body.imageRefs.slice(0, 4) : [];
+  const blocks = [];
+  const names = [];
+  const missing = [];
+  for (const raw of refs) {
+    const rel = String(raw || "").replace(/\\/g, "/");
+    if (!rel.startsWith("uploads/")) continue;
+    let abs;
+    try {
+      abs = resolveInside(session.workdir, rel);
+    } catch {
+      continue;
+    }
+    let buf;
+    try {
+      buf = fs.readFileSync(abs);
+    } catch {
+      missing.push(path.basename(rel));
+      continue;
+    }
+    const sniffed = sniffImageType(buf);
+    if (!sniffed || buf.length > MAX_IMAGE_BYTES) continue;
+    blocks.push({
+      type: "image",
+      source: { type: "base64", media_type: sniffed.mediaType, data: buf.toString("base64") },
+    });
+    names.push(path.basename(rel));
+  }
+  return { blocks, names, missing };
+}
+
+export function buildUserText(body, session, img) {
   let t = String(body.message || "").trim();
   // 多選幾何參考(pickRefs[]);舊單選字串 pickRef 保留相容
   const refs = Array.isArray(body.pickRefs)
@@ -142,6 +192,14 @@ export function buildUserText(body, session) {
   }
   if (body.params && Object.keys(body.params).length) {
     t += `\n（使用者把參數調整為 ${JSON.stringify(body.params)},請據此重生新版本。）`;
+  }
+  // 附圖註記:image blocks 已內嵌在同一則 user message(runner streaming input),
+  // 這行讓 transcript/教訓錄製可讀,也保證「純圖無文字」的 userText 非空。
+  if (img?.names?.length) {
+    t += `\n（附圖 ${img.names.length} 張:${img.names.join("、")}——圖已內嵌於本訊息,直接讀圖,不需 Read 開檔。）`;
+  }
+  if (img?.missing?.length) {
+    t += `\n（附圖 ${img.missing.join("、")} 已遺失,未內嵌。）`;
   }
   // rehydrate 後首個 turn 的一次性接續提示(open-project / resume 降級時設定)。
   // 這裡只讀不清:清除點在 runner 的 init 成功(SDK 已收下含提示的 prompt)——
@@ -173,14 +231,27 @@ async function deterministicRegen(session, params, emit, signal) {
     status: "running",
     code: `# PARAMS → ${JSON.stringify(params)}`,
   });
-  const step = await runStep(session, name, { signal });
+  // build 失敗 → 把 .py 還原成改寫前(aborted 不寫檔;見 buildOrRollback 註解)。
+  // 不回滾的話,磁碟 .py 與 .step/.glb 漂移:之後任何會重跑 .py 的動作(agent
+  // edits、精算、回退)都踩同一炸點,快照還會凍出「壞 .py + 舊幾何」的幻影版。
+  const { step, rolledBack } = await buildOrRollback(session, name, rw.prevSrc, { signal });
   if (!step.ok) {
     // 中斷/斷線殺掉的子程序不是生成失敗,不記教訓案例
     if (!signal?.aborted) {
       recordBuildFailure(session, { part: name, exitCode: step.exitCode, stderr: step.stderr, source: "regen_build" });
     }
-    emit("tool", { id, status: "error", note: (step.stderr || "").slice(-300) });
-    emit("error", { message: "參數重生失敗" });
+    emit("tool", { id, status: "error", note: condenseTraceback(step.stderr, { generatorName: name }) });
+    if (rolledBack) {
+      emit("error", { message: "參數重生失敗:參數已還原為上次成功值,滑桿已拉回,請調整後再套用。" });
+      // 滑桿值拉回磁碟真相(只送 values:重發 params/defs 會把 agent 用 emit_params
+      // 給的 label/unit/range 降級成啟發式品質)
+      const values = paramValuesFromGenerator(session, name);
+      if (values) emit("params_values", { values });
+    } else if (!signal?.aborted) {
+      emit("error", { message: "參數重生失敗(參數回寫也失敗,產生器仍是失敗值)" });
+    } else {
+      emit("error", { message: "參數重生失敗" });
+    }
     return;
   }
   emit("tool", {
@@ -194,20 +265,25 @@ async function deterministicRegen(session, params, emit, signal) {
   });
 
   emit("stage", { index: 3 });
-  const val = await runValidate(session, name, { signal });
+  // 滑桿重生一律走快路徑:零 spawn(runStep 剛 prime 的 build sidecar 直讀)——
+  // 整輪只剩 build 一個 spawn,拖桿保持互動性。完整驗證由「精算此版」與匯出閘承擔。
+  const val = await runValidateDesign(session, name, { signal });
   // interrupt 已放行鎖(甚至新 turn 已接手):被中斷的 regen 不得再動 session
   // 狀態——繼續走會 bump 版本、把「可能已被新 turn 改寫的 .py + 本輪舊幾何」
   // 凍成不一致的幻影快照。此檢查之後到 emitPresent 全程同步,無再被搶佔的窗。
   if (signal?.aborted) return;
   if (val.partCount > 0) session.lastPartCount = val.partCount;
-  // 教訓案例:參數重生的紅也記(source 標 regen_*);中斷產生的幽靈紅不記
+  // 教訓案例:參數重生的紅也記(source 標 regen_*;快路徑的紅只可能來自缺 sidecar
+  // 的 --motion-only fallback);中斷產生的幽靈紅不記。閉環:零 spawn 空洞綠不算,
+  // fallback 真綠(val.design 缺席)才閉環;精算/匯出閘在 turn 外接不到 recorder,
+  // 那邊的紅綠不進教訓迴圈(已知限制)。
   if (!signal?.aborted) {
     for (const c of val.checks) {
       if (!c.skipped && !c.ok) {
         recordCheckFailure(session, { part: name, check: c, partCount: val.partCount, source: "regen_validate" });
       }
     }
-    if (val.ok) noteValidateSuccess(session);
+    if (val.ok && !val.design) noteValidateSuccess(session);
   }
   const dec = decorateChecks(val.checks);
   emit("validate", {

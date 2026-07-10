@@ -49,6 +49,26 @@ test("persist → 同 id 重掛還原全欄位(含 _resumedFromDisk)", () => {
   }
 });
 
+test("舊快照帶 outputMode(雙模式時代遺留)→ hydrate 靜默忽略不炸", () => {
+  const id = freshId("legacyMode");
+  const dir = makeDir(id);
+  try {
+    fs.writeFileSync(path.join(dir, "foo.py"), "PARAMS = {}\n");
+    // 直接補寫舊版欄位進 session.json(persistSession 已不再寫 outputMode)
+    persistSession({ workdir: dir, lastName: "foo", version: 1 });
+    const metaPath = path.join(dir, "session.json");
+    const raw = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+    raw.outputMode = "actual";
+    fs.writeFileSync(metaPath, JSON.stringify(raw));
+
+    const s = getOrCreateSession(id);
+    assert.equal(s.lastName, "foo"); // 其餘欄位照常還原
+    assert.equal(s.outputMode, undefined); // 遺留欄位不進 session
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("產物該在而不在(GC 殘缺)→ 什麼都不還原,尤其 sdkSessionId", () => {
   const id = freshId("gcd");
   const dir = makeDir(id);

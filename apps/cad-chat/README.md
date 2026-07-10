@@ -58,7 +58,7 @@ effort 的模型有效,否則 SDK 靜默降級)、`CADCHAT_THINKING`(深度思�
 ## 架構
 
 - **單一埠 `node:http` 伺服器**(`src/server/`):dev 委派 Vite middlewareMode,prod serve `dist/`。
-  - `POST /api/chat`(SSE):起/續一個 agent turn,串流 `stage/ai/spec/plan/tool/validate/retry/artifact/present/version/params` 事件。
+  - `POST /api/chat`(SSE,`{message?,sessionId?,pickRefs?,params?}`):起/續一個 agent turn,串流 `stage/ai/spec/plan/tool/validate/retry/artifact/present/version/params/motion` 事件。產圖一律快路徑:cad_validate **零 spawn**——直讀 build 收割 sidecar,checks 全標 skipped、MOTION 照供播放,產物未驗證(完整驗證在精算/匯出閘;缺 sidecar 退回 `validate.py --motion-only` spawn)。`version` 事件帶 `verified`(server `versionStamp` 權威發:full 驗證跑過且全過才 `verified:true`)。
   - `POST /api/interrupt`:中斷當前 turn 並殺 Python 子程序。
   - `GET /api/health`:認證狀態(`authMode` = oauth / apikey / missing)。
   - `GET /api/asset?file=…`:把 `models/` 下產物(GLB 等)串流給 cadjs。
@@ -70,6 +70,10 @@ effort 的模型有效,否則 SDK 靜默降級)、`CADCHAT_THINKING`(深度思�
     `models/<name>/`(與 open-project 互為讀寫方向;已存在回 `error:"exists"` 待確認覆蓋)。
   - `POST /api/revert-version`(`{sessionId,ver}`):回退到 vK 快照——複回頂層+重建驗證,
     產生新版 v{N+1}=vK 複本(歷史線性)。
+  - `POST /api/validate`(`{sessionId}`):對 session 頂層工作基準跑「完整」幾何驗證(含運動掃掠),
+    不重新產生——版本上的「✓ 精算此版」用:快速迭代後一鍵補驗,通過後匯出免等閘。
+  - `POST /api/validate-ver`(`{sessionId,ver?}`):匯出閘單獨入口(STEP 直下載把關;
+    memo 命中秒回,未驗過自動完整驗證)。
   - `GET /api/session-info?id=`:唯讀探測 session 是否還救得回來(前端開機還原用)。
 - **Agent**(`src/server/agent/`):`query()` 依認證模式傳憑證(`agentEnv`),掛 in-process MCP 工具
   (`emit_*` 推進 UI + `cad_import/cad_build/cad_validate/cad_source_part/cad_present/
@@ -83,23 +87,40 @@ effort 的模型有效,否則 SDK 靜默降級)、`CADCHAT_THINKING`(深度思�
 
 - `gen_step()` 不吃參數:參數寫死在產生器 `PARAMS = {…}` 區塊。參數滑桿「套用·重生」
   走決定性路徑(改寫 `PARAMS` + 重跑 `scripts/step`,免 LLM round-trip)。
-- 驗證只報「真的有跑」的檢查(有效實體 BRepCheck / 干涉 / 拓撲);pipeline 沒有的
-  自交、壁厚會標 SKIP,不假裝通過。運動掃掠在產生器宣告 `MOTION` 時**真跑**
-  (`cadpy.geometry_checks.sweep_interference`),未宣告誠實標 SKIP。
+  **build 失敗自動回滾**(`buildOrRollback`):`.py` 原樣還原成上次成功值(磁碟不與
+  `.step/.glb` 漂移),SSE `params_values` 事件把前端滑桿值拉回磁碟真相(defs 不動,
+  不降級 `emit_params` 給的 label/範圍);中斷(aborted)不寫檔——新 turn 可能已接手。
+  agent 的 `cad_build(params)` 路徑刻意不回滾(agent 接著用 edits 修)。
+- 失敗錯誤呈現走 `condenseTraceback`(`python.mjs`):tool card / 開專案 / 回退的 note
+  縮成「最後例外行 + 產生器內最深 frame 行號」一~兩行;產生器 `_check_params()` 的
+  `ValueError` 繁中訊息直出(prompt 已規範新產生器必寫跨參數防呆)。回 agent 的
+  stderr 仍是完整尾段。
+- 驗證只報「真的有跑」的檢查;產圖回合一律快路徑(checks 全 SKIP,誠實揭露),
+  完整驗證(有效實體 BRepCheck / 干涉 / 運動掃掠 `cadpy.geometry_checks.sweep_interference`)
+  在「✓ 精算此版」與匯出閘執行;pipeline 沒有的自交、壁厚恆標 SKIP,不假裝通過。
 - 開發預覽:`?glb=/api/asset?file=<models 內的 .glb 相對路徑>&name=<n>[&motion=<json>]`
   可不經對話直接把既有 GLB 載入畫布(驗 3D / 運動播放用)。
 - 對話 scratch(`models/.cadchat/`)已被 `.gitignore` 忽略。**啟動時 GC** 會刪掉
   超過 `CADCHAT_GC_DAYS`(預設 7)天沒動過的 session 目錄;設 0 停用。中斷留下的
   半成品在期限內保留 —— rehydrate 與 edits 修復靠它們。
 
-## MOTION 運動宣告(v1,linear)
+## MOTION 運動宣告(linear + revolute + couple)
 
 產生器模組層宣告(與 `INTENDED_CONTACT` 同慣例),**一份真相三個消費者**:
-(a) validate.py 據此建 poses 跑真運動掃掠(per-DOF 獨立掃、baseline=seated、
-預算 600 pair-frames / 每 DOF 12 對 / 75s 深水閘,降級誠實寫進 note);
+(a) validate.py 據此建 poses 跑真運動掃掠(per-「群」獨立掃、baseline=seated、
+預算 600 pair-frames / 每 DOF 12 對 / 75s 深水閘,降級誠實寫進 note;無耦合時
+一群=一個 DOF,舊語意不變);
 (b) `cad_validate` / 滑桿重生後一律 `emit("motion")`,前端畫布出現「▶ 運動示意」
-(三角波往復、多 DOF 疊加=ride-along 平移相加、非物理模擬);
-(c) travel 引用 `PARAMS` → 滑桿重生後 import 重解析,播放與掃掠自動跟新值。
+(三角波往復、多 DOF 疊加=ride-along 依宣告序矩陣疊加、非物理模擬);
+(c) travel/angle_deg 引用 `PARAMS` → 滑桿重生後 import 重解析,播放與掃掠自動跟新值。
+
+支援兩種 dof:`linear`(沿 axis 平移 travel)與 `revolute`(繞「過 pivot、方向 axis」的軸
+旋轉 angle_deg;= URDF revolute 關節語義)。**嚙合傳動(齒輪齒條/齒輪對)加
+`"couple": "<主動 dof id>"`(2026-07-10)**:從動 dof 與主動 dof 由同一參數 u 同步驅動——
+掃掠把耦合群「真滾動」一起掃(跨成員 pair 如 rack×pinion 保留,正是被驗證的嚙合面;
+比率不符純滾動 travel = R×θ(rad) 會被抓到穿透),前端播放從動借主動的 period+相位
+index(嚙合不打滑;獨立 dof 仍相位錯開以便辨識)。規則:主/從都必須明給 pairs、
+禁止鏈式耦合。`schemaVersion` 維持 `1`(加法式擴充)。
 
 ```python
 MOTION = {
@@ -108,16 +129,164 @@ MOTION = {
         {"id": "x", "label": "X 行程", "type": "linear", "axis": [1, 0, 0],
          "travel": PARAMS["x_stroke"],        # 必引用 PARAMS
          "moving": ["x_carriage", "bridge"],  # AssemblyHelper label(在組合件內必須唯一)
-         "pairs": [["x_carriage", "x_rail"]], # 省略 → 掃掠 AABB 預過濾自動配對
+         "pairs": [["x_carriage", "x_rail"]], # linear 省略 → 掃掠 AABB 預過濾自動配對
          "samples": 8},
+        {"id": "flip", "label": "90° 前傾", "type": "revolute", "axis": [0, 1, 0],
+         "pivot": [0.0, 0.0, -31.0],          # 旋轉軸通過點(mm,產生器/STEP 座標)
+         "angle_deg": PARAMS["flip_deg"],     # 必引用 PARAMS(角度制)
+         "moving": ["bracket", "gripper", "jaw_left"],
+         "pairs": [["bracket", "body"]],      # revolute 必明給 pairs(不走 AABB 自動配對)
+         "samples": 24},                       # 旋轉弧建議較密(抓中程最深穿透)
     ],
 }
 ```
+
+**規則**:revolute 必明給 `pairs`;某件同時被平移+翻轉承載時,revolute dof 宣告在該 linear
+dof 之後(ride-along 讓翻轉在外層合成 R·T)。前端播放器 `src/lib/cadMotion.js` 用
+`frameMatrix`(純數學抽在 `src/lib/cadMotionMath.js`,可 `node --test`)把每 dof 算成
+Matrix4 疊加(linear=平移;revolute=`T(+pivot)·R(axis,θ)·T(−pivot)`)。原生關節基準用
+`asm.revolute_frame(part, name, Axis(pivot, axis))` 嵌進 STEP。範例模型:
+`models/flip_gripper`(90° 前傾鉸鏈,`flip_deg` 滑桿;托架幾何已讓 0→90° 全程淨空)、
+`models/steering_box_rack_pinion`(齒輪齒條式迴轉缸內部機構,照 ref sim 尺寸:m0.7 z14、
+行程 7.70↔90°;**gear family + couple 的 dogfood**——linear 齒條主動 + revolute pinion
+從動,嚙合零 INTENDED_CONTACT)。
+
+**齒輪原子概念(cadpy.parts gear family,2026-07-10)**:齒輪/齒條幾何**不要手刻**——
+`from cadpy.parts import gear, gear_rack, pitch_radius, rack_mesh_phase_deg`。齒腹是
+「過真漸開線點的折線」(基圓/節圓/中齒頂/齒頂;基圓下走徑向線),配 0.05 背隙即可
+與直邊齒條(精確基準齒形)純滾動零穿透——單弦梯形齒做不到(需隨 module 放大的減薄),
+所以嚙合面不必進 INTENDED_CONTACT,掃掠是真檢查。嚙合座標系(相位閉式的單一真相):
+齒輪軸=局部 +Z 過原點、齒條在 -X 側沿 Y 滑移(節線 x=0,置於 x=-pitch_radius)、
+齒條齒心落 y=k·p 格點;`rack_mesh_phase_deg(module, teeth, rack_y_offset)` 回傳讓兩者
+正確嚙合的 `tooth_phase_deg`。選型 `select_gear(torque_Nm, shaft_dia?, teeth_min?)`
+(KHK SS 目錄列,容許轉矩取彎曲/齒面耐久較小者——非硬化 S45C 由齒面耐久支配)。
 
 畫布互動:拖曳旋轉、`⟳ 環繞`(turntable)、**單擊圈選零件(多選 toggle,上限 4)**
 (選中高亮+其餘 ghost+屬性抽屜連動最後選件+「帶入對話 (N)」;再擊同件移除、
 擊空白清空;位移 >5px 視為旋轉不觸發)、**雙擊=確保選中+鏡頭推近**、
 點菱形標記帶入幾何參考。
+
+**逐件透視(物件樹眼睛三態,2026-07-10)**:物件樹每個零件列有 ● 眼睛,點擊循環
+solid → **ghost(半透明 0.16,琥珀;滑鼠射線點擊穿透——透視外殼直接圈選內部件)**
+→ hidden(整件隱藏,標籤刪除線)→ solid。齒輪箱這類「殼包機構」把 housing 轉
+ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**——殼擋住 raycast
+點不到內部件時,從樹選是逃生口。眼睛狀態隨新模型載入重置;實作:圈選與眼睛兩個
+正交來源合流在同一次 `applyPartVisualState`(hidden 走原生 `hiddenPartIds`、ghost 走
+`record.effectStyle.opacity`,與運動示意的 `effectMatrix` 正交可同時作用);dev 鉤
+`__cadVisual.display()/stateFor(label)`。
+
+## 單一快路徑 + 匯出閘(2026-07-10 收斂;前身為 2026-07-09 的產圖雙模式)
+
+2026-07-10 的效用實測(`tmp/eval_output_mode/REPORT.md`)證實:雙模式的幾何產物逐位元組
+相同、下載/匯出從未依模式設限,唯一實質差異是「標準化驗證跑不跑」(滑桿每輪差 8.7~24.5s、
+快速迭代回合差 ~36% wall)。據此把 toggle(連同確認框/氣泡染色/切換 hint/`outputMode`
+欄位)**全數拆除**,收斂成:**產圖一律走快路徑,完整驗證移到「出口」把關**。
+
+- **產圖一律快路徑——零 spawn**:build(`scripts/step`)時 cadpy 順帶收割模組層 MOTION +
+  權威 parts,原子寫 `.{name}.step.meta.json` sidecar;`runStep` 讀進 `session.lastBuildMeta`,
+  `cad_validate` / 滑桿重生走 `runValidateDesign` **不 spawn 任何 Python**(spawn 路徑
+  ≈12s → ~10ms)。checks 六列全 skipped(文案與 `--motion-only` 逐字一致,
+  `designChecksFromMeta` 註解標對照行)、MOTION 照 `emit("motion")` 供「▶ 運動示意」、
+  asm manifest 照寫。缺 sidecar(rehydrate 後沒 build 過)退回 `validate.py --motion-only`
+  spawn fallback。空洞綠**不**閉環教訓迴圈(閉環由 build 綠的 `noteBuildSuccess` 承擔)。
+  注意 build 本身仍執行產生器自帶的 `check_geometry`(cadpy `generation.py` 的 opt-in 閘):
+  靜態壞幾何在任何路徑都活不過 build,連版本都不會產生。
+- **匯出閘(`ensureVerifiedForExport`,project.mjs)**:`/api/export`(STL/3MF)與
+  `/api/export-parts`(拆件 zip)出檔前,未驗證的版本**自動補跑完整驗證**——通過才轉檔
+  (回應帶 `gate:{ran,ok,ver,checks}`,前端落成驗證卡 + badge 轉綠),未過回
+  `ok:false` + 「匯出已擋下」+ 紅 checks。agent 的 `cad_export` 工具走同一道閘
+  (turn 內未驗證先 full 驗證、未過拒絕出檔並回 checks 給 agent 自修)。已驗證版(open-project/revert 出生即 full、
+  精算過、閘驗過)走 in-memory memo(`session._verifiedVers`)免重驗、秒放行;伺服器
+  重啟後首次匯出重驗一次冪等補登。**STEP 直下載**(`/api/asset` 是裸 GET)由前端把關:
+  未驗證版的「⤓ STEP」鈕先打 `POST /api/validate-ver {sessionId, ver}`(同一道閘的單獨
+  入口),verified 才觸發下載;已驗證版/開檔檢視版直連 href。閘是 UX 契約非安全邊界
+  (單人本機 app,直接敲 asset URL 仍可繞過)。
+  - 快照驗證細節:匯「最新版且基準未漂移」走頂層 `runValidate`(頂層有 `imported/`,
+    含匯入件的組合件也驗得動);舊版快照驗快照本體(`validateSnapshotFull`,不動頂層
+    狀態)——**倚賴 `imported/` 的舊版快照會誠實紅在「產生器執行」**,此時先「⟲ 回到
+    此版繼續」再匯出即可(快照不複製 imported/ 的已知限制)。
+- **MOTION 單一真相源**:正規化搬進 `packages/cadpy/src/cadpy/motion_decl.py`
+  (`normalize_motion`/`playback_motion`,純 stdlib);validate.py `_read_motion` 與 build
+  收割都委派它,兩邊逐位一致(`apps/cad-chat/tests/test_build_meta.py` 釘死)。改 cadpy 後
+  **必跑 `scripts/dev/sync-vendored.sh`**(venv editable 指向 vendored 複本,不同步直接
+  ImportError)。
+- **版本驗證狀態(`versionStamp`)**:`version` 事件帶 `verified`(server 權威:
+  `runStep` 開跑清 `_lastValidate`、驗證結束記 `{full,ok}`,full 且全過才 `verified:true`;
+  快路徑產圖一律 `false`)。版本時間軸掛琥珀「未驗證」/ 綠「✓ 已驗證」badge(舊資料
+  `undefined` 三態不渲染、不誤報;舊快照的 `mode` 欄位是雙模式遺留,原樣透傳無人讀)。
+- **精算此版**:快路徑版已寫精確 STEP → 版本時間軸 `✓ 精算此版`(工作基準未驗證時琥珀強調)
+  對最新版跑 full `runValidate`(`POST /api/validate`),不重新產生;成功且全過 →
+  `MARK_VERSION_VERIFIED` badge 轉綠 + 最新版進匯出閘 memo(之後出檔免等閘)。三道防護:
+  (1) **session 綁定**——精算跑數分鐘,回來時 session 換人就整包作廢;(2) **stale 基準**——
+  上輪 build 後被中斷沒 present 時頂層 ≠ 最新快照,回 `stale:true`(`_geomDirty`),前端
+  只出驗證卡、不 MARK 不掛 motion;(3) **motion/verified 一律綁 latestGen**(不綁
+  `canvas.ver`)。已知限制:精算/匯出閘期間送訊息會撞 server busy,由既有 409 佇列重試消化。
+- 運動示意動畫照常(播放很便宜,`cadMotion.js`);開既有專案 / 回退一律 full 驗證
+  (出生即已驗,匯出免等閘——它們的 `runStep` 也會 prime sidecar)。
+
+## 兩步澄清精靈 + 圖片附件(2026-07-10)
+
+### 兩步澄清精靈(取代舊的單卡選擇題)
+
+使用者回饋:「解析規格」與「需要澄清」兩處各說各話、沒有先後次序,且澄清問題整段複述
+規格 chips、還印出字面 `\n`。整改為**單一決策面的兩步精靈**:
+
+- **資料流**:`emit_spec` 的 chips 進 store `turnSpec`(`START_RUN` 清空——精靈只信本回合
+  的規格快照);`emit_clarify` 到達時 `SET_CLARIFY` reducer 把 `turnSpec` 併進
+  `clarify.specs` 並 mint 遞增 `id`。**純前端組裝**,不擴充 emit_clarify schema(不讓模型
+  再抄一次規格)。無 spec 的回合(如多件結合提問)`specs=null` → 精靈退化單步。
+- **精靈**(`ClarifyWizard.jsx`,容器沿用 `.canvas-clarify` 聚光燈卡;`key={clarify.id}`
+  → 跨回合新 clarify 自動 remount 歸零):
+  - 步驟 1/2「確認解析規格」:chips 全列,標「假設」的(琥珀 badge)可點開 **inline 輸入框**
+    修改(累積在元件 local state 的 `edits`);按 `確認規格 →` 才進步驟 2(閘門)。
+  - 步驟 2/2「需要你決定」:q + 選項 + 建議組合列;有修改時多「僅套用修正」鈕與修正摘要,
+    `← 返回規格` 可回頭。所有送出走 `composeClarifyReply`(`src/lib/clarifyText.js` 純函式)
+    合成一則人話回覆:`規格修正:導軌 改為 HGR20。\n其餘採用:{選項 value}`——
+    「規格修正:」前綴是 prompt 契約(個別修正**優先於**選項文字內嵌的假設值)。
+- **「假設」偵測**:emit_spec chips schema 加 `assumed: z.boolean().optional()`(結構化
+  旗標為主);前端 `isAssumedChip` 同時認 v 內「(假設)」文字慣例(舊快照/模型不聽話
+  fallback),顯示時 `stripAssumedTag` 剝字樣改 badge。
+- **左欄降為被動紀錄**:ClarifyCard 選項變 `.static`(pointer-events:none)存檔 pill,
+  待答時顯示「作答中 · 請在右側畫布回答 ▸」;答完 transcript 自然是「問題+選項紀錄 →
+  使用者氣泡(所選答案)」。精靈故障逃生口=composer 直接打字(`ADD_USER` 即清 clarify)。
+- **RESTORE re-arm**:重整後 transcript 尾端有未答 clarify(其後無 user)→
+  `pendingClarifyFromItems` 連同同段最近 spec 重建 `state.clarify` → 精靈/凍結
+  一致重現(順帶修掉舊版「重整後浮卡消失只剩左欄卡」的斷面);已答不 re-arm。
+- **字面 `\n` 修復(三層)**:根因是模型在 tool JSON 裡雙重跳脫。server choke point
+  (tools.mjs 的 emit_spec/emit_clarify handler)以 `unescapeNewlines` 正規化全部文字欄位
+  (q / opts.label / opts.value / suggested / chips k+v——value 會被原樣送回,一併處理)+
+  前端 events.js 同 helper 防禦一次 + CSS `.clarify-q`/`.canvas-clarify-q` 加
+  `white-space: pre-line`(真換行才真的斷行)。
+- **prompt 消冗**:`emit_clarify` 的 question 改為「一兩句描述決策點本身」,不再要求列出
+  各假設值(chips 已承載、精靈步驟 1 會呈現)。
+
+### 圖片附件(上傳工程圖跟 AI 討論)
+
+場景:上傳馬達外形圖(含 ARM66/ARM69 尺寸表)+「幫我繪製對應的馬達固定座」→ agent
+讀圖抽尺寸;**圖中多型號而使用者未指定 → 型號必列入 emit_clarify options,不得擅選**
+(prompt「# 圖面附件」節)。
+
+- **上傳**:`POST /api/upload-image?sessionId=<id?>&name=<原名?>`——位元組直傳(非 JSON/
+  multipart;`readRawBody` 上限 3.5MB/張,超限回 413 並排水丟棄)。**magic bytes 嗅探**
+  (`src/server/images.mjs`,png/jpeg/gif/webp)是 media_type 與落地副檔名的唯一真相,
+  不信 client content-type 與原檔名(嗅探失敗 415)。檔案落 `<workdir>/uploads/`
+  (與 session 同生命週期同 GC),回 `{ok, sessionId, rel, url}`;無 sessionId 順手建
+  (同 `/api/import` 模式)。
+- **前端**:composer 附件鈕 ⌲ + Ctrl+V 貼上 + 拖放;**選檔即上傳**,縮圖 chip 直接用
+  `/api/asset` URL(uploading 半透明/error 紅框 ✕ 可移除);上傳中送出鈕鎖住;純圖無
+  文字可送。送出時 `/api/chat` body 只帶輕量 `imageRefs:["uploads/…"]` → 佇列/409 重試
+  原封重送也只是 rel 字串(冪等,不重傳位元組)。user 氣泡渲染縮圖,GC 後 404 走
+  `.broken` dashed 降級。
+- **進 agent**:`readImageBlocks`(chat.mjs)從 workdir 讀檔(強制 `uploads/` 前綴 +
+  `resolveInside` 雙沙箱、重嗅探)組 base64 image blocks,排在 text block 前;
+  `buildUserText` 尾附「(附圖 N 張:…)」註記(transcript/教訓錄製可讀、純圖訊息不空)。
+  **runner 的 prompt 恆走 streaming input**(async generator yield 單則 user message)——
+  SDK 的字串 prompt 會被傳輸層硬編成純 text block,永遠帶不了圖;resume/canUseTool 與
+  prompt 形狀正交(`smoke_queue_live` 實測綠)。帶圖訊息不走參數決定性重生路
+  (paramsOnly 條件擋)。
+- **已知限制(token 成本)**:圖片 base64 內嵌後進 SDK transcript,**每次 resume 重放
+  都重付**(單張上限 ~1.6k tokens;CLI prompt cache 5 分內命中約一折)。緩解:上限
+  4 張/訊息、建議先裁切到需要的區域;不做自動壓縮。
 
 ## 元件 / 組合件檔案類型 + 開檔 / 匯入 / 結合(2026-07-03)
 
@@ -130,6 +299,16 @@ MOTION = {
   part/assembly(`scripts/step <f.step> --kind … --force` 產隱藏 GLB;此路徑的
   cadpy `_generate_step_outputs` imported 分支為本 fork 補上,已同步 8 份複本)。
   opened 版本標「檢視」,不出驗證卡,屬性抽屜 provenance 標「未經生成驗證」。
+  **重複開同一檔去重**(2026-07-10):openFile 以 `file` 對既有檢視版去重沿用
+  id(時間軸不長 o1/o2/o3 分身),序號由現有版本 id 推導(RESTORE 後不撞號);
+  `/api/open` 的 glbUrl 帶 `&v=<mtime>` buster——檔案沒變=同 URL 不重載,外部
+  重生過=新 URL 真重載。STEP 比隱藏 GLB 新超過 10s 偏斜窗 → 判 stale 重轉
+  (只看 GLB 缺席會靜默呈現舊幾何;偏斜窗擋 git/LFS checkout 的毫秒級順序差,
+  stale 且無 manifest 時回 `kind_required` 再問一次類型)。配套 reducer 硬規則:
+  `SELECT_VERSION`/`PRESENT` 遇**同 glbUrl 保留現有 status**(useCadViewport 只
+  依賴 glbUrl,URL 沒變不重跑 effect,無條件設 loading 會讓「載入 3D 模型…」
+  永遠卡死);viewport 初始化整段設防(WebGL context 建立失敗 → status=error,
+  不卡 loading)。
 - **匯入元件(雙軌)**:UI「匯入場景」與 agent 工具 `cad_import(file)` 收斂到
   `importStepIntoSession`——複製進 session `imported/`(撞名附序號、同內容冪等重用),
   回 rel + bbox facts。UI 軌匯入後**預填** composer(不自動送出,使用者決定何時請
@@ -139,6 +318,9 @@ MOTION = {
   `/api/open-project` 複製樹到**新 session** + 同步 runStep/runValidate 重建 →
   回 version/present/params/motion 給前端還原;SDK 對話歷史不還原(.py 是唯一真相,
   prompt 條件段引導 agent 先 Read 再 edits)。重建失敗 session 保留,可用對話修。
+  對話中途開專案=**換 session 即清舊工作區**(`CLEAR_WORKSPACE`:版本/運動/參數
+  歸零,對話保留)——舊 session 的 v* chip 對新 sessionId 是死引用(精算會標錯版、
+  匯出/回退 404、新 v1 與舊 v1 撞號互蓋),不能殘留在時間軸上。
 - **多選 AI 結合**:雙擊多選 → 帶入對話成多 chips(`pickRefs[]`,伺服端上限 6)→
   `buildUserText` 逐行列 `#o1.2「label」` token(可直接餵工具)。新 read-only 工具
   `cad_measure(from,to,axis?)`(有號距離)與 `cad_align(moving,target,mode,axis?,offset?)`
@@ -151,7 +333,9 @@ MOTION = {
 驗證出紅色 → 記案例 → 決定性分類 → 達門檻自動蒸餾 → 注入系統提示,讓未來生成避開
 同錯。是 `skills/cad/references/lessons.md`(L-1~L-5 人工帳本)的執行時期動態版。
 
-- **記錄**:build 失敗 / validate 非 skip 的 FAIL / 回合錯誤 / 參數重生失敗全記
+- **記錄**:build 失敗 / validate 非 skip 的 FAIL(收斂單一快路徑後=缺 sidecar fallback
+  的紅;**精算/匯出閘跑在 turn 外接不到 recorder,那邊的紅綠不進教訓迴圈**,已知限制)/
+  回合錯誤 / 參數重生失敗全記
   (per-turn 記憶體 buffer,turn 尾一次落盤;錄製層 no-throw,絕不擋 turn)。
   同 turn 後續成功會把前面的失敗連結成**失敗→修法配對**(附 `emit_retry` 自診與
   edits 摘要,蒸餾的最高價值原料)。刻意不記:open-project/revert 重建的紅
@@ -201,7 +385,21 @@ PYTHONUTF8=1 .venv/Scripts/python.exe apps/cad-chat/tests/smoke/run_all.py
 ```
 
 server 不可達預設跳過(exit 0);`CADCHAT_SMOKE=1` 改為視為失敗。
-`smoke_queue_live.py` 消耗兩個真 LLM 回合,`CADCHAT_SMOKE_LLM=1` 才跑。
+LLM-gated(`CADCHAT_SMOKE_LLM=1` 才跑,消耗訂閱回合):`smoke_queue_live.py`(佇列/併發;
+也覆蓋 runner streaming-input + resume 併用)、`smoke_revolute_live.py`(一輪鉸鏈驗 prompt 的
+revolute 契約——agent 產出 revolute dof;掃掠由精算端點斷真跑)、`smoke_gear_rackpinion_live.py`(一輪
+齒輪齒條迴轉機構驗齒輪原子概念——agent 用 gear family + couple 宣告;精算掃掠 note 標
+「耦合群」、全綠到呈現)、`smoke_image_clarify_live.py`(附圖型號表
+→ 讀圖 → 多型號 clarify → 跨回合圖面記憶,一條對話兩回合)。
+免 LLM 已在 `ORDER`:`smoke_verify_gate.py`(單一快路徑契約 + 匯出閘:自動精算放行/
+memo 冪等/打滑 fixture 擋下 + toggle 拆除迴歸 + STEP 鈕依 verified 分流 + flip
+revolute 動畫 + steering_box 耦合動畫:斷 couple 從動借主動相位、純滾動 y=-R·θ 不打滑)、
+`smoke_clarify_wizard.py`(兩步精靈:步驟閘門/inline 修改/合成回覆——
+`/api/chat` 以 page.route stub 截 POST body)、`smoke_upload.py`(上傳端點正負案例 +
+磁碟落地 + 附件 UI + 破圖降級)、`smoke_part_visibility.py`(眼睛三態循環 +
+ghost×運動示意組成 + 樹選件連動 toggle)、`smoke_open_dedupe.py`(重複開同檔
+去重 + 同 glbUrl 不卡「載入 3D 模型…」+ 開不同檔負對照 + 跨版切換重載 +
+序號自版本推導 + 對話中途開專案清舊工作區)。
 截圖與 handoff 檔寫 `tests/smoke/.out/`(gitignored)。單支可獨立跑
 (versions 先於 restore)。不接 `scripts/test/test.sh`(CI 面不動)。
 
@@ -272,16 +470,17 @@ server 不可達預設跳過(exit 0);`CADCHAT_SMOKE=1` 改為視為失敗。
   (X 紅 / Y 綠 / Z 藍)。畫布工具 chips「⊞ 網格」「⤱ 座標軸」可各自開關。
 - **進度進視圖**:產圖中空畫布顯示五階段直列 + live 活動文字 + 最近工具卡
   (`.canvas-progress`);已有模型的改版重建顯示頂部細條;GLB 載入中有 loading 提示。
-- **選擇題 = 視圖聚光燈焦點模式**:`emit_clarify` 除左欄對話卡(`ADD_ITEM`)外同步掛
-  `state.clarify`(`SET_CLARIFY`)。待答時 `state.clarify != null`(唯一真相,只由 `ADD_USER`
-  清)驅動兩側:①右欄 `.canvas` 疊區塊級 scrim(`.canvas-clarify-scrim`,z10,`rgba(18,26,44,.42)`
-  壓暗進度面板/「3D」佔位圖/模型)+ 置中聚光燈卡(`.canvas-clarify`,z11,青邊 glow + 一次性
-  入場動畫)=**作答焦點**;②左欄 `.conv-col[data-frozen="true"]` 把 `.conv`/`.composer`
-  `opacity:0.5` **反灰凍結**為上下文(不用 `pointer-events:none`,`.conv-scroll` 仍可上捲、左欄
-  inline 選項仍是備援作答;`:focus-within` 一點輸入框即恢復全亮——輸入框刻意不 disable,仍可
-  自由打自訂答案)。凍結期抑制 `Conversation` 的 auto-scroll。任何送出(`ADD_USER`)清 clarify →
-  焦點卡卸載、左欄淡回,平滑退場。空畫布也顯示焦點卡(左欄那張已被降級反灰,視圖才是 active
-  焦點,非重複)。
+- **選擇題 = 視圖聚光燈焦點模式**(2026-07-10 起聚光燈卡內容為**兩步精靈**,見上方專章):
+  `emit_clarify` 除左欄對話卡(`ADD_ITEM`)外同步掛 `state.clarify`(`SET_CLARIFY`)。
+  待答時 `state.clarify != null`(唯一真相,只由 `ADD_USER` 清)驅動兩側:①右欄 `.canvas`
+  疊區塊級 scrim(`.canvas-clarify-scrim`,z10,`rgba(18,26,44,.42)` 壓暗進度面板/「3D」
+  佔位圖/模型)+ 置中聚光燈卡(`.canvas-clarify`,z11,青邊 glow + 一次性入場動畫)
+  =**唯一作答面**;②左欄 `.conv-col[data-frozen="true"]` 把 `.conv`/`.composer`
+  `opacity:0.5` **反灰凍結**為上下文(不用 `pointer-events:none`,`.conv-scroll` 仍可上捲;
+  左欄澄清卡是被動紀錄、選項 `.static` 不可點;`:focus-within` 一點輸入框即恢復全亮——
+  輸入框刻意不 disable,composer 打字是精靈的逃生口)。凍結期抑制 `Conversation` 的
+  auto-scroll。任何送出(`ADD_USER`)清 clarify → 焦點卡卸載、左欄淡回,平滑退場。
+  空畫布也顯示焦點卡(左欄那張已被降級反灰,視圖才是 active 焦點,非重複)。
 - **搶答不再報錯(409 修復)**:`useChatStream` 加 in-flight 佇列——回合進行中再
   send(點選項/任何路徑)一律入佇列,回合結束自動依序送出;不會再打出並發
   `/api/chat` 撞 409「session busy」,也不會讓第二個 send 的 END_RUN 收掉第一回合

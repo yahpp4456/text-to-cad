@@ -20,6 +20,9 @@ const CONTENT_TYPES = {
   ".dxf": "image/vnd.dxf",
   ".png": "image/png",
   ".gif": "image/gif",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
   ".json": "application/json",
   ".js": "text/javascript",
 };

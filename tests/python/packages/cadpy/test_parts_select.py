@@ -20,6 +20,7 @@ from cadpy.parts.select import (  # noqa: E402
     select_ball_screw,
     select_bearing,
     select_cylinder,
+    select_gear,
     select_gripper,
     select_linear_guide,
     select_stepper,
@@ -348,6 +349,44 @@ class GripperSelectTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 select_gripper(**kw)
+
+
+class GearSelectTests(unittest.TestCase):
+    def test_known_good_smallest_wheel_that_meets_torque(self) -> None:
+        # 0.3 Nm: SS1-20 surface durability 0.33 covers it (smallest pitch dia)
+        pick = select_gear(0.3)
+        self.assertEqual(pick["model"], "SS1-20")
+        self.assertEqual(pick["selected_for"]["governing"], "surface")
+        self.assertAlmostEqual(pick["selected_for"]["margin"], 0.33 / 0.3, places=6)
+
+    def test_allowable_is_min_of_bending_and_surface(self) -> None:
+        # 5 Nm exceeds every surface rating below SS3-20 (9.95) / SS2-40 (12.5);
+        # bending alone (SS1.5-20: 19.4) would wrongly qualify smaller gears.
+        # SS3-20 wins on the (pitch_dia, module) compactness key (60 < 80).
+        self.assertEqual(select_gear(5.0)["model"], "SS3-20")
+
+    def test_shaft_dia_forces_a_larger_bore(self) -> None:
+        # 0.3 Nm alone picks SS1-20 (bore 8); a 10 mm shaft climbs to SS1-30
+        pick = select_gear(0.3, shaft_dia=10)
+        self.assertEqual(pick["model"], "SS1-30")
+        self.assertEqual(pick["selected_for"]["fit_clearance"], 0)
+
+    def test_teeth_min_filters_for_ratio_needs(self) -> None:
+        # 5 Nm with z >= 30 drops SS3-20 and lands on SS2-40
+        self.assertEqual(select_gear(5.0, teeth_min=30)["model"], "SS2-40")
+
+    def test_no_fit_beyond_every_rating(self) -> None:
+        with self.assertRaises(NoFittingPart):
+            select_gear(50.0)  # max allowable (surface) is SS2-40's 12.5
+
+    def test_bad_inputs_raise(self) -> None:
+        for kw in (
+            dict(torque_Nm=0),
+            dict(torque_Nm=1, shaft_dia=0),
+            dict(torque_Nm=1, teeth_min=4),
+        ):
+            with self.assertRaises(ValueError):
+                select_gear(**kw)
 
 
 if __name__ == "__main__":

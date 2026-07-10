@@ -5,6 +5,7 @@ import { useCadViewport } from "../../hooks/useCadViewport.js";
 import { createMotionPlayer } from "../../lib/cadMotion.js";
 import { buildTopologyModel } from "../../lib/cadTopology.js";
 import { STAGES } from "../StageStepper.jsx";
+import ClarifyWizard from "./ClarifyWizard.jsx";
 import PropertiesDrawer from "./PropertiesDrawer.jsx";
 
 // 面標記「預設顯示」上限:每件 6 個、整體 12(避免菱形海)。這只是預設——
@@ -72,6 +73,11 @@ export default function Canvas3D({
   const playingRef = useRef(false);
   const motionRef = useRef(null);
   const [selParts, setSelParts] = useState([]); // partId(occurrenceId) 陣列(多選,上限 4)
+  // 逐件顯示三態(物件樹眼睛):{occurrenceId: "ghost"|"hidden"},缺項=solid。
+  // 透視外殼看內部機構用;隨新模型載入重置(ref 供 dev 鉤讀最新值)。
+  const [partDisplay, setPartDisplayState] = useState({});
+  const partDisplayRef = useRef({});
+  partDisplayRef.current = partDisplay;
   const [orbit, setOrbit] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [gridOn, setGridOn] = useState(true);
@@ -86,6 +92,20 @@ export default function Canvas3D({
   const empty = !canvas.glbUrl;
 
   motionRef.current = motion || null;
+
+  // 眼睛三態循環:solid → ghost(半透明,點擊穿透)→ hidden → solid。
+  const cyclePartDisplay = useCallback((occId) => {
+    if (!occId) return;
+    setPartDisplayState((prev) => {
+      const cur = prev[String(occId)];
+      const nextVal = cur === "ghost" ? "hidden" : cur === "hidden" ? undefined : "ghost";
+      const next = { ...prev };
+      if (nextVal) next[String(occId)] = nextVal;
+      else delete next[String(occId)];
+      apiRef.current.setPartDisplay?.(next);
+      return next;
+    });
+  }, []);
 
   // 圈選(多選,上限 4,超限丟最舊):單擊=toggle(再擊同件移除、擊空白清空,不動鏡頭);
   // 雙擊=focus(確保選中+鏡頭推近,不 toggle 取消)。屬性抽屜連動最後選的那件。
@@ -124,6 +144,7 @@ export default function Canvas3D({
       runtime,
       model,
       setSelection,
+      setPartDisplay,
       setAutoRotate,
       setGrid,
       setAxes,
@@ -139,6 +160,7 @@ export default function Canvas3D({
         model,
         runtime,
         setSelection,
+        setPartDisplay,
         setAutoRotate,
         setGrid,
         setAxes,
@@ -159,6 +181,7 @@ export default function Canvas3D({
       setMarkerPick(new Set());
       setPickerOpen(false);
       setHoverFaceRow(null); // 舊模型的 rowIndex 在新拓撲上是隨機別的面,不得殘留
+      setPartDisplayState({}); // 眼睛三態隨新模型重置(新版本全件回到可見)
     },
     onFrame: ({ camera, host }) => {
       updateMarkers(camera, host);
@@ -188,6 +211,13 @@ export default function Canvas3D({
           motionRef.current && playerRef.current
             ? playerRef.current.coverage(motionRef.current)
             : null,
+        // 定時套用(去 RAF flake):未播放時強制擺到 tSec 的姿態供斷言
+        applyAt: (tSec) => {
+          if (!playerRef.current || !motionRef.current) return false;
+          playerRef.current.apply(motionRef.current, Number(tSec) || 0);
+          return true;
+        },
+        matrixFor: (label) => playerRef.current?.matrixFor?.(label) ?? null,
       };
       window.__cadChrome = {
         grid: () => apiRef.current.chrome?.grid?.visible ?? null,
@@ -199,6 +229,23 @@ export default function Canvas3D({
       };
       window.__cadPreview = { group: () => previewGroupRef.current };
       window.__cadMarkers = { state: () => markerProbeRef.current };
+      // 眼睛三態探針:display()=目前 map;stateFor(labelOrOccId)=該件第一筆
+      // record 的 {opacity, visible}(label 經 topo shape 列解析成 occurrenceId)
+      window.__cadVisual = {
+        display: () => ({ ...partDisplayRef.current }),
+        stateFor: (key) => {
+          const k = String(key || "");
+          const nodes = topoRef.current?.nodes || [];
+          const nd = nodes.find((x) => x.kind === "shape" && (x.label === k || x.row?.occurrenceId === k));
+          const occ = nd?.row?.occurrenceId || k;
+          const rec = (apiRef.current.model?.displayRecords || []).find(
+            (r) => String(r.partId) === occ || String(r.partId).startsWith(`${occ}.`),
+          );
+          return rec
+            ? { opacity: rec.material?.opacity ?? null, visible: rec.mesh?.visible ?? null }
+            : null;
+        },
+      };
     }
   }, [playing]);
 
@@ -608,43 +655,26 @@ export default function Canvas3D({
               dispatch={dispatch}
               onBringToChat={onBringToChat}
               citedTokens={citedTokens}
+              partDisplay={partDisplay}
+              onCycleDisplay={cyclePartDisplay}
+              onPickPart={selectPart}
             />
           )}
         </>
       )}
 
-      {/* 選擇題(clarify)= 焦點模式:scrim 壓暗背景(進度面板/「3D」佔位圖/模型皆可)+
-          置中聚光燈卡,使用者的作答重心。左欄同步反灰為凍結上下文(App.jsx data-frozen)。
-          空畫布也顯示——左欄那張卡已被降級(反灰),這裡才是 active 焦點,非重複。
-          AI 還在講也能點;佇列會等回合結束自動送出。 */}
+      {/* 選擇題(clarify)= 焦點模式:scrim 壓暗背景 + 置中兩步精靈(步驟 1 確認/修改
+          解析規格 → 步驟 2 選項;無 specs 退化單步)。左欄那張卡是被動紀錄(反灰、
+          選項不可點),這裡才是唯一作答面。AI 還在講也能點;佇列會等回合結束自動送出。
+          key=clarify.id:跨回合新 clarify 令精靈 remount,step/edits 歸零。 */}
       {clarify && (
         <>
           <div className="canvas-clarify-scrim" />
-          <div className="canvas-clarify">
-            <span className="canvas-clarify-kicker">◈ 需要你決定</span>
-            <p className="canvas-clarify-q">{clarify.q}</p>
-            {(clarify.opts || []).length > 0 && (
-              <div className="canvas-clarify-opts">
-                {clarify.opts.map((op, i) => (
-                  <a
-                    key={i}
-                    className="canvas-clarify-opt"
-                    onClick={() => onSubmitText?.(op.value || op.label)}
-                  >
-                    {op.label}
-                  </a>
-                ))}
-              </div>
-            )}
-            {clarify.suggested && (
-              <a
-                className="canvas-clarify-suggest"
-                onClick={() => onSubmitText?.(clarify.suggested)}
-              >
-                ✦ 用建議組合:{clarify.suggested}
-              </a>
-            )}
-          </div>
+          <ClarifyWizard
+            key={clarify.id || clarify.q}
+            clarify={clarify}
+            onSubmitText={onSubmitText}
+          />
         </>
       )}
     </div>

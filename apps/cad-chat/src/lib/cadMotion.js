@@ -3,6 +3,8 @@
 // 同步移動);不可只改 mesh.position(邊線脫節)、不可呼叫 model.update()(重置 transform)。
 import { applyDisplayRecordTransform } from "cadjs/common/displayRecordTransform";
 
+import { frameMatrix, triangleU } from "./cadMotionMath.js";
+
 export function createMotionPlayer(THREE, model, runtime) {
   const records = model?.displayRecords || [];
 
@@ -42,30 +44,36 @@ export function createMotionPlayer(THREE, model, runtime) {
   }
 
   const touched = new Set();
-  const offsets = new Map(); // rec -> [x,y,z](每幀重算)
+  const recMats = new Map(); // rec -> Matrix4(每幀重置為 identity 後累加)
 
   function apply(motion, tSec) {
     const dofs = motion?.dofs || [];
-    offsets.clear();
+    const idxOf = new Map(dofs.map((d, i) => [String(d.id), i]));
+    recMats.clear();
     dofs.forEach((dof, i) => {
-      const T = Math.max(1, Math.min(20, Number(dof.period_s) || 4));
-      const phase = (tSec / T + i * 0.17) % 1; // 相位錯開讓多軸疊加可辨
-      const u = 1 - Math.abs(2 * phase - 1); // 三角波 0→1→0
-      const axis = Array.isArray(dof.axis) ? dof.axis : [0, 0, 0];
-      const travel = Number(dof.travel) || 0;
+      // 每 dof 每幀算一次 frame-matrix Mi(linear=平移;revolute=繞 pivot 軸旋轉);數學見 cadMotionMath.js
+      // couple(嚙合耦合):從動 dof 借主動 dof 的 period 與相位 index → 同一 u,
+      // 齒輪齒條在畫面上純滾動不打滑(相位錯開只給獨立 dof)。
+      let pi = i;
+      let pd = dof;
+      if (dof.couple != null && idxOf.has(String(dof.couple))) {
+        pi = idxOf.get(String(dof.couple));
+        pd = dofs[pi];
+      }
+      const Mi = frameMatrix(THREE, dof, triangleU(tSec, pd.period_s, pi));
       for (const label of dof.moving || []) {
         for (const rec of byLabel.get(String(label)) || []) {
-          const cur = offsets.get(rec) || [0, 0, 0];
-          cur[0] += (axis[0] || 0) * u * travel;
-          cur[1] += (axis[1] || 0) * u * travel;
-          cur[2] += (axis[2] || 0) * u * travel; // ride-along = 多 DOF 平移相加
-          offsets.set(rec, cur);
+          let m = recMats.get(rec);
+          if (!m) {
+            m = new THREE.Matrix4();
+            recMats.set(rec, m);
+          } // identity 起手
+          m.premultiply(Mi); // 依宣告序 premultiply → 後宣告者在外層(R_flip·T_jaw)
         }
       }
     });
-    for (const [rec, off] of offsets) {
-      if (!(rec.effectMatrix instanceof THREE.Matrix4)) rec.effectMatrix = new THREE.Matrix4();
-      rec.effectMatrix.makeTranslation(off[0], off[1], off[2]);
+    for (const [rec, m] of recMats) {
+      rec.effectMatrix = m.clone();
       applyDisplayRecordTransform(THREE, rec);
       touched.add(rec);
     }
@@ -95,5 +103,13 @@ export function createMotionPlayer(THREE, model, runtime) {
     );
   }
 
-  return { apply, reset, coverage, sample };
+  // Playwright 斷言用:回具名 label 的 record effectMatrix 元素(16 個),對不上回 null
+  function matrixFor(label) {
+    for (const rec of byLabel.get(String(label)) || []) {
+      if (rec.effectMatrix instanceof THREE.Matrix4) return rec.effectMatrix.elements.slice();
+    }
+    return null;
+  }
+
+  return { apply, reset, coverage, sample, matrixFor };
 }

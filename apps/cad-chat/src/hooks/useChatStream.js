@@ -33,7 +33,7 @@ export function useChatStream(dispatch) {
         return;
       }
       busyRef.current = true;
-      const { text = "", pickRefs = [], params = null } = payload;
+      const { text = "", pickRefs = [], params = null, imageRefs = null } = payload;
       const sentWith = sessionIdRef.current; // 本次 POST 所用的 session(回聲採納守衛用)
       const ctrl = new AbortController();
       ctrlRef.current = ctrl;
@@ -53,14 +53,18 @@ export function useChatStream(dispatch) {
                 }))
               : undefined,
             params: params || undefined,
+            // 已上傳圖片的輕量參照(uploads/xxx.png);位元組在 server workdir,
+            // 佇列/409 重試原封重送這個 payload 也只是重送 rel 字串(冪等)。
+            imageRefs: imageRefs?.length ? imageRefs : undefined,
           }),
         });
         if (!res.ok || !res.body) {
           const j = await res.json().catch(() => ({}));
-          // 防禦性後備:佇列已擋住本頁的並發,真撞上 busy(如另一分頁占用、
-          // interrupt 後 server 端舊 turn 還在收尾)就排回佇列頭,由 finally 的
-          // flush 依 _retries 延遲重送(見下);連撞 3 次視為真的卡住,轉為錯誤顯示。
-          if (j.error === "session busy" && (payload._retries || 0) < 3) {
+          // 防禦性後備:佇列已擋住本頁的並發,真撞上 busy(另一分頁占用、interrupt
+          // 收尾、**精算/匯出閘持鎖最長 ~2-3 分鐘**)就排回佇列頭,由 finally 的
+          // flush 依 _retries 延遲重送(見下);退避封頂 30s、連撞 8 次(總窗 ~2.5
+          // 分鐘,涵蓋閘的 busy 視窗)才視為真的卡住,轉為錯誤顯示。
+          if (j.error === "session busy" && (payload._retries || 0) < 8) {
             queueRef.current.unshift({ ...payload, _retries: (payload._retries || 0) + 1 });
             return; // 「稍候自動重送」提示由 finally 排程時 dispatch(END_RUN 會清 live,先發必被蓋掉)
           }
@@ -95,12 +99,12 @@ export function useChatStream(dispatch) {
         ctrlRef.current = null;
         busyRef.current = false;
         // 回合真正結束(server 端 busy 已同步釋放)才 flush 佇列,串行送出。
-        // busy 重試(_retries)必須延遲:server 端的 busy 可能要幾秒才放
-        // (interrupt 收尾、另一分頁的回合),同步重送只會在毫秒內把 3 次
+        // busy 重試(_retries)必須延遲:server 端的 busy 可能要幾秒到幾分鐘才放
+        // (interrupt 收尾、另一分頁的回合、精算/匯出閘),同步重送只會在毫秒內把
         // 重試瞬間燒完,「稍候自動重送」變成立刻報錯丟訊息。
         const next = queueRef.current.shift();
         if (next) {
-          const delay = next._retries ? Math.min(2000 * 2 ** (next._retries - 1), 10_000) : 0;
+          const delay = next._retries ? Math.min(2000 * 2 ** (next._retries - 1), 30_000) : 0;
           if (delay > 0) {
             dispatch({ type: "SET_LIVE", live: { text: "上一回合還在收尾,稍候自動重送…" } });
             const t = setTimeout(() => {

@@ -48,7 +48,7 @@ export const DISALLOWED = [
 const TRANSIENT_RE =
   /oauth|api.?key|unauthorized|authentication|credential|expired|billing|credit|rate.?limit|usage.?limit|overloaded|enoent|econnrefused|enotfound|etimedout|eai_again|fetch failed|network error|socket hang ?up/i;
 
-export async function runTurn({ session, emit, message }) {
+export async function runTurn({ session, emit, message, imageBlocks = [] }) {
   const abort = new AbortController();
   session.currentAbort = abort;
   session._valAttempt = 0;
@@ -60,9 +60,23 @@ export async function runTurn({ session, emit, message }) {
   // buildSystemPrompt 讀 session._lessonsDigest 注入「# 累積教訓」段。
   session._lessonsDigest = getLessonsDigest();
 
+  // prompt 恆走 streaming input(單一程式路徑):SDK 的字串 prompt 會被傳輸層硬編成
+  // 純 text block,永遠帶不了 image content block;這裡自組同形狀的 user message
+  // (鏡射 SDK 內部包裝:session_id 空字串、parent_tool_use_id null),yield 一則即
+  // return → 輸入串流關閉,行為與單發字串等價。resume/canUseTool 與 prompt 形狀正交。
+  const content = [...imageBlocks, { type: "text", text: message }];
+  async function* promptStream() {
+    yield {
+      type: "user",
+      session_id: "",
+      parent_tool_use_id: null,
+      message: { role: "user", content },
+    };
+  }
+
   const model = resolveModel();
   const q = query({
-    prompt: message,
+    prompt: promptStream(),
     options: {
       ...(model ? { model } : {}),
       effort: resolveEffort(), // 預設 xhigh(CADCHAT_EFFORT 可調)

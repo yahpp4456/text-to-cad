@@ -14,7 +14,7 @@ description: apps/cad-chat 的分層驗證流程與擴充守則。改動 cad-cha
 | 層 | 驗什麼 | 指令 | 時間 |
 |---|---|---|---|
 | L0 建置 | 語法/import/JSX | `npm --prefix apps/cad-chat run build` | ~5s |
-| L1 單元 | 純函數/reducer/server 邏輯 | `cd apps/cad-chat && node --test src/server/*.test.js src/server/cad/*.test.js src/lib/*.test.js` | ~1s |
+| L1 單元 | 純函數/reducer/server 邏輯 | `cd apps/cad-chat && node --test src/server/*.test.js src/server/cad/*.test.js src/lib/*.test.js src/state/*.test.js` | ~1s |
 | L2 API | 免 LLM 端點鏈路(open-project/save/revert/export/asset…) | 煙測內含(smoke_versions),或 curl 手打 | 秒~分 |
 | L3 UI | 真瀏覽器互動與渲染 | `PYTHONUTF8=1 .venv/Scripts/python.exe apps/cad-chat/tests/smoke/run_all.py` | ~6-8min |
 | L4 LLM | 必須靠模型的行為(對話語境/工具編排) | `CADCHAT_SMOKE_LLM=1` 跑 run_all,或手動一輪對話 | 分鐘級+燒回合 |
@@ -53,6 +53,55 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
 - **背景起 server 要在 `apps/cad-chat` 目錄**:repo 根 `npm run dev` 是 enoent(exit 127)。
 - CLI sidecar 匯出(`--stl OUT`)的 OUT 是**相對 STEP 所在目錄**且拒絕絕對路徑——只傳檔名。
 - 煙測產物(截圖/handoff)一律寫 `tests/smoke/.out/`(gitignored),別寫測試目錄根。
+- **`node --test` 不解析 cadjs Vite alias**:import `cadjs/...` 的前端 lib(如 `cadMotion.js`)
+  無法直接 node 測 → 把純邏輯抽到無 cadjs 依賴的檔(如 `cadMotionMath.js`)再 L1 測;
+  render/side-effect 部分靠 L3 `__cadMotion`。`three` 本身在 node 可解析(node_modules)。
+- **spawned Python(validate.py 等)的單元/整合測**放 `apps/cad-chat/tests/*.py`(unittest),
+  直跑 `PYTHONUTF8=1 <venv-python> apps/cad-chat/tests/test_*.py`(不在 node --test / smoke 內)。
+- **MOTION 契約單一真相源在 `cadpy.motion_decl`**(validate.py `_read_motion` 與 build
+  sidecar 收割共同委派):動它必跑 `tests/python/packages/cadpy/test_motion_decl.py` +
+  `apps/cad-chat/tests/test_build_meta.py`(sidecar↔validate 防漂移)+ 全部 motion 迴歸,
+  且**先 sync-vendored**(venv editable 指向 vendored 複本,不同步=ImportError)。
+- **MOTION `couple`(嚙合耦合)三個消費端要一起想**:motion_decl 驗宣告(主/從必明給
+  pairs、禁鏈)、validate.py 掃掠把耦合群同 u「真滾動」(跨成員 pair 保留=嚙合面;
+  齒比錯了 `test_validate_motion.CoupledSweepIntegration` 會抓)、cadMotion.js 播放從動
+  借主動 period+相位 index(`smoke_verify_gate` F 段斷純滾動 y=-R·θ)。動任一端 →
+  三處測試都跑;L4 `smoke_gear_rackpinion_live.py` 驗 agent 真的會宣告。
+- **齒輪幾何只能用 `cadpy.parts.gear` family,不要手刻**:單弦梯形齒 vs 直邊齒條滾動
+  必互咬(需隨 module 放大的減薄 ≈(0.05+2/z)·m,齒會瘦到難看);family 齒腹是
+  「過真漸開線點的折線」(內接弦只減料不加料),0.05 背隙即全 z 零穿透——嚙合面
+  因此**不進 INTENDED_CONTACT**,列進 pairs 就是真檢查。相位閉式
+  `rack_mesh_phase_deg`(嚙合座標系:齒輪軸+Z、齒條 -X 側沿 Y、齒心 y=k·p 格點);
+  測試:`test_parts_geometry.GearGeometryTests`(含錯半齒相位 must-FAIL)+
+  `test_parts_models.SteeringBoxGateTests`(fixture 滾動 gate)。
+  快路徑 checks 文案在 `designChecksFromMeta`(pipeline.mjs)與 validate.py 兩處逐字
+  同步,`pipeline.design.test.js` 釘死——改文案兩邊一起改。
+- **滑桿重生煙測必送「全部」參數值**(`rewriteParams` 整塊替換 PARAMS;只送單一 key 會讓
+  產生器 import KeyError)。快路徑零 spawn 的實證斷言用 validate 事件 `ms < 1500`
+  (spawn 路徑 ≥8s)。
+- **單一快路徑 + 匯出閘(2026-07-10 收斂,雙模式已拆)**:產圖回合一律零 spawn 快路徑;
+  完整驗證只在精算(/api/validate)、匯出閘(/api/export、/api/export-parts 內建;
+  /api/validate-ver 是 STEP 直下載的單獨入口)、開專案、回退。verified memo=
+  `session._verifiedVers`(in-memory,重啟後首匯重驗冪等)。**動閘/驗證路徑必跑**
+  `smoke_verify_gate.py`(含打滑 fixture 的擋下負案例——它是「唯掃掠可抓」缺陷類的
+  最小重現);動 agent 回合語意(prompt/tools 的驗證措辭)→ L4 `smoke_revolute_live`
+  (回合斷 MOTION 契約、掃掠改由精算端點斷真跑)。舊 `smoke_output_mode.py` 已由
+  `smoke_verify_gate.py` 取代。
+- **runner 的 prompt 恆走 streaming input**(async generator;SDK 字串 prompt 會被傳輸層
+  硬編成純 text block,image block 只能走 generator 路)。動 `runner.mjs` 的 query 呼叫
+  → 必跑 L4 `smoke_queue_live`(兩回合=resume+streaming 併用的最小驗證)。
+- **clarify 兩步精靈的注入契約**:`SET_CLARIFY` 帶 `specs`(chips 陣列)→ 兩步;不帶 →
+  單步(舊煙測注入不必改)。合成回覆「規格修正:…」由 `src/lib/clarifyText.js`
+  `composeClarifyReply` 釘死(L1)+ `smoke_clarify_wizard.py` 端到端(page.route stub
+  `/api/chat` 截 POST body,免 LLM 可驗送出)。
+- **上傳端點超限要「排水」不可立刻 destroy**:client(fetch/urllib)先送完 body 才讀回應,
+  馬上斷線只看到 connection reset 而非 413(`readRawBody` 已內建:reject 後丟棄到
+  2×limit 才斷)。上傳檔 media_type/副檔名一律信 magic bytes 嗅探(`images.mjs`),
+  不信 client content-type。
+- **emit_spec/emit_clarify 文字欄位在 server choke point 過 `unescapeNewlines`**(模型會在
+  tool JSON 寫字面 `\n`)。改 clarify 欄位/合成格式 → L1 `clarifyText.test.js` +
+  `events.test.js`;改 prompt 措辭(消冗/「規格修正:」優先/圖面附件節)→ L4
+  `smoke_image_clarify_live.py`(附圖型號表 → 多型號 clarify → 跨回合圖面記憶)。
 
 ## 新需求 → 驗證擴充決策樹
 
@@ -74,7 +123,13 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
    斷 DOM(selector/count/inner_text/attribute);**WebGL 或元件內部 state DOM 看不到
    → 先在產品碼加 dev 鉤**(`window.__cadXxx`,只在 `import.meta.env.DEV`),
    再寫斷言。既有鉤:`__cadDispatch`(注入 store action)、`__cadChrome`(網格/軸
-   visible)、`__cadFaceFill.count()/debug()`、`__cadPreview.group()`、`__cadMotion`。
+   visible)、`__cadFaceFill.count()/debug()`、`__cadPreview.group()`、`__cadMotion`、
+   `__cadVisual.display()/stateFor(label)`(眼睛三態:材質 opacity/mesh.visible)。
+   Playwright 樹節點 locator 用 `has_text` 是**子字串比對**——label 斷言/定位要全等
+   就用 `re.compile(r"^label$")`(「pinion」會先鎖到根 ASSEMBLY 列 steering_box_rack_pinion)。
+   `inner_text()` 回傳**渲染後**文字:CSS `text-transform: uppercase` 的元素
+   (如 `.model-code`)拿到的是大寫,比對前先 `.lower()`。FileBrowser 的 `dir`
+   state **跨開闔保留**(overlay 關閉不重置)——煙測重進要先點 breadcrumb「models」回根。
 
 4. **行為要 LLM 才會發生(對話回覆、工具鏈)?**
    → 先問:「能不能用 `__cadDispatch` 注入等價的 SSE action 免 LLM 驗渲染?」

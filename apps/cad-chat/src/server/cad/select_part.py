@@ -2,7 +2,7 @@
 """選用標準件(cadpy.parts.select_*),輸出 JSON。
 
 用法: python select_part.py <family> <requirement-json>
-family ∈ bearing|cylinder|stepper|linear_guide|ball_screw|gripper
+family ∈ bearing|cylinder|stepper|linear_guide|ball_screw|gripper|gear
 """
 import json
 import sys
@@ -14,6 +14,7 @@ FN = {
     "linear_guide": "select_linear_guide",
     "ball_screw": "select_ball_screw",
     "gripper": "select_gripper",
+    "gear": "select_gear",
 }
 
 

@@ -23,13 +23,18 @@ from cadpy.geometry_checks import (  # noqa: E402
 from cadpy.parts import (  # noqa: E402
     ball_screw,
     deep_groove_bearing,
+    gear,
+    gear_rack,
     gripper,
     linear_guide,
+    pitch_radius,
     pneumatic_cylinder,
+    rack_mesh_phase_deg,
     stepper_motor,
 )
 from cadpy.parts.ball_screw import check_geometry as check_ball_screw  # noqa: E402
 from cadpy.parts.deep_groove_bearing import check_geometry as check_bearing  # noqa: E402
+from cadpy.parts.gear import check_geometry as check_gear  # noqa: E402
 from cadpy.parts.gripper import check_geometry as check_gripper  # noqa: E402
 from cadpy.parts.linear_guide import check_geometry as check_linear_guide  # noqa: E402
 from cadpy.parts.pneumatic_cylinder import check_geometry as check_cylinder  # noqa: E402
@@ -221,6 +226,63 @@ class GripperGeometryTests(unittest.TestCase):
     def test_known_bad_opening_beyond_stroke_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             gripper(bore=20, stroke=10, opening=12)
+
+
+class GearGeometryTests(unittest.TestCase):
+    """The gear family's whole point is an HONEST mesh: correctly phased
+    involute-polyline teeth roll against the straight rack profile with real
+    backlash clearance and NO intended-contact allowance. The must-FAIL
+    fixture is a half-pitch mis-phase (teeth land on teeth)."""
+
+    M, Z, W = 1.0, 12, 5.0
+
+    def _mesh(self, phase_shift_deg=0.0):
+        from build123d import Compound
+
+        from cadpy.assembly import label_shape
+
+        rp = pitch_radius(self.M, self.Z)
+        g = gear(
+            self.M, self.Z, self.W, bore=4.0,
+            tooth_phase_deg=rack_mesh_phase_deg(self.M, self.Z) + phase_shift_deg,
+            label="pinion",
+        )
+        r = gear_rack(self.M, 4, self.W, label="rack").translate((-rp, 0.0, 0.0))
+        label_shape(r, "rack")
+        return Compound(label="mesh", children=[g, r])
+
+    def test_gear_is_a_valid_labeled_solid(self) -> None:
+        g = gear(self.M, self.Z, self.W, bore=4.0, hub_dia=8.0, hub_len=3.0)
+        self.assertEqual(g.label, "gear")
+        assert_all_valid(g, label="gear part")
+
+    def test_correct_phase_mesh_is_interference_free(self) -> None:
+        asm = self._mesh()
+        report = enumerate_interferences(asm)
+        self.assertEqual(len(report.overlaps), 0)
+        check_gear(asm)  # no raise, and with NO allow-list
+
+    def test_half_pitch_mis_phase_must_fail(self) -> None:
+        bad = self._mesh(phase_shift_deg=180.0 / self.Z)
+        with self.assertRaises(AssertionError):
+            check_gear(bad)
+
+    def test_rolling_sweep_stays_clear(self) -> None:
+        # roll through two tooth pitches -- covers every contact phase
+        check_gear(self._mesh(), sweep_args=dict(
+            module=self.M, teeth=self.Z, width=self.W,
+            rack_teeth=4, angle_deg=2 * 360.0 / self.Z, samples=8,
+        ))
+
+    def test_known_bad_dimensions_are_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            gear(self.M, 5, self.W)  # too few teeth for a pinion
+        with self.assertRaises(ValueError):
+            gear(self.M, self.Z, self.W, bore=11.0)  # no rim inside root dia
+        with self.assertRaises(ValueError):
+            gear(self.M, self.Z, self.W, backlash=1.0)  # tooth tip degenerates
+        with self.assertRaises(ValueError):
+            gear_rack(self.M, 1, self.W)  # a rack needs a tooth row
 
 
 if __name__ == "__main__":

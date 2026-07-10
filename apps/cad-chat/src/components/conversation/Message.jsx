@@ -1,5 +1,6 @@
 import React from "react";
 
+import { isAssumedChip, stripAssumedTag } from "../../lib/clarifyText.js";
 import TypeBadge from "../TypeBadge.jsx";
 
 function UserMsg({ it }) {
@@ -7,7 +8,26 @@ function UserMsg({ it }) {
     <div className="msg-user">
       <div className="msg-user-col">
         {it.ref && <span className="user-ref">⊹ {it.ref}</span>}
-        <div className="user-bubble">{it.text}</div>
+        {it.images?.length > 0 && (
+          <div className="user-imgs">
+            {it.images.map((im, i) => (
+              <img
+                key={i}
+                className="user-img"
+                src={im.url}
+                alt={im.name || "附圖"}
+                title={im.name}
+                // workdir 被 GC 後縮圖 404 → dashed 降級框,不炸版面
+                onError={(e) => e.currentTarget.classList.add("broken")}
+              />
+            ))}
+          </div>
+        )}
+        {(it.text || !it.images?.length) && (
+          <div className="user-bubble">
+            {it.text}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -32,13 +52,23 @@ function SpecCard({ it, onChipEdit }) {
         <span className="card-eyebrow">解析規格 · 可點擊修正</span>
       </div>
       <div className="spec-chips">
-        {it.chips.map((c, i) => (
-          <a className="spec-chip" key={i} onClick={() => onChipEdit?.(c)}>
-            <span className="chip-k">{c.k}</span>
-            <span className="chip-v">{c.v}</span>
-            <span className="chip-edit">✎</span>
-          </a>
-        ))}
+        {it.chips.map((c, i) => {
+          // 「(假設)」剝字樣改 badge(assumed 旗標為主、文字慣例 fallback,視覺統一)
+          const assumed = isAssumedChip(c);
+          return (
+            <a
+              className="spec-chip"
+              key={i}
+              data-assumed={assumed || undefined}
+              onClick={() => onChipEdit?.(c)}
+            >
+              <span className="chip-k">{c.k}</span>
+              <span className="chip-v">{stripAssumedTag(c.v)}</span>
+              {assumed && <span className="chip-assumed">假設</span>}
+              <span className="chip-edit">✎</span>
+            </a>
+          );
+        })}
       </div>
     </div>
   );
@@ -184,25 +214,26 @@ function ArtifactCard({ it, onSelectVersion }) {
   );
 }
 
-function ClarifyCard({ it, onSubmitText }) {
+// 左欄澄清卡 = 被動紀錄(唯一作答面在視圖區的兩步精靈;答完 transcript 自然留下
+// 「問題+選項紀錄 → 使用者氣泡(所選答案)」)。pending:是最後一張未答的 clarify。
+function ClarifyCard({ it, pending }) {
   return (
     <div className="card clarify-card">
       <div className="card-head clarify-head">
         <span className="bar bar-emit" />
         <span className="card-eyebrow">需要澄清</span>
+        {pending && <span className="clarify-live">作答中 · 請在右側畫布回答 ▸</span>}
       </div>
       <div className="clarify-body">
         <span className="clarify-q">{it.q}</span>
         <div className="clarify-opts">
           {it.opts.map((op, i) => (
-            <a className="clarify-opt" key={i} onClick={() => onSubmitText(op.value || op.label)}>
+            <span className="clarify-opt static" key={i}>
               {op.label}
-            </a>
+            </span>
           ))}
           {it.suggested && (
-            <a className="clarify-opt suggested" onClick={() => onSubmitText(it.suggested)}>
-              採用建議:{it.suggested}
-            </a>
+            <span className="clarify-opt suggested static">採用建議:{it.suggested}</span>
           )}
         </div>
       </div>
@@ -210,7 +241,7 @@ function ClarifyCard({ it, onSubmitText }) {
   );
 }
 
-export default function Message({ it, handlers }) {
+export default function Message({ it, handlers, pending }) {
   switch (it.type) {
     case "user":
       return <UserMsg it={it} />;
@@ -229,7 +260,7 @@ export default function Message({ it, handlers }) {
     case "artifact":
       return <ArtifactCard it={it} onSelectVersion={handlers.onSelectVersion} />;
     case "clarify":
-      return <ClarifyCard it={it} onSubmitText={handlers.onSubmitText} />;
+      return <ClarifyCard it={it} pending={pending} />;
     default:
       return null;
   }

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 
 import Message from "./Message.jsx";
 
@@ -17,6 +17,16 @@ export default function Conversation({ items, isIdle, running, live, frozen, onS
     const el = scrollRef.current;
     if (el && !frozen) el.scrollTop = el.scrollHeight;
   }, [items, live, frozen]);
+
+  // 待答中的 clarify(最後一張、其後無 user)→ 那張左欄紀錄卡顯示「作答中…▸」指路。
+  const pendingId = useMemo(() => {
+    if (!frozen) return null;
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i]?.type === "user") return null;
+      if (items[i]?.type === "clarify") return items[i].id;
+    }
+    return null;
+  }, [items, frozen]);
 
   return (
     <section className="conv">
@@ -53,7 +63,7 @@ export default function Conversation({ items, isIdle, running, live, frozen, onS
           <>
             {items.map((it) => (
               <div className="msg-wrap" key={it.id}>
-                <Message it={it} handlers={handlers} />
+                <Message it={it} handlers={handlers} pending={it.id === pendingId} />
               </div>
             ))}
             {running && live && (

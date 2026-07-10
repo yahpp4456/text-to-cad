@@ -279,6 +279,70 @@ def select_ball_screw(
 
 
 # ---------------------------------------------------------------------------
+# Spur gear
+# ---------------------------------------------------------------------------
+def select_gear(
+    torque_Nm: float,
+    *,
+    shaft_dia: float | None = None,
+    teeth_min: int | None = None,
+) -> dict[str, Any]:
+    """Smallest stock spur gear whose allowable torque covers ``torque_Nm``.
+
+    The allowable torque of a NON-hardened S45C stock gear is the SMALLER of
+    its bending-strength and surface-durability ratings (for these gears the
+    surface durability governs by an order of magnitude), so selection uses
+    ``min(bending, surface)`` -- the same "weaker case binds" rule as the
+    double-acting cylinder. ``shaft_dia`` (if given) requires bore >= shaft;
+    ``teeth_min`` filters for ratio/geometry needs. Pick is min by
+    (pitch_dia, module): the most compact wheel, then the finest teeth.
+    ``raise NoFittingPart`` when the torque, shaft or teeth demand exceeds
+    every row. A first-cut catalog sizing, not a duty/lubrication verdict.
+    """
+    if torque_Nm <= 0:
+        raise ValueError("torque_Nm must be positive")
+    if shaft_dia is not None and shaft_dia <= 0:
+        raise ValueError("shaft_dia must be positive when given")
+    if teeth_min is not None and teeth_min < 6:
+        raise ValueError("teeth_min must be >= 6 when given")
+
+    def allowable(row: dict[str, Any]) -> float:
+        return min(row["allow_torque_bending_Nm"], row["allow_torque_surface_Nm"])
+
+    rows = [
+        r
+        for r in load_specs("gears")
+        if allowable(r) >= torque_Nm
+        and (shaft_dia is None or r["bore"] >= shaft_dia)
+        and (teeth_min is None or r["teeth"] >= teeth_min)
+    ]
+    if not rows:
+        raise NoFittingPart(
+            f"no gear: need allowable torque >= {torque_Nm:.2f} Nm"
+            + (f" with bore >= {shaft_dia} mm" if shaft_dia is not None else "")
+            + (f" and teeth >= {teeth_min}" if teeth_min is not None else "")
+        )
+    pick = min(rows, key=lambda r: (r["pitch_dia"], r["module"]))
+    governing = (
+        "surface"
+        if pick["allow_torque_surface_Nm"] <= pick["allow_torque_bending_Nm"]
+        else "bending"
+    )
+    selected = {
+        "torque_Nm": torque_Nm,
+        "allowable_torque_Nm": allowable(pick),
+        "governing": governing,
+        "margin": allowable(pick) / torque_Nm,
+    }
+    if shaft_dia is not None:
+        selected["shaft_dia"] = shaft_dia
+        selected["fit_clearance"] = pick["bore"] - shaft_dia
+    if teeth_min is not None:
+        selected["teeth_min"] = teeth_min
+    return {**pick, "selected_for": selected}
+
+
+# ---------------------------------------------------------------------------
 # Parallel pneumatic gripper
 # ---------------------------------------------------------------------------
 def select_gripper(

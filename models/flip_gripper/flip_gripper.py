@@ -12,10 +12,12 @@ Coordinate convention
 - Modeled (built) pose: gripper vertical, fingers down, jaws at the OPEN end of
   their stroke. The two jaw DOFs CLOSE the fingers inward along X.
 
-Motion (MOTION contract, v1 = linear only)
+Motion (MOTION contract: linear + revolute)
 - jl / jr: the two jaws close along X (each PARAMS['jaw_stroke'] mm inward).
-- The 90 deg FLIP is a ROTARY joint; MOTION v1 is linear-only, so the flip is an
-  illustrative pose here, NOT a swept-validated DOF (reported honestly).
+- flip: a real REVOLUTE DOF — the rotary actuator swings the whole gripper from
+  0 -> PARAMS['flip_deg'] (default 90) deg about world Y through the actuator
+  axis. Declared AFTER the jaw DOFs so ride-along composes as R_flip . T_jaw.
+  The built (static) pose stays vertical (0 deg); the flip is animated + swept.
 
 Rotary actuator + parallel pneumatic gripper are simplified schematic envelopes
 (not catalog parts); they are outside the 5 cad_source_part families.
@@ -47,6 +49,7 @@ PARAMS = {
     "finger_len": 40.0,
     "finger_t": 8.0,
     "finger_dy": 16.0,
+    "flip_deg": 90.0,      # rotary FLIP angle (deg — the only non-mm param)
 }
 
 
@@ -79,7 +82,10 @@ def _levels():
     L["z_rb_bot"] = L["z_rb_top"] - p["rotary_h"]
     L["z_axis"] = (L["z_rb_top"] + L["z_rb_bot"]) / 2      # flip axis (world Y)
     L["plate_t"] = 10.0
-    L["z_plate_top"] = L["z_rb_bot"] - 6.0                 # bracket plate below body
+    # bracket plate sits well below the body so the whole bracket clears the
+    # actuator body's rotational envelope (radius ~30.5 mm about the flip axis)
+    # throughout the 0->90 deg flip. 12 mm gap => plate top at radius ~35 mm.
+    L["z_plate_top"] = L["z_rb_bot"] - 12.0
     L["z_plate_bot"] = L["z_plate_top"] - L["plate_t"]
     L["z_gb_top"] = L["z_plate_bot"]                       # gripper body under plate
     L["z_gb_bot"] = L["z_gb_top"] - p["grip_body_h"]
@@ -182,21 +188,36 @@ MOTION = {
         {"id": "jr", "label": "右爪夾合", "type": "linear", "axis": [-1, 0, 0],
          "travel": PARAMS["jaw_stroke"], "moving": ["jaw_right", "finger_right"],
          "pairs": [["jaw_right", "gripper_body"]], "samples": 8},
+        # 90° 前傾:繞世界 Y 軸(過致動器軸線 z_axis)旋轉整個夾爪。宣告在爪合之後
+        # → ride-along 讓翻轉在外層(R_flip · T_jaw)。samples 較密以抓中程最深穿透。
+        {"id": "flip", "label": "90° 前傾翻轉", "type": "revolute", "axis": [0, 1, 0],
+         "pivot": [0.0, 0.0, _levels()["z_axis"]], "angle_deg": PARAMS["flip_deg"],
+         "moving": ["rotary_hub", "swing_bracket", "gripper_body",
+                    "jaw_left", "jaw_right", "finger_left", "finger_right"],
+         "pairs": [["swing_bracket", "rotary_body"], ["swing_bracket", "arm_flange"],
+                   ["gripper_body", "rotary_body"], ["gripper_body", "arm_flange"],
+                   ["finger_left", "rotary_body"], ["finger_right", "rotary_body"],
+                   ["jaw_left", "rotary_body"], ["jaw_right", "rotary_body"]],
+         "samples": 24},
     ],
 }
 
 
 def gen_step():
+    L = _levels()
     asm = AssemblyHelper("flip_gripper")
     asm.add(_flange(), "arm_flange")
     asm.add(_rotary_body(), "rotary_body")
-    asm.add(_rotary_hub(), "rotary_hub")
+    hub = asm.add(_rotary_hub(), "rotary_hub")
     asm.add(_swing_bracket(), "swing_bracket")
     asm.add(_gripper_body(), "gripper_body")
     asm.add(_jaw(-1), "jaw_left")
     asm.add(_jaw(1), "jaw_right")
     asm.add(_finger(-1), "finger_left")
     asm.add(_finger(1), "finger_right")
+    # 原生 revolute 關節基準(= URDF revolute 語義:軸 + pivot),嵌入 STEP 拓撲。
+    # 翻轉軸為世界 Y、過致動器軸線 z_axis。
+    asm.revolute_frame(hub, "flip_axis", Axis((0.0, 0.0, L["z_axis"]), (0.0, 1.0, 0.0)))
     return asm.build()
 
 

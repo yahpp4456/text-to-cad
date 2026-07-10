@@ -48,6 +48,40 @@ export function readJsonBody(req, { limit = 1_000_000 } = {}) {
   });
 }
 
+// 讀取原始位元組 body(上傳用)。content-type 由呼叫端自驗——image/* 與
+// application/octet-stream 都是非「簡單請求」content-type,跨站 POST 一樣要過
+// CORS preflight,防護等級同 readJsonBody。
+// 超限:立刻 reject(handler 回 413)但**不立刻 destroy**——client(fetch/urllib)
+// 是先送完 body 才讀回應,馬上斷線它只會看到 connection reset 而非 413;改成
+// 繼續排水丟棄(不進記憶體),到 2×limit 才硬斷線止血。
+export function readRawBody(req, { limit = 4_000_000 } = {}) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    let over = false;
+    const chunks = [];
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (over) {
+        if (size > limit * 2) req.destroy();
+        return;
+      }
+      if (size > limit) {
+        over = true;
+        chunks.length = 0;
+        reject(new Error("request body too large"));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (!over) resolve(Buffer.concat(chunks));
+    });
+    req.on("error", (err) => {
+      if (!over) reject(err);
+    });
+  });
+}
+
 // 解析 URL 的 pathname 與 query(以任意 host base)。
 export function parseUrl(req) {
   return new URL(req.url, "http://localhost");
