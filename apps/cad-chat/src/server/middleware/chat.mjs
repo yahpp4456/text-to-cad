@@ -201,6 +201,22 @@ export function buildUserText(body, session, img) {
   if (img?.missing?.length) {
     t += `\n（附圖 ${img.missing.join("、")} 已遺失,未內嵌。）`;
   }
+  // 當前畫布語境(安全網):使用者在唯讀檢視某外部檔案時,agent 否則完全不知道
+  // 畫布上開著什麼(此 turn 的 session 通常沒 lastName)。只在 source="opened" 且
+  // 「沒有 _rehydrateNote」時注入——後者是 open-project/自動帶入編輯的權威續接語境,
+  // 有它就代表 session 已擁有該模型,不必再靠 canvas 提示(且避免升級瞬間的 stale
+  // canvas 與新 session 語境打架)。
+  const cv = body?.canvas;
+  if (cv?.source === "opened" && !session?._rehydrateNote) {
+    const nm = String(cv.name || "").slice(0, 120);
+    const file = String(cv.file || "").slice(0, 200);
+    const pd = cv.projectDir ? String(cv.projectDir).slice(0, 200) : null;
+    if (pd) {
+      t = `（使用者目前在畫布上開著專案「${nm}」,產生器在 models/${pd}/${nm}.py。要了解它先 Read 該 .py;若他要求修改或調參數,提醒他用檔案瀏覽器的「開啟」把它帶入可編輯工作區。）\n${t}`;
+    } else if (file) {
+      t = `（使用者目前在畫布上檢視 models/${file}(匯入/獨立檔,無產生器,無法參數化編輯)。可 Read 它回答問題,或另外建模新版本。）\n${t}`;
+    }
+  }
   // rehydrate 後首個 turn 的一次性接續提示(open-project / resume 降級時設定)。
   // 這裡只讀不清:清除點在 runner 的 init 成功(SDK 已收下含提示的 prompt)——
   // 若在這裡就清,turn 又在 pre-init 失敗,提示就永久遺失,之後成功的 turn

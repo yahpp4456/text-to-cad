@@ -129,6 +129,9 @@ export function handleEvent(dispatch, type, data = {}) {
           partCount: data.partCount,
           source: data.source || "generated",
           snapshot: data.snapshot, // false = 無凍結快照(JSON 路徑經 App.jsx 直傳,兩邊欄位要一致)
+          hasDxf: data.hasDxf === true, // 鈑金件(產生器有 gen_dxf)→ DXF 展開圖鈕
+          flatGlbUrl: data.flatGlbUrl ?? null, // 鈑金件(有 gen_flat)→ 摺疊/攤平即時切換
+          projectDir: data.projectDir ?? null, // 唯讀檢視版的升級目錄(一般產出=null)
           // 產圖模式戳記(server versionStamp 權威發;舊事件無欄位 → undefined 三態)
           mode: data.mode === "actual" ? "actual" : data.mode === "design" ? "design" : undefined,
           verified: typeof data.verified === "boolean" ? data.verified : undefined,
@@ -143,6 +146,8 @@ export function handleEvent(dispatch, type, data = {}) {
         code: data.code,
         ver: data.ver,
         fileType: data.type || "",
+        projectDir: data.projectDir ?? null,
+        flatGlbUrl: data.flatGlbUrl ?? null,
       });
       break;
     case "params":

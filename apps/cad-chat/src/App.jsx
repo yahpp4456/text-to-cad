@@ -150,12 +150,16 @@ export default function App() {
     dispatch({ type: "PRESENT", glbUrl: glb, name, code: name, ver: "p1", source: "opened" });
   }, []);
 
+  // openProject 定義在 submitText 之後(TDZ),用 ref 轉接讓「自動帶入編輯」呼叫得到。
+  const openProjectRef = useRef(null);
+
   const submitText = useCallback(
-    (text) => {
+    async (text) => {
       const ready = pendingImages.filter((p) => p.status === "ready");
       if ((!text || !text.trim()) && ready.length === 0) return;
       if (pendingImages.some((p) => p.status === "uploading")) return; // Composer 已擋,雙保險
       const pickRefs = state.pickRefs;
+      const cv = state.canvas;
       dispatch({
         type: "ADD_USER",
         text,
@@ -164,13 +168,33 @@ export default function App() {
       });
       dispatch({ type: "CLEAR_PICKREFS" });
       setPendingImages([]);
+      // 自動帶入編輯:唯讀檢視某可編輯專案(有產生器)時,先升級成 session 再送——
+      // 唯讀工作區本來就只有那個檢視版,CLEAR_WORKSPACE 換上同模型可編輯 v1 幾乎無縫。
+      // guard `!state.sessionId`:升級後有 session,之後聊天走現狀不重複升級。
+      if (cv.source === "opened" && cv.projectDir && !state.sessionId) {
+        const sid = await openProjectRef.current?.(cv.projectDir, { auto: true });
+        if (!sid) return; // 升級失敗:openProject 已 notify,使用者文字已在 transcript
+      }
+      // 當前畫布身分只在唯讀檢視(source "opened")時附上——那是 agent 否則零語境的
+      // 情境;升級後 session 靠 _rehydrateNote 已知模型(server 端會略過此注入)。
+      const canvas =
+        cv.source === "opened"
+          ? {
+              name: cv.name,
+              file: state.versions.find((v) => v.id === cv.ver)?.file || "",
+              source: cv.source,
+              type: cv.type,
+              projectDir: cv.projectDir,
+            }
+          : undefined;
       send({
         text,
         pickRefs,
         imageRefs: ready.length ? ready.map((p) => p.rel) : undefined,
+        canvas,
       });
     },
-    [send, state.pickRefs, pendingImages],
+    [send, state.pickRefs, state.canvas, state.sessionId, state.versions, pendingImages],
   );
 
   const applyParams = useCallback(() => {
@@ -273,10 +297,16 @@ export default function App() {
   );
 
   // 開既有專案:新 session + 伺服端同步重建,回應帶 version/present/params/motion。
+  // 回傳新 sessionId(或 null)——submitText 的「自動帶入編輯」據此確認升級成功再送。
+  // opts.auto:由聊天自動觸發(非使用者手動開專案),notify 文案改成貼合語境。
   const openProject = useCallback(
-    async (dirRel) => {
-      if (state.running) return;
-      notify(`開啟專案 models/${dirRel},重建中…`);
+    async (dirRel, opts = {}) => {
+      if (state.running) return null;
+      notify(
+        opts.auto
+          ? `偵測到你要編輯,正把 models/${dirRel} 帶入可編輯工作區…`
+          : `開啟專案 models/${dirRel},重建中…`,
+      );
       try {
         const r = await fetch("/api/open-project", {
           method: "POST",
@@ -294,7 +324,7 @@ export default function App() {
         }
         if (!j.ok) {
           notify(j.error || "開啟專案失敗", true);
-          return;
+          return null;
         }
         if (j.motion?.dofs?.length) {
           dispatch({ type: "SET_MOTION", motion: { name: j.name, dofs: j.motion.dofs } });
@@ -308,6 +338,7 @@ export default function App() {
             code: j.present.code,
             ver: j.present.ver,
             fileType: j.present.type || "",
+            flatGlbUrl: j.present.flatGlbUrl ?? null, // 鈑金攤平切換(JSON 路徑亦需帶)
           });
         }
         if (j.params?.length) dispatch({ type: "SET_PARAMS", defs: j.params });
@@ -315,12 +346,16 @@ export default function App() {
         notify(
           `專案 ${j.name} 已載入(${j.type === "assembly" ? "組合件" : "元件"}${j.validateOk === false ? ",驗證有未過項,可要求我修復" : ""})。後續訊息會接續此專案。`,
         );
+        return j.sessionId ?? null;
       } catch {
         notify("無法連線到本機伺服器", true);
+        return null;
       }
     },
     [state.running, setSessionId, notify],
   );
+  // 供 submitText 的「自動帶入編輯」呼叫(openProject 定義在 submitText 之後,避 TDZ)。
+  openProjectRef.current = openProject;
 
   // 開檔看圖(免 LLM):/api/open 回應 → 走 ?glb= 捷徑同款 dispatch。
   // 同一檔重複開啟去重:沿用既有檢視版的 id(ADD_VERSION 撞 id=取代),時間軸不長
@@ -349,6 +384,7 @@ export default function App() {
           formats: /\.(step|stp)$/i.test(r.file || "") ? ["STEP", "GLB"] : ["GLB"],
           type: r.type || "",
           source: "opened",
+          projectDir: r.projectDir ?? null, // 屬可編輯專案 → 聊天可自動帶入編輯
         },
       });
       dispatch({
@@ -359,6 +395,7 @@ export default function App() {
         ver: id,
         fileType: r.type || "",
         source: "opened",
+        projectDir: r.projectDir ?? null,
       });
     },
     [state.versions],
@@ -404,6 +441,7 @@ export default function App() {
             code: j.present.code,
             ver: j.present.ver,
             fileType: j.present.type || "",
+            flatGlbUrl: j.present.flatGlbUrl ?? null, // 鈑金攤平切換(JSON 路徑亦需帶)
           });
         }
         if (j.params?.length) dispatch({ type: "SET_PARAMS", defs: j.params });

@@ -24,7 +24,10 @@ ORDER = [
     "smoke_occ_tree.py",
     "smoke_click_select.py",
     "smoke_part_visibility.py",
-    "smoke_open_dedupe.py",
+    # smoke_open_dedupe 退場:option C(專案目錄整列一鍵開)移除了它測的「唯讀瀏覽專案
+    # 檔去重」工作流;同 glbUrl 保留 status 由 chatStore.test.js 單元測覆蓋。
+    "smoke_open_project.py",
+    "smoke_flat_toggle.py",
     "smoke_versions.py",
     "smoke_restore.py",
     "smoke_lessons.py",
@@ -35,6 +38,8 @@ LLM_GATED = [
     "smoke_revolute_live.py",
     "smoke_gear_rackpinion_live.py",
     "smoke_image_clarify_live.py",
+    "smoke_sheetmetal_live.py",
+    "smoke_canvas_context_live.py",
 ]
 
 if not server_alive():

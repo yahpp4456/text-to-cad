@@ -321,6 +321,26 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
   對話中途開專案=**換 session 即清舊工作區**(`CLEAR_WORKSPACE`:版本/運動/參數
   歸零,對話保留)——舊 session 的 v* chip 對新 sessionId 是死引用(精算會標錯版、
   匯出/回退 404、新 v1 與舊 v1 撞號互蓋),不能殘留在時間軸上。
+- **開檔智慧路由 + 自動帶入編輯(2026-07-11)**:修「唯讀檢視死路」——唯讀檢視
+  (`/api/open`)無 session/無參數滑桿/agent 零語境,使用者容易誤入而看不到攤平、
+  或聊天時 AI 說「沒收到圖檔」。兩層修:
+  - **開檔 option C(2026-07-11 二版簡化)**:`/api/files` 每個目錄 entry 標 `project`
+    旗標(有 gen_step)。FileBrowser 中**可編輯專案目錄整列點擊 = 一鍵開啟可編輯專案**
+    (`open-project` → v1 session + 滑桿),不進資料夾、無獨立按鈕(專案目錄是葉節點,
+    裡面只有一個 .step,導航無意義);非專案容器(`.cadchat/`)維持導航進去,其裸檔
+    才走唯讀「開啟」。`/api/open` 仍回 `projectDir`(下方自動帶入編輯的安全網用)。
+  - **自動帶入編輯**:唯讀檢視某可編輯專案(`canvas.source==="opened" &&
+    canvas.projectDir`)時聊天,`submitText` 先 `await openProject(projectDir)` 升級成
+    session 再 `send`(guard `!sessionId` 不重複升級;`setSessionId` 同步設
+    `sessionIdRef` 故無 race;唯讀工作區本來只有那個檢視版,`CLEAR_WORKSPACE` 換上
+    同模型可編輯 v1 幾乎無縫)。升級後 agent 靠 `_rehydrateNote`/續接段已知模型。
+  - **canvas 語境安全網**:`send` 帶 `canvas`(name/file/source/projectDir),
+    `buildUserText` 在 `source==="opened" && !_rehydrateNote` 時注入「使用者正在
+    檢視 X」一行——覆蓋 escalation 兜不到的殘餘(裸檔、session-A-檢視-B)。
+  驗證:`smoke_open_project.py`(智慧路由→滑桿、唯讀聊天→open-project 先於 chat)、
+  `smoke_versions.py` §9(旗標)、`smoke_canvas_context_live.py`(L4:agent 認得畫布
+  模型不再回「沒收到」)。`smoke_open_dedupe.py` 的 fixture 都是專案,其唯讀去重測試
+  改點「僅檢視」。
 - **多選 AI 結合**:雙擊多選 → 帶入對話成多 chips(`pickRefs[]`,伺服端上限 6)→
   `buildUserText` 逐行列 `#o1.2「label」` token(可直接餵工具)。新 read-only 工具
   `cad_measure(from,to,axis?)`(有號距離)與 `cad_align(moving,target,mode,axis?,offset?)`
@@ -439,6 +459,28 @@ ghost×運動示意組成 + 樹選件連動 toggle)、`smoke_open_dedupe.py`(重
   「⤓ STEP / ⤓ STL」匯出**選中那幾件**(?glb= 預覽無 session 時藏鈕);
   ②VERSIONS 的「⤓ 零件包」= 整機每零件一檔打包 zip(組合件才出現,STEP 格式,
   子組合件如馬達=一個 compound 檔不炸葉)。
+- **鈑金展開圖 DXF(2026-07-11)**:`/api/export` 的 `format:"dxf"` 分支——對該版
+  快照的**產生器 .py** spawn `skills/dxf` CLI 現跑 `gen_dxf()`(展開從 PARAMS 導出,
+  不從 STEP 反推;快照裡的 .py 即該版真相源),輸出落 `.exports/<ver>/` 再經 asset
+  下載。「⤓ DXF 展開圖」鈕只在 `version.hasDxf`(server 決定性 regex 掃產生器頂層
+  `def gen_dxf`)時出現;fmt-badge 同步亮 DXF。**語意注意**:DXF 是以**當前 cadpy**
+  重演該版 .py 的展開,與 STEP 不是同一條幾何路徑——攤平自交等錯圖由
+  `cadpy.parts.SheetMetal` 的 builder 內建閘(`_flat_gate`)在生成時擋下。已知限制:
+  gen_dxf 若倚賴 session `imported/`,export scratch 內會炸(鈑金 gen_dxf 只讀
+  PARAMS,實務不觸發)。agent 側 `cad_export(format:"dxf")` 同閘同語意;
+  `save-project` **排除頂層 .dxf**(按需匯出產物不隨滑桿重生更新,帶出去會是過期
+  展開圖——要圖用匯出鈕現算)。
+- **鈑金摺疊/攤平 3D 即時切換(2026-07-11 二版)**:folded 不再是 PARAMS 滑桿(拉一下
+  整支重算)——改成 3D 視圖的「摺疊/攤平」chip,**點一下瞬間換視角、零重算**。機制:
+  獨立鈑金件產生器寫三出口(`gen_step` 恆 `folded()`、`gen_flat` 回 `flat()`、`gen_dxf`
+  回 `dxf()`);`runStep` build 摺疊 STEP/GLB 時**併行** spawn `flat_glb.py`(cad-chat 端
+  小 Python:`build_build123d_step_scene`+`mesh_step_scene`+`export_part_glb_from_scene`,
+  從 `gen_flat()` 產 `.<name>.flat.step.glb`,不寫 STEP、零改 cadpy)產攤平預覽 GLB。
+  兩個 GLB 都進快照;`emitPresent` 發 `flatGlbUrl`(產生器有 `gen_flat` 且攤平 GLB 落盤
+  才給),Canvas3D 據此出切換 chip,切換=換 `canvas.glbUrl`(cadjs `glbCache` 命中、
+  零 Python;攤平態藏運動鈕)。偵測用 `generatorHasFlat`(`/^def gen_flat/m`)——精準
+  命中獨立鈑金件,**自動排除組合件**(如 sheet_stepper_mount 有 gen_dxf 但無 gen_flat,
+  攤平組合件無意義)。改尺寸滑桿才重算(攤平 GLB 隨之重建)。
 
 ## 跨重整續聊 + 版本快照真回退(2026-07-04)
 

@@ -28,6 +28,7 @@ export function buildSystemPrompt(session) {
 需要 build123d 寫法時,先 \`Read skills/cad/SKILL.md\` 與 \`skills/cad/references/\` 下相關檔(build123d-modeling / positioning / inspection-and-validation / repair-loop),不要臆造 API。
 **XYZ 龍門/多軸平台+末端工具(汽缸/吸嘴)類需求**:先 \`Read models/xyz_pickplace_gantry/xyz_pickplace_gantry.py\`——repo 的參考方案(C 型串聯:X 載 riser+整組 Y 軸,Y 載 z_bracket+整組 Z 軸,Z 滑座吊頭板,**汽缸缸體朝下、桿向下伸**),結構型式、pose() 運動分組與 MOTION 宣告照它;除非使用者明確指定其他配置。
 **齒輪齒條/嚙合傳動/迴轉缸類需求**:先 \`Read models/steering_box_rack_pinion/steering_box_rack_pinion.py\`——齒輪與齒條**必須**用 \`from cadpy.parts import gear, gear_rack, pitch_radius, rack_mesh_phase_deg\` 生成(漸開線折線齒形),嚙合相位用 \`rack_mesh_phase_deg(module, teeth, rack_y_offset)\` 閉式,**不要手刻方塊齒**。嚙合座標系:齒輪軸 = 局部 +Z 過原點、齒條在 -X 側沿 Y 滑移、齒條放在 x = -pitch_radius;齒條行程必須 = 節圓半徑 × 擺角(rad)。正確相位的嚙合零穿透——rack×pinion **不得**列入 INTENDED_CONTACT。
+**鈑金件/折彎/攤平/機箱外殼/鈑金支架托架類需求**:先 \`Read models/sheet_u_bracket/sheet_u_bracket.py\`(支架)或 \`models/sheet_control_box/sheet_control_box.py\`(盒體/機箱,含 inside placement/hem/relief)——鈑金**必須**用 \`from cadpy.parts import SheetMetal\` 建 fold tree(展開=單一真相源,K 因子展開內建),**不要手疊方塊/手刻圓角假裝折彎**。慣例:panel 局部 XY 放輪廓、材料佔 z∈[0,t];**angle=從攤平折起的角度(90=直角立邊);使用者講「兩板夾角 φ」時 angle=180−φ**;\`length=\`是外緣腳長**僅限 90°**,任意角度用 \`web=\`(切線到板尾);盒體外形尺寸用 \`placement="inside"\`;thick/bend_r(≥半板厚,常用 1×板厚)/k_factor(預設 0.44)放 PARAMS(**folded 不進 PARAMS**——攤平改由 3D 視圖即時切換鈕);**獨立鈑金件必寫三出口:\`gen_step()\` 回 \`_build().folded()\`(摺疊實體)、\`gen_flat()\` 回 \`_build().flat()\`(攤平實體,UI 據此出摺疊/攤平即時切換鈕、零重算)、\`gen_dxf()\` 回 \`_build().dxf()\`(展開圖,禁自行 import ezdxf 手繪)**;孔/開口用 \`hole()/cutout()\`(自動投到摺疊/攤平/DXF 三軌,並驗孔距折彎)。鈑金+標準件組合件參考 \`models/sheet_stepper_mount/sheet_stepper_mount.py\`(螺絲鎖入件宣告進 INTENDED_CONTACT;鈑金面×標準件面貼合=零體積,不宣告)。
 
 # 產生器格式(重要)
 每個產生器 .py 都要把可調參數放在頂部一個**單層** \`PARAMS\` dict,讓使用者能用滑桿即時重生:
@@ -70,6 +71,7 @@ def check_geometry(shape):
     assert_all_valid(shape, label="part")
     assert_no_interference(shape, allow=INTENDED_CONTACT)
 \`\`\`
+**鈑金三出口 gen_step / gen_flat / gen_dxf(獨立鈑金件必寫,同一 .py、皆無參數讀同份 PARAMS)**:\`gen_step()\` 回 \`_build().folded()\`(摺疊 3D,匯出/製造用的正式體);\`gen_flat()\` 回 \`_build().flat()\`(攤平實體;build 時預先產成第二個 GLB,UI 出「摺疊/攤平」即時切換鈕、切換零重算);\`gen_dxf()\` 回 \`_build().dxf()\`(ezdxf document,CUT/BEND_* 分層,雷切下料用)。三者都不要寫檔/回傳路徑,鏈路自動產物並亮對應 UI。**組合件(鈑金裝標準件)只寫 gen_step + gen_dxf,不寫 gen_flat**(攤平組合件無意義)。
 **匯入既有元件**:\`cad_import(file)\` 把 models/ 下的 STEP 複製進工作區(回 \`imported/x.step\` 與 bbox 摘要)。
 組進組合件兩寫法:程式式 \`asm.add(import_step(str(Path(__file__).parent / "imported/x.step")), "x")\`
 (要 \`from pathlib import Path\`,路徑必須經 \`__file__\` 定位——cwd 無關,專案重開仍有效);
@@ -120,7 +122,7 @@ UI 訊號:
 - \`emit_plan(steps)\`:宣告執行步驟(如 [{"n":1,"t":"..."}, ...])。
 - \`emit_clarify(question, options?, suggested?)\`:**只要 emit_spec 裡有任何 assumed:true 的值,就必須把全部假設整合成一次提問後停**。**question 只用一兩句描述待決策點本身**(如「零件尺寸級別未給,請選配置」)——**不要複述各假設值**,假設值已由 emit_spec 的 chips 承載並顯示在畫面上(UI 會先讓使用者確認/修改規格,再呈現你的選項)。options 給主要替代方案,suggested 給「採用全部建議值」的組合。呼叫後**立刻結束本回合等使用者回答,不得先繼續建模**。規格完整、無任何假設時才直接往下做。同一需求的假設集中問一次,不要拆成多回合。options 的 value 與 suggested 都要用人話寫完整內容(如「PCD 14mm、間隙孔 ø4.5、無中心孔」)——它們會直接作為使用者的回覆送出,不要用 accept_all 之類的代碼。**使用者回覆若以「規格修正:」列出個別值,這些修正優先於選項文字內嵌的假設值**;未提及的項目才依選項/建議值,不要為已修正的項目再提問。**需求含運動軸(多軸平台/滑台/gantry/升降機構等)而未指明驅動方式時,「驅動方式」必列入澄清選項**(如:滾珠螺桿+步進馬達 / 皮帶 / 氣缸 / 被動滑台——被動=無動力純導引),且 suggested 要含驅動方式的建議值;驅動方式決定整個結構,猜錯整台重做。
 - \`emit_retry(attempt, reason, adjustment?)\`:驗證失敗自我修正時的說明。
-- \`emit_params(defs)\`:宣告滑桿(如 [{"key":"od","label":"外徑","unit":"mm","min":10,"max":40,"step":0.5,"value":20}, ...]),要對應 PARAMS 的鍵。min/max **必須落在 \`_check_params\` 的安全範圍內**;受其他參數牽制時取保守交集(寧可範圍窄,不可滑得到會炸的組合)。
+- \`emit_params(defs)\`:宣告滑桿(如 [{"key":"od","label":"外徑","unit":"mm","min":10,"max":40,"step":0.5,"value":20}, ...]),要對應 PARAMS 的鍵。min/max **必須落在 \`_check_params\` 的安全範圍內**;受其他參數牽制時取保守交集(寧可範圍窄,不可滑得到會炸的組合)。布林型參數(如鈑金 folded)一律給 {"min":0,"max":1,"step":1}。
 做事:
 - \`cad_import(file)\`:把 models/ 下既有 STEP 元件複製進工作區 imported/,回 rel 路徑與 bbox 摘要(組合件引用它)。
 - \`cad_source_part(family, requirement)\`:選標準件(family ∈ bearing/cylinder/stepper/linear_guide/ball_screw/gripper/gear;gripper=平行氣爪、gear=正齒輪 {torque_Nm,shaft_dia?,teeth_min?})。
@@ -135,7 +137,7 @@ UI 訊號:
 - \`cad_align(moving, target, mode, axis?, offset?)\`:對齊 delta(read-only 只算不動幾何)。
   mode ∈ flush/center(平移)/**axis**(旋轉:回 axis-angle+pivot+eulerXYZDeg+徑向對心平移,
   方向取自 selector 的圓柱軸/線方向/平面法向/occurrence frame;沿軸位置另用 flush)。
-- \`cad_export(name, format)\`:匯出 stl/3mf/glb(下游,需要才用;dxf 未支援)。
+- \`cad_export(name, format)\`:匯出 stl/3mf/glb/dxf(下游,需要才用;dxf=鈑金展開圖,產生器須有 gen_dxf)。
 
 # 圖面附件
 使用者訊息可能直接內嵌工程圖/照片(圖已在訊息中,不需 Read 開檔)。讀圖抽尺寸進 emit_spec:圖上讀得到的值在 v 尾標「(圖面)」,圖上沒有而你推測的照常標 assumed:true。**圖中含多個型號/尺寸列(如型號表 ARM66/ARM69 的 L1/L2 欄)而使用者未指定型號時,「型號選擇」必列入 emit_clarify options**(每型號一選項,value 用人話含該型號的關鍵尺寸)後停,不得擅選一型繼續。

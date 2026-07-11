@@ -79,6 +79,34 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
 - **滑桿重生煙測必送「全部」參數值**(`rewriteParams` 整塊替換 PARAMS;只送單一 key 會讓
   產生器 import KeyError)。快路徑零 spawn 的實證斷言用 validate 事件 `ms < 1500`
   (spawn 路徑 ≥8s)。
+- **鈑金(2026-07-11)**:幾何一律 `cadpy.parts.SheetMetal`(fold tree 單一真相源,
+  folded/flat/dxf 三出口;攤平自交/摺疊自碰是 builder 內建 ValueError 閘)。DXF 匯出
+  走 `skills/dxf` CLI 對產生器 .py 現跑 gen_dxf(**不走 scripts/step**);UI 的 DXF 鈕
+  依 version 事件 `hasDxf`(regex 掃頂層 `def gen_dxf`);`paramDefsFromGenerator` 對
+  `folded` 有 {min:0,max:1,step:1} 特例(必須在 value≤0 濾網之前)。DXF 層名契約:
+  `CUT` / `BEND_UP_<deg>` / `BEND_DOWN_<deg>`(lower() 含 "bend",N 折=N 條帶中心線)。
+  動鈑金幾何 → `tests/python/packages/cadpy/test_sheet_metal.py` + `test_parts_models`
+  三個 Sheet*GateTests + `smoke_versions.py` DXF 段;動 cadpy 正本先 sync-vendored;
+  動 prompt 鈑金教學 → L4 `smoke_sheetmetal_live.py`。
+- **開檔 option C + 自動帶入編輯(2026-07-11)**:唯讀檢視(`/api/open`)是死路(無
+  session/滑桿/agent 語境)。修法(option C 最終版):`/api/files` 每 entry `project` 旗標
+  + `/api/open.projectDir`;FileBrowser **可編輯專案目錄整列點擊=一鍵 open-project**
+  (`.fb-projrow`,無獨立按鈕、不導航進去);非專案容器才導航,其裸檔走唯讀「開啟」。
+  `submitText` 在 `canvas.source==="opened" && canvas.projectDir && !sessionId` 時先
+  `await openProject` 再 `send`(`setSessionId` 同步設 ref 無 race);`buildUserText` 對
+  `source==="opened" && !_rehydrateNote` 注入 canvas 語境(安全網,option C 下少觸發但
+  仍是 restore/?glb/bare 檔的網)。**gotcha**:option C 移除了「唯讀瀏覽專案檔」工作流
+  → `smoke_open_dedupe.py` 退場(同 glbUrl 保留 status 由 chatStore.test.js 覆蓋);
+  open 流測試在 `smoke_open_project.py`(目錄列一鍵開 + 注入式 escalation + 換 session)。
+  動這條路 → smoke_open_project + smoke_versions §9 + L4 smoke_canvas_context_live。
+- **鈑金摺疊/攤平即時切換(2026-07-11 二版)**:folded 已非 PARAMS 滑桿——3D 視圖 chip
+  即時切換(換 glbUrl,零重算)。獨立鈑金件三出口 `gen_step/gen_flat/gen_dxf`;`runStep`
+  併行 spawn `flat_glb.py`(cad-chat 端,零改 cadpy)產 `.<name>.flat.step.glb`;
+  `generatorHasFlat`(`/^def gen_flat/m`,排除組合件);`emitPresent` 發 `flatGlbUrl`;
+  snapshotVersion/revert 清單含攤平 GLB。**gotcha**:JSON 路徑(open-project/revert)的
+  PRESENT dispatch 要**手帶 `flatGlbUrl`**(SSE 路徑走 events.js 自動帶,但 App.jsx 的
+  openProject/revert 是手組 present——漏帶則 chip 不出現)。動鈑金攤平 → `smoke_flat_toggle.py`
+  (chip 切換 + 攔 asset 證明載入 .flat.step.glb + 零 /api/chat)+ smoke_versions flatGlbUrl 段。
 - **單一快路徑 + 匯出閘(2026-07-10 收斂,雙模式已拆)**:產圖回合一律零 spawn 快路徑;
   完整驗證只在精算(/api/validate)、匯出閘(/api/export、/api/export-parts 內建;
   /api/validate-ver 是 STEP 直下載的單獨入口)、開專案、回退。verified memo=

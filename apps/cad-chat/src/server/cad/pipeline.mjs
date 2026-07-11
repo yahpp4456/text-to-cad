@@ -11,6 +11,7 @@ import { scrubPaths, spawnPython } from "./python.mjs";
 const STEP_DIR = "skills/cad/scripts/step";
 const INSPECT_DIR = "skills/cad/scripts/inspect";
 const VALIDATE_PY = "apps/cad-chat/src/server/cad/validate.py";
+const FLAT_GLB_PY = "apps/cad-chat/src/server/cad/flat_glb.py";
 
 // 產生器名只留安全字元(它會進檔案路徑;name 來自 LLM / client)。
 export function sanitizeName(name) {
@@ -26,6 +27,10 @@ function relTarget(session, name, ext) {
 function glbRel(session, name) {
   // 隱藏 topology GLB:.<name>.step.glb
   return `${session.workdirRel}/.${sanitizeName(name)}.step.glb`;
+}
+function flatGlbRel(session, name) {
+  // 鈑金攤平預覽 GLB:.<name>.flat.step.glb(3D 視圖即時切換用;不寫 STEP)
+  return `${session.workdirRel}/.${sanitizeName(name)}.flat.step.glb`;
 }
 export function glbUrlFor(session, name) {
   return `/api/asset?file=${encodeURIComponent(glbRel(session, name))}`;
@@ -232,15 +237,25 @@ export async function runStep(session, name, { onLog, signal } = {}) {
   // 「漂移幾何的驗證結果」誤標到舊快照版上。
   session._geomDirty = true;
   const target = relTarget(session, name, ".py");
+  // 鈑金件(產生器有 gen_flat):攤平預覽 GLB 與摺疊 build **併行**——兩者都只讀
+  // 同一份 .py、寫不同 GLB(.step.glb vs .flat.step.glb),無檔案衝突;併行不拖長
+  // build wall。best-effort:攤平 GLB 失敗不擋 build(只是沒有摺疊/攤平切換鈕)。
+  const flatPromise = generatorHasFlat(session, name)
+    ? spawnPython(FLAT_GLB_PY, [target, flatGlbRel(session, name)], { session, signal })
+    : null;
   const { code, stdout, stderr } = await spawnPython(
     STEP_DIR,
     [target, "--force"],
     { session, onLog, signal },
   );
+  const flatRes = flatPromise ? await flatPromise.catch(() => null) : null;
   const ok = code === 0;
   const stepAbs = path.join(session.workdir, `${name}.step`);
   const glbAbs = path.join(session.workdir, `.${name}.step.glb`);
+  const flatAbs = path.join(session.workdir, `.${name}.flat.step.glb`);
   const artifactsOk = ok && fs.existsSync(stepAbs) && fs.existsSync(glbAbs);
+  const flatRelVal =
+    flatRes && flatRes.code === 0 && fs.existsSync(flatAbs) ? flatGlbRel(session, name) : null;
   if (artifactsOk) {
     // sidecar → session(name 綁定):設計模式 cad_validate / 滑桿重生的零 spawn 來源。
     // sidecar 缺失(舊 cadpy 未同步等)→ 存 null,消費端自動退回 --motion-only spawn。
@@ -260,6 +275,7 @@ export async function runStep(session, name, { onLog, signal } = {}) {
     stderr,
     stepRel: relTarget(session, name, ".step"),
     glbRel: glbRel(session, name),
+    flatGlbRel: flatRelVal, // 鈑金攤平預覽 GLB(null = 非鈑金件 / 攤平失敗)
     ms: Date.now() - t0,
   };
 }
@@ -553,6 +569,7 @@ export function paramDefsFromGenerator(session, name) {
     const key = e[1];
     const value = Number(e[2]);
     // 0 或負值無法推範圍(會算出 min>max 的壞滑桿),留給 agent 的 emit_params。
+    // (folded 已不再是 PARAMS 參數——攤平改由 3D 視圖即時切換鈕,見 flat_glb/gen_flat。)
     if (!Number.isFinite(value) || value <= 0) continue;
     let def;
     if (Number.isInteger(value) && value > 0 && value <= 20 && !e[2].includes(".")) {
@@ -583,7 +600,8 @@ function snapshotVersion(session, name, verNum, { type, partCount }) {
   const n = sanitizeName(name);
   const dir = snapshotDir(session, verNum);
   fs.mkdirSync(dir, { recursive: true });
-  for (const f of [`${n}.py`, `${n}.step`, `.${n}.step.glb`, `${n}.asm.json`, `.${n}.step.js`]) {
+  // .flat.step.glb:鈑金攤平預覽 GLB,切舊版也要能切攤平 → 進快照(存在才複)
+  for (const f of [`${n}.py`, `${n}.step`, `.${n}.step.glb`, `.${n}.flat.step.glb`, `${n}.asm.json`, `.${n}.step.js`]) {
     const src = path.join(session.workdir, f);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, f));
   }
@@ -619,6 +637,28 @@ function pruneSnapshots(session, keep) {
 }
 
 // 呈現:bump 版本並 emit artifact / version / present 三事件(MCP present 與參數重生共用)。
+// 鈑金件偵測:產生器頂層有 gen_dxf()(展開圖)才亮 DXF 匯出鈕/badge。regex 與
+// cadpy metadata.py 的 AST 語意對齊(^def 錨定,縮排的內層 def 不算);決定性、
+// 零 spawn,同 project.mjs 的 GEN_DXF_RE(匯出端點是第二道防線)。
+export function generatorHasDxf(session, name) {
+  try {
+    return /^def\s+gen_dxf\s*\(/m.test(fs.readFileSync(genPyPath(session, name), "utf8"));
+  } catch {
+    return false;
+  }
+}
+
+// 攤平預覽偵測:產生器頂層有 gen_flat()(回 flat 實體)才產攤平 GLB / 亮切換鈕。
+// 只命中「獨立鈑金件」——組合件(如 sheet_stepper_mount)有 gen_dxf 但無 gen_flat
+// (攤平組合件無意義),故用 gen_flat 而非 SheetMetal/gen_dxf 偵測。
+export function generatorHasFlat(session, name) {
+  try {
+    return /^def\s+gen_flat\s*\(/m.test(fs.readFileSync(genPyPath(session, name), "utf8"));
+  } catch {
+    return false;
+  }
+}
+
 export function emitPresent(session, name, emit) {
   session.version += 1;
   session.lastName = name;
@@ -649,8 +689,22 @@ export function emitPresent(session, name, emit) {
   const gUrl = `/api/asset?file=${encodeURIComponent(fileRel)}&v=${session.version}`;
   const ghost =
     (name || "PART").replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase() || "PART";
+  const hasDxf = generatorHasDxf(session, name);
+  const formats = hasDxf ? ["STEP", "GLB", "DXF"] : ["STEP", "GLB"];
+  // 攤平預覽 GLB 的本版快照 URL(產生器有 gen_flat 且攤平 GLB 真的凍進快照才給)——
+  // 前端據此顯示「摺疊/攤平」即時切換鈕。快照失敗退頂層攤平 GLB。
+  let flatGlbUrl = null;
+  if (generatorHasFlat(session, name)) {
+    const nn = sanitizeName(name);
+    const flatSnapRel = snapshotOk
+      ? `versions/v${session.version}/.${nn}.flat.step.glb`
+      : `.${nn}.flat.step.glb`;
+    if (fs.existsSync(path.join(session.workdir, flatSnapRel))) {
+      flatGlbUrl = `/api/asset?file=${encodeURIComponent(`${session.workdirRel}/${flatSnapRel}`)}&v=${session.version}`;
+    }
+  }
   emit("artifact", {
-    ver, name, code: name, ghost, formats: ["STEP", "GLB"],
+    ver, name, code: name, ghost, formats,
     type, partCount, source: "generated",
   });
   const stamp = versionStamp(session, name);
@@ -662,14 +716,16 @@ export function emitPresent(session, name, emit) {
     name,
     file: fileRel,
     glbUrl: gUrl,
-    formats: ["STEP", "GLB"],
+    formats,
     type,
     partCount,
     source: "generated",
     snapshot: snapshotOk, // false = 本版無凍結快照(退回頂層檔,無法回退)
+    hasDxf, // 鈑金件(產生器有 gen_dxf)→ 前端亮「⤓ DXF 展開圖」鈕
+    flatGlbUrl, // 鈑金件(有 gen_flat)→ 前端「摺疊/攤平」即時切換(null=無)
     ...stamp, // verified(前端 badge / 匯出閘依賴)
   });
-  emit("present", { ver, name, code: name, file: stepRel, glbUrl: gUrl, type });
+  emit("present", { ver, name, code: name, file: stepRel, glbUrl: gUrl, type, flatGlbUrl });
   persistSession(session); // version/lastName 剛變動 → 落盤(重整/重啟後計數不歸零)
   return { ver, glbUrl: gUrl };
 }

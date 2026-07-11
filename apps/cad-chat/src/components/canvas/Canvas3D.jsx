@@ -82,6 +82,9 @@ export default function Canvas3D({
   const [playing, setPlaying] = useState(false);
   const [gridOn, setGridOn] = useState(true);
   const [axesOn, setAxesOn] = useState(true);
+  // 鈑金摺疊/攤平即時切換(canvas.flatGlbUrl 存在才出鈕):換 activeGlbUrl,零重算
+  // (攤平 GLB 生成時已預先產好、glbCache 命中)。換版重置回 folded(見下 effect)。
+  const [view, setView] = useState("folded");
   const [hoverFaceRow, setHoverFaceRow] = useState(null); // 菱形 hover → 面填色預覽
   // 面標記顯示模式:default=散佈取樣 6/件、all=全部候選、none=隱藏、custom=手動勾選集
   const [markerMode, setMarkerMode] = useState("default");
@@ -92,6 +95,24 @@ export default function Canvas3D({
   const empty = !canvas.glbUrl;
 
   motionRef.current = motion || null;
+
+  // 攤平 GLB 存在且 view=flat 才顯示攤平,否則摺疊(換版/非鈑金件 flatGlbUrl=null → 恆摺疊)
+  const flatUrl = canvas.flatGlbUrl || null;
+  const activeGlbUrl = view === "flat" && flatUrl ? flatUrl : canvas.glbUrl;
+  // 換版重置回摺疊(避免上一版停在攤平、新版無 flatGlbUrl 時卡住)
+  useEffect(() => {
+    setView("folded");
+  }, [canvas.ver]);
+  const selectView = (next) => {
+    if (!flatUrl || next === view) return;
+    // 切到攤平先停運動示意(展開態播放無意義)
+    if (next === "flat" && playingRef.current) {
+      playingRef.current = false;
+      setPlaying(false);
+      playerRef.current?.reset?.();
+    }
+    setView(next);
+  };
 
   // 眼睛三態循環:solid → ghost(半透明,點擊穿透)→ hidden → solid。
   const cyclePartDisplay = useCallback((occId) => {
@@ -137,7 +158,7 @@ export default function Canvas3D({
     [dispatch],
   );
 
-  useCadViewport(mountRef, canvas.glbUrl, {
+  useCadViewport(mountRef, activeGlbUrl, {
     name: canvas.name,
     onStatus: (status) => dispatch({ type: "SET_CANVAS_STATUS", status }),
     onReady: ({
@@ -505,6 +526,17 @@ export default function Canvas3D({
             </div>
           )}
           <span className="orbit-hint">⟳ 拖曳旋轉</span>
+          {/* 鈑金摺疊/攤平:左上明顯雙段切換(點哪段切哪態,零重算) */}
+          {flatUrl && (
+            <div className="fold-switch" role="group" aria-label="摺疊/攤平">
+              <a className="fold-seg" data-on={view === "folded"} onClick={() => selectView("folded")}>
+                ◈ 摺疊
+              </a>
+              <a className="fold-seg" data-on={view === "flat"} onClick={() => selectView("flat")}>
+                ▣ 攤平
+              </a>
+            </div>
+          )}
           <div className="canvas-tools" data-drawer={propsOpen}>
             <a className="tool-chip" data-on={gridOn} onClick={toggleGrid}>
               ⊞ 網格
@@ -522,7 +554,7 @@ export default function Canvas3D({
             >
               ◇ 面標記 {faceMarkers.length}/{markerCandidates.length}
             </a>
-            {motionReady && (
+            {motionReady && view !== "flat" && (
               <a className="tool-chip motion-toggle" data-on={playing} onClick={togglePlay}>
                 {playing ? "⏸ 停止" : "▶ 運動示意"}
               </a>

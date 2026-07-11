@@ -130,17 +130,21 @@ export default function VersionTimeline({
             active.source !== "opened" &&
             /^v\d+$/.test(active.id) &&
             onExport &&
-            ["stl", "3mf"].map((f) => {
+            [...(active.hasDxf ? ["dxf"] : []), "stl", "3mf"].map((f) => {
               const busy = exporting === `${active.id}:${f}`;
               return (
                 <a
                   key={f}
                   className="version-dl"
                   data-busy={busy || undefined}
-                  title={`把 ${active.id} 轉成 ${f.toUpperCase()} 下載(免 AI,約數秒~數十秒)`}
+                  title={
+                    f === "dxf"
+                      ? `下載 ${active.id} 的鈑金展開圖 DXF(外輪廓/孔/折彎線分層,可直接雷切下料)`
+                      : `把 ${active.id} 轉成 ${f.toUpperCase()} 下載(免 AI,約數秒~數十秒)`
+                  }
                   onClick={() => !running && !exporting && onExport(active.id, f)}
                 >
-                  {busy ? "⤓ 轉換中…" : `⤓ ${f.toUpperCase()}`}
+                  {busy ? "⤓ 轉換中…" : f === "dxf" ? "⤓ DXF 展開圖" : `⤓ ${f.toUpperCase()}`}
                 </a>
               );
             })}

@@ -8,6 +8,9 @@ import { test } from "node:test";
 
 import {
   buildOrRollback,
+  generatorHasDxf,
+  generatorHasFlat,
+  paramDefsFromGenerator,
   paramValuesFromGenerator,
   rewriteParams,
 } from "./pipeline.mjs";
@@ -105,6 +108,42 @@ test("paramValuesFromGenerator:全部鍵含 0/負值;缺檔/無 PARAMS → null"
     assert.equal(paramValuesFromGenerator(s, "missing"), null);
     writeGen(s, "nop", "x = 1\n");
     assert.equal(paramValuesFromGenerator(s, "nop"), null);
+  } finally {
+    fs.rmSync(s.workdir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// generatorHasDxf / generatorHasFlat(鈑金件偵測;folded 已非 PARAMS 參數,攤平
+// 改由 gen_flat + 3D 視圖切換,paramDefsFromGenerator 無 folded 特例)
+// ---------------------------------------------------------------------------
+
+test("folded 不再是滑桿:PARAMS 有 folded 也不產滑桿(value 0 被濾、無特例)", () => {
+  const s = tmpSession("nofolded");
+  try {
+    writeGen(s, "foo", `PARAMS = {"w": 20.0, "folded": 0}\n`);
+    const defs = paramDefsFromGenerator(s, "foo");
+    assert.equal(defs.find((d) => d.key === "folded"), undefined);
+    assert.ok(defs.find((d) => d.key === "w")); // 正常參數不受影響
+  } finally {
+    fs.rmSync(s.workdir, { recursive: true, force: true });
+  }
+});
+
+test("generatorHasDxf / generatorHasFlat:頂層 def 才算(縮排內層不算、缺檔 false)", () => {
+  const s = tmpSession("hasflag");
+  try {
+    writeGen(s, "both", "PARAMS = {}\ndef gen_dxf():\n    return None\ndef gen_flat():\n    return None\n");
+    assert.equal(generatorHasDxf(s, "both"), true);
+    assert.equal(generatorHasFlat(s, "both"), true);
+    // 組合件:有 gen_dxf 但無 gen_flat(攤平組合件無意義)
+    writeGen(s, "asm", "PARAMS = {}\ndef gen_dxf():\n    return None\n");
+    assert.equal(generatorHasDxf(s, "asm"), true);
+    assert.equal(generatorHasFlat(s, "asm"), false);
+    // 縮排內層 def 不算
+    writeGen(s, "nested", "PARAMS = {}\ndef gen_step():\n    def gen_flat():\n        pass\n");
+    assert.equal(generatorHasFlat(s, "nested"), false);
+    assert.equal(generatorHasFlat(s, "missing"), false);
   } finally {
     fs.rmSync(s.workdir, { recursive: true, force: true });
   }

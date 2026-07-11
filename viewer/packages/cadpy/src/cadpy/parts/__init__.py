@@ -17,6 +17,9 @@ own ``check_geometry`` is reached through the submodule
 (``from cadpy.parts.pneumatic_cylinder import check_geometry``). Selection
 (``select`` / ``specs_io``) is pure/OCP-free; generators defer build123d to call
 time, so importing this package stays cheap for pure-selection callers.
+
+``sheet_metal`` is a generator-API-only family (a fold-tree builder, not a
+catalog pick): it has no ``select_*`` and no specs JSON.
 """
 
 from __future__ import annotations
@@ -27,6 +30,12 @@ from cadpy.parts.gear import gear, gear_rack, pitch_radius, rack_mesh_phase_deg
 from cadpy.parts.gripper import gripper
 from cadpy.parts.linear_guide import linear_guide
 from cadpy.parts.pneumatic_cylinder import pneumatic_cylinder
+from cadpy.parts.sheet_metal import (
+    DEFAULT_K_FACTOR,
+    SheetMetal,
+    bend_allowance,
+    jog_web,
+)
 from cadpy.parts.select import (
     NoFittingPart,
     select_ball_screw,
@@ -60,4 +69,8 @@ __all__ = [
     "pitch_radius",
     "rack_mesh_phase_deg",
     "gripper",
+    "SheetMetal",
+    "bend_allowance",
+    "jog_web",
+    "DEFAULT_K_FACTOR",
 ]

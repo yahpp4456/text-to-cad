@@ -1071,6 +1071,22 @@
 .fb-action:hover {
   border-color: var(--design);
 }
+/* 可編輯專案目錄列:整列點擊=開啟專案(design 色強調,與非專案導航列區隔) */
+.fb-name.fb-projrow {
+  color: var(--design);
+  font-weight: 600;
+}
+.fb-name.fb-projrow:hover {
+  text-decoration: underline;
+}
+.fb-projtag {
+  margin-left: 8px;
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 9.5px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+}
 .fb-kind-pick {
   display: inline-flex;
   align-items: center;
@@ -1987,6 +2003,40 @@
   color: var(--text-muted);
   pointer-events: none;
   z-index: 4;
+}
+/* 鈑金摺疊/攤平:視圖左上明顯雙段切換(比右上小 chip 顯眼) */
+.fold-switch {
+  position: absolute;
+  top: 48px;
+  left: 20px;
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  box-shadow: 0 2px 10px rgba(20, 30, 55, 0.12);
+  backdrop-filter: blur(6px);
+  z-index: 7;
+}
+.fold-seg {
+  cursor: pointer;
+  padding: 7px 15px;
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  border-radius: 6px;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+.fold-seg:hover {
+  color: var(--ink);
+}
+.fold-seg[data-on="true"] {
+  color: #fff;
+  background: var(--design);
 }
 .model-info {
   position: absolute;

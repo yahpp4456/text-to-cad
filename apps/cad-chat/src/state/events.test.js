@@ -25,6 +25,25 @@ test("spec 事件:ADD_ITEM + SET_TURN_SPEC 雙 dispatch,chips 字面 \\n 已正�
   assert.deepEqual(turn.chips, add.item.chips); // 兩路吃同一份正規化資料
 });
 
+test("version 事件:hasDxf 嚴格 === true 透傳(鈑金 DXF 鈕依據;舊事件無欄位 → false)", () => {
+  const on = collect("version", { id: "v1", name: "x", glbUrl: "u", hasDxf: true });
+  assert.equal(on[0].version.hasDxf, true);
+  const off = collect("version", { id: "v2", name: "x", glbUrl: "u" });
+  assert.equal(off[0].version.hasDxf, false);
+});
+
+test("version/present 事件:projectDir + flatGlbUrl 透傳(缺 → null)", () => {
+  const v = collect("version", { id: "v1", name: "x", glbUrl: "u", projectDir: "d", flatGlbUrl: "f" });
+  assert.equal(v[0].version.projectDir, "d");
+  assert.equal(v[0].version.flatGlbUrl, "f");
+  const v0 = collect("version", { id: "v2", name: "x", glbUrl: "u" });
+  assert.equal(v0[0].version.projectDir, null);
+  assert.equal(v0[0].version.flatGlbUrl, null);
+  const p = collect("present", { glbUrl: "u", name: "x", code: "x", ver: "o1", projectDir: "d", flatGlbUrl: "f" });
+  assert.equal(p[0].projectDir, "d");
+  assert.equal(p[0].flatGlbUrl, "f");
+});
+
 test("params_values 事件:SET_PARAM_VALUES 單 dispatch(regen 回滾滑桿拉回);缺 values 給空物件", () => {
   const actions = collect("params_values", { values: { w: 20, h: 10 } });
   assert.equal(actions.length, 1);

@@ -12,7 +12,10 @@ export const initialState = {
   versions: [], // [{ id:'v1', name, glbUrl, formats, verified? }]
   activeVer: null,
   // type: "part" | "assembly" | ""(未知,藏 badge);source: "generated" | "opened"
-  canvas: { glbUrl: "", name: "", code: "", ver: "", status: "empty", type: "", source: "" }, // status: empty|loading|ready|error
+  // projectDir:唯讀檢視的檔案若屬可編輯專案(有 gen_step),存其目錄 rel;submitText
+  // 據此「自動帶入編輯」。非專案檢視/一般產出 = null。
+  // flatGlbUrl:鈑金件(有 gen_flat)的攤平預覽 GLB;非 null → 3D 視圖出摺疊/攤平切換鈕。
+  canvas: { glbUrl: "", name: "", code: "", ver: "", status: "empty", type: "", source: "", projectDir: null, flatGlbUrl: null }, // status: empty|loading|ready|error
   params: { defs: [], values: {}, dirty: false },
   pickRefs: [], // [{token,label}] 帶入對話的幾何參考(多選;UI 上限 4,去重,超限丟最舊)
   propsOpen: false,
@@ -228,6 +231,8 @@ export function reducer(state, action) {
           status: sameUrl ? state.canvas.status : "loading",
           type: v.type || "",
           source: v.source || "",
+          projectDir: v.projectDir ?? null, // 切到唯讀專案檢視版 → 帶回其升級目錄
+          flatGlbUrl: v.flatGlbUrl ?? null, // 切版帶回該版攤平 GLB(非鈑金版=null)
         },
       };
     }
@@ -249,6 +254,8 @@ export function reducer(state, action) {
           status: action.glbUrl === state.canvas.glbUrl ? state.canvas.status : "loading",
           type: action.fileType || "", // 未帶類型就藏 badge(誠實,不繼承舊模型的)
           source: action.source || "generated",
+          projectDir: action.projectDir ?? null, // openFile 唯讀檢視帶入;其餘路徑 null
+          flatGlbUrl: action.flatGlbUrl ?? null, // 鈑金攤平 GLB(present 帶;非鈑金=null)
         },
       };
     }

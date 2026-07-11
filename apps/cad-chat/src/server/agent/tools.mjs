@@ -7,6 +7,7 @@ import {
   applyEdits,
   decorateChecks,
   emitPresent,
+  generatorHasDxf,
   importStepIntoSession,
   inspectFacts,
   paramDefsFromGenerator,
@@ -421,8 +422,8 @@ export function buildCadchatServer({ session, emit, signal }) {
       ),
       tool(
         "cad_export",
-        "匯出 stl/3mf/glb(下游)。dxf 需另寫 gen_dxf,本工具暫不支援。",
-        { name: z.string().optional(), format: z.enum(["stl", "3mf", "glb"]) },
+        "匯出 stl/3mf/glb/dxf(下游,需要才用)。dxf=鈑金展開圖:產生器須有 gen_dxf()(SheetMetal 件回 sm.dxf())。",
+        { name: z.string().optional(), format: z.enum(["stl", "3mf", "glb", "dxf"]) },
         async ({ name, format }) => {
           const gated = clarifyGate();
           if (gated) return gated;
@@ -430,7 +431,15 @@ export function buildCadchatServer({ session, emit, signal }) {
           const id = toolId();
           const target = `${session.workdirRel}/${part}.py`;
           const out = `${session.workdirRel}/${part}.${format}`;
+          const isDxf = format === "dxf";
           const flag = { stl: "--stl", "3mf": "--3mf", glb: "--glb" }[format];
+          if (isDxf && !generatorHasDxf(session, part)) {
+            emit("tool", { id, name: "cad.export(dxf)", label: "匯出", status: "error", note: "產生器沒有 gen_dxf(),無展開圖可匯" });
+            return result({
+              ok: false,
+              error: "產生器沒有 gen_dxf();鈑金件請補 def gen_dxf(): return _build().dxf() 再匯。",
+            });
+          }
           emit("tool", { id, name: `cad.export(${format})`, label: "匯出", status: "running" });
           // 匯出閘(與 /api/export 同一不變式:出檔的東西必然驗過):頂層當前產物
           // 未經 full 驗證(或驗的是別件/基準已漂移)→ 先補跑完整驗證;未過 → 拒絕
@@ -462,16 +471,20 @@ export function buildCadchatServer({ session, emit, signal }) {
               });
             }
           }
-          const res = await spawnPython("skills/cad/scripts/step", [target, flag, out, "--force"], {
-            session,
-            signal,
-          });
+          // dxf 走 skills/dxf CLI 跑 gen_dxf()(寫兄弟檔 <part>.dxf);其餘走
+          // scripts/step 的 mesh sidecar
+          const res = isDxf
+            ? await spawnPython("skills/dxf/scripts/dxf", [target], { session, signal })
+            : await spawnPython("skills/cad/scripts/step", [target, flag, out, "--force"], {
+                session,
+                signal,
+              });
           const ok = res.code === 0;
           emit("tool", {
             id,
             status: ok ? "done" : "error",
             outputs: ok ? [{ path: `${part}.${format}`, kind: format }] : undefined,
-            note: ok ? undefined : (res.stderr || "").slice(-300),
+            note: ok ? undefined : condenseTraceback(res.stderr, { generatorName: part }),
           });
           if (ok) emit("artifact_format", { format: format.toUpperCase() });
           return result({ ok });

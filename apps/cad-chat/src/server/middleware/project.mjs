@@ -93,7 +93,10 @@ function copyProjectTree(srcDir, dstDir) {
       ent.name === "versions" ||
       ent.name === ".exports" ||
       ent.name === "session.json" ||
-      ent.name.endsWith(".pyc")
+      ent.name.endsWith(".pyc") ||
+      // 展開圖 DXF 是「按需匯出」產物,不隨滑桿重生更新:帶出去會是與 STEP
+      // 尺寸不符的過期圖(viewer 又會自動與同名 .py 配對)。要展開圖用匯出鈕現算。
+      ent.name.endsWith(".dxf")
     )
       continue;
     const s = path.join(srcDir, ent.name);
@@ -231,12 +234,13 @@ async function handleRevertVersion(body, res) {
   const name = sanitizeName(meta.name);
   const busyToken = acquireBusy(session);
   try {
-    // 快照複回頂層;單件版要清掉頂層殘留的 asm.json,type 才不會誤判成組合件
-    for (const f of [`${name}.py`, `${name}.step`, `.${name}.step.glb`, `${name}.asm.json`, `.${name}.step.js`]) {
+    // 快照複回頂層;單件版要清掉頂層殘留的 asm.json,type 才不會誤判成組合件。
+    // .flat.step.glb:鈑金攤平預覽 GLB 也複回(回退版的攤平切換要能用)。
+    for (const f of [`${name}.py`, `${name}.step`, `.${name}.step.glb`, `.${name}.flat.step.glb`, `${name}.asm.json`, `.${name}.step.js`]) {
       const src = path.join(snapDir, f);
       const dst = path.join(session.workdir, f);
       if (fs.existsSync(src)) fs.copyFileSync(src, dst);
-      else if (f === `${name}.asm.json` && fs.existsSync(dst)) fs.rmSync(dst);
+      else if ((f === `${name}.asm.json` || f === `.${name}.flat.step.glb`) && fs.existsSync(dst)) fs.rmSync(dst);
     }
     session.lastName = name;
     if (Number(meta.partCount) > 0) session.lastPartCount = Number(meta.partCount);
@@ -303,6 +307,9 @@ function presentWarnings(events) {
 // 呼叫形狀),輸出寫在與輸入同目錄,前端再經 /api/asset?download= 觸發下載。
 const EXPORT_TIMEOUT_MS = 180_000;
 const EXPORT_FLAGS = { stl: "--stl", "3mf": "--3mf" };
+// 鈑金展開圖:同一 .py 定義 gen_dxf()(cadpy catalog 自動配對)。頂層 def 的決定性
+// 偵測,與 cadpy metadata.py 的 AST 語意對齊(縮排的內層 def 不算)。
+const GEN_DXF_RE = /^def\s+gen_dxf\s*\(/m;
 
 // 轉檔工作區 .exports/<ver|current>/:轉檔絕不在來源目錄跑——step CLI 的 --force 會
 // 重生隱藏 GLB/topology sidecar,在 versions/vK/ 裡跑等於改寫「凍結快照」(時間軸
@@ -441,8 +448,9 @@ async function handleExport(body, res) {
   // 屬性查找要擋原型鏈:format="constructor" 這類繼承鍵是 truthy,會帶著非字串
   // flag 一路撞進 spawn 變成難懂的內部 TypeError,而不是這裡的清楚 400。
   const flag = Object.hasOwn(EXPORT_FLAGS, format) ? EXPORT_FLAGS[format] : null;
-  if (!flag) {
-    sendJson(res, 400, { ok: false, error: "format 僅支援 stl / 3mf" });
+  const isDxf = format === "dxf";
+  if (!flag && !isDxf) {
+    sendJson(res, 400, { ok: false, error: "format 僅支援 stl / 3mf / dxf" });
     return;
   }
   const session = requireExistingSession(body, res);
@@ -475,35 +483,58 @@ async function handleExport(body, res) {
       });
       return;
     }
-    // 輸入 STEP 複製到轉檔工作區再跑(絕不污染快照/工作基準,見 makeExportScratch)
+    // DXF(鈑金展開圖)走 skills/dxf CLI 對產生器 .py 現算(展開從 PARAMS 導出,
+    // 不從 STEP 反推;快照裡的 .py 即該版真相源)。缺 .py / 缺 gen_dxf 統一回
+    // 200 ok:false(與其他匯出失敗同型,前端呈現一致)。
+    if (isDxf) {
+      let src;
+      try {
+        src = fs.readFileSync(path.join(base.baseAbs, `${name}.py`), "utf8");
+      } catch {
+        sendJson(res, 200, { ok: false, error: "此版沒有產生器原始碼,無法產展開圖" });
+        return;
+      }
+      if (!GEN_DXF_RE.test(src)) {
+        sendJson(res, 200, { ok: false, error: "此版產生器沒有 gen_dxf(),無展開圖可匯(鈑金件才有)" });
+        return;
+      }
+    }
+    // 輸入(STEP 或 .py)複製到轉檔工作區再跑(絕不污染快照/工作基準,見 makeExportScratch)
     let scratch;
     try {
       scratch = makeExportScratch(session, body?.ver);
-      fs.copyFileSync(path.join(base.baseAbs, `${name}.step`), path.join(scratch.abs, `${name}.step`));
+      const input = isDxf ? `${name}.py` : `${name}.step`;
+      fs.copyFileSync(path.join(base.baseAbs, input), path.join(scratch.abs, input));
     } catch (err) {
       sendJson(res, 500, { ok: false, error: `匯出準備失敗:${scrubPaths(String(err?.message || err))}` });
       return;
     }
-    const stepRel = `${scratch.rel}/${name}.step`;
     const outRel = `${scratch.rel}/${name}.${format}`;
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), EXPORT_TIMEOUT_MS);
     let r;
     try {
-      // sidecar 輸出路徑由 CLI 解讀為「相對 STEP 目標所在目錄」(cadpy
-      // _resolve_step_option_output_path,且拒絕絕對路徑)→ 只傳檔名,寫在 STEP 旁。
-      r = await spawnPython(
-        "skills/cad/scripts/step",
-        [stepRel, "--kind", kind, flag, `${name}.${format}`, "--force"],
-        { session, signal: ac.signal },
-      );
+      r = isDxf
+        ? // skills/dxf CLI:跑 gen_dxf() 寫兄弟檔 <name>.dxf(cwd=REPO_ROOT 相對路徑)
+          await spawnPython(
+            "skills/dxf/scripts/dxf",
+            [`${scratch.rel}/${name}.py`],
+            { session, signal: ac.signal },
+          )
+        : // sidecar 輸出路徑由 CLI 解讀為「相對 STEP 目標所在目錄」(cadpy
+          // _resolve_step_option_output_path,且拒絕絕對路徑)→ 只傳檔名,寫在 STEP 旁。
+          await spawnPython(
+            "skills/cad/scripts/step",
+            [`${scratch.rel}/${name}.step`, "--kind", kind, flag, `${name}.${format}`, "--force"],
+            { session, signal: ac.signal },
+          );
     } finally {
       clearTimeout(timer);
     }
-    if (r.code !== 0) {
+    if (r.code !== 0 || !fs.existsSync(path.join(scratch.abs, `${name}.${format}`))) {
       sendJson(res, 200, {
         ok: false,
-        error: `匯出失敗:${(r.stderr || "").trim().slice(-300) || `exit ${r.code}`}`,
+        error: `匯出失敗:${condenseTraceback(r.stderr, { generatorName: name }) || `exit ${r.code}`}`,
       });
       return;
     }

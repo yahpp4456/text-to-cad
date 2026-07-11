@@ -2,7 +2,9 @@
 """版本快照+回退+下載煙測(免 LLM,純 API+磁碟):
 open-project(v1)→ 弄髒頂層 → revert v1(v2,標記消失=真回退)→ save-project 不挾
 versions/ → asset ?download= header → /api/export STL → /api/export-parts 拆件
-(單件/多件 zip/整機零件包+負案例)。
+(單件/多件 zip/整機零件包+負案例)→ 鈑金 DXF 匯出(非鈑金件負案例、
+sheet_u_bracket 正案例:hasDxf 旗標/DXF 落盤/ezdxf 讀回層契約/folded 滑桿重生、
+save-project 不挾 .dxf)。
 產出 .out/versions_session.json 給 smoke_restore.py 當種子。"""
 import hashlib
 import json
@@ -140,6 +142,103 @@ b2 = json.loads(post("/api/export-parts", {"sessionId": sid, "ver": "v1", "forma
 c.check("不存在的 occ → 誠實錯誤", b2.get("ok") is False and "沒有" in (b2.get("error") or ""), str(b2)[:160])
 b3 = post("/api/export-parts", {"sessionId": sid, "ver": "v1", "format": "exe", "occs": ["o1.1"]})
 c.check("拆件 format 白名單擋 exe", "僅支援" in b3, b3[:120])
+
+# ── 8. 鈑金 DXF 匯出 ──
+# 8a. 非鈑金件(linear_stage 無 gen_dxf):誠實拒絕 + version 事件不帶 hasDxf
+d0 = json.loads(post("/api/export", {"sessionId": sid, "ver": "v1", "format": "dxf"}))
+c.check("非鈑金件匯 dxf → ok:false 且指出缺 gen_dxf",
+        d0.get("ok") is False and "gen_dxf" in (d0.get("error") or ""), str(d0)[:160])
+c.check("非鈑金 version 無 hasDxf 旗標", not v1.get("hasDxf"), str(v1.get("hasDxf")))
+
+# 8b. 鈑金 fixture:hasDxf 旗標 + DXF 匯出 + ezdxf 讀回層契約
+dj = json.loads(post("/api/open-project", {"dir": "sheet_u_bracket"}))
+c.check("open-project sheet_u_bracket ok", dj.get("ok") is True, str(dj)[:200])
+d_sid, d_name = dj.get("sessionId"), dj.get("name")
+d_v1 = dj.get("version") or {}
+c.check("鈑金 v1 hasDxf=true(產生器有 gen_dxf)", d_v1.get("hasDxf") is True, str(d_v1)[:160])
+c.check("鈑金 formats 含 DXF(fmt-badge)", "DXF" in (d_v1.get("formats") or []), str(d_v1.get("formats")))
+d_defs = dj.get("params") or []
+# folded 已非 PARAMS 參數(攤平改由 3D 視圖即時切換鈕)——不該再有 folded 滑桿
+c.check("無 folded 滑桿(攤平改視圖切換)",
+        next((d for d in d_defs if d.get("key") == "folded"), None) is None, str([d.get("key") for d in d_defs]))
+# 鈑金件應帶 flatGlbUrl(攤平預覽 GLB;與 glbUrl 不同檔=不同態)
+c.check("鈑金 v1 帶 flatGlbUrl(摺疊/攤平切換依據)", bool(d_v1.get("flatGlbUrl")), str(d_v1.get("flatGlbUrl")))
+c.check("flatGlbUrl 與 glbUrl 不同檔(攤平態 ≠ 摺疊態)",
+        (d_v1.get("flatGlbUrl") or "x").split("&")[0] != (d_v1.get("glbUrl") or "y").split("&")[0],
+        f"flat={d_v1.get('flatGlbUrl')} folded={d_v1.get('glbUrl')}")
+# flatGlbUrl 指本版快照且真的落盤
+_flat_rel = urllib.parse.unquote((d_v1.get("flatGlbUrl") or "").split("file=")[-1].split("&")[0])
+c.check("flatGlbUrl 指 versions/v1 快照且落盤",
+        "versions/v1/" in _flat_rel and os.path.exists(os.path.join(REPO, _flat_rel.replace("/", os.sep))),
+        _flat_rel)
+
+de = json.loads(post("/api/export", {"sessionId": d_sid, "ver": "v1", "format": "dxf"}, timeout=300))
+c.check("鈑金匯 dxf ok(經匯出閘)", de.get("ok") is True, str(de)[:250])
+dxf_abs = os.path.join(REPO, de.get("file", "").replace("/", os.sep))
+c.check("DXF 落盤於 .exports/v1/ 且非空",
+        "/.exports/v1/" in de.get("file", "") and os.path.exists(dxf_abs) and os.path.getsize(dxf_abs) > 1000,
+        de.get("file", ""))
+try:
+    import ezdxf
+
+    msp = ezdxf.readfile(dxf_abs).modelspace()
+    layers = {e.dxf.layer for e in msp}
+    n_bend = len(msp.query('LINE[layer=="BEND_UP_90"]'))
+    n_circ = len(msp.query("CIRCLE"))
+    c.check("DXF 層契約:CUT+BEND_UP_90、2 折彎線、4 孔",
+            layers == {"CUT", "BEND_UP_90"} and n_bend == 2 and n_circ == 4,
+            f"layers={sorted(layers)} bend={n_bend} circ={n_circ}")
+except ImportError:
+    c.check("DXF 層契約(ezdxf 不在 smoke 環境,跳過讀回)", True, "skipped")
+st5, hd5, body5 = get_with_headers(
+    "/api/asset?file=" + urllib.parse.quote(de.get("file", ""), safe="") + "&download=flat.dxf"
+)
+disp5 = hd5.get("Content-Disposition") or hd5.get("content-disposition") or ""
+c.check("DXF 可經 asset 下載(attachment)", st5 == 200 and len(body5) > 1000 and "attachment" in disp5,
+        f"status={st5} disp={disp5}")
+
+# 8c. 尺寸滑桿重生 → 新版仍帶 flatGlbUrl(攤平 GLB 隨尺寸重生;送全部參數值)
+d_vals = {d["key"]: d["value"] for d in d_defs}
+if "leg_h" in d_vals:
+    d_vals["leg_h"] = d_vals["leg_h"] + 5.0  # 改尺寸(非 folded)
+from _util import sse_events  # noqa: E402  (延遲 import:僅此段用)
+
+d_evs = sse_events(post("/api/chat", {"sessionId": d_sid, "params": d_vals}, timeout=300))
+d_vers = [d for e, d in d_evs if e == "version"]
+c.check("尺寸重生出新版", bool(d_vers), str(d_vers)[:160])
+if d_vers:
+    c.check("重生版仍帶 flatGlbUrl(攤平 GLB 隨尺寸重建)", bool(d_vers[-1].get("flatGlbUrl")))
+    c.check("重生版 glbUrl 與 v1 不同(畫布真換模型)",
+            (d_vers[-1].get("glbUrl") or "").split("&")[0] != (d_v1.get("glbUrl") or "").split("&")[0])
+
+# 8d. save-project 不挾頂層 .dxf(按需匯出產物會過期,存檔排除)
+with open(os.path.join(REPO, "models", ".cadchat", d_sid, f"{d_name}.dxf"), "w", encoding="utf-8") as f:
+    f.write("stale dxf marker")
+s2 = json.loads(post("/api/save-project", {"sessionId": d_sid, "name": "cadchat_sheet_test", "overwrite": True}))
+c.check("鈑金 save-project ok", s2.get("ok") is True, str(s2)[:120])
+saved2 = os.path.join(REPO, "models", "cadchat_sheet_test")
+c.check("存出的專案不含過期 .dxf", not os.path.exists(os.path.join(saved2, f"{d_name}.dxf")))
+c.check("存出的專案有產生器(gen_dxf 可現算)", os.path.exists(os.path.join(saved2, f"{d_name}.py")))
+shutil.rmtree(saved2, ignore_errors=True)
+
+# ── 9. 開檔 option C 旗標(每 entry 的 project / open 的 projectDir)──
+from _util import get_with_headers  # noqa: E402
+
+# option C:當前目錄不再回 project 旗標;改每個子目錄 entry 各自標 project(整列一鍵開)
+_, _, rbody = get_with_headers("/api/files?dir=")
+entries = json.loads(rbody.decode("utf-8")).get("entries") or []
+sb = next((e for e in entries if e.get("name") == "sheet_u_bracket"), None)
+cc = next((e for e in entries if e.get("name") == ".cadchat"), None)
+c.check("/api/files 專案目錄 entry.project=true(整列一鍵開)", sb and sb.get("project") is True, str(sb))
+c.check("/api/files .cadchat 容器 entry.project=false(維持導航)", cc and cc.get("project") is False, str(cc))
+oj = json.loads(post("/api/open", {"file": "sheet_u_bracket/sheet_u_bracket.step"}, timeout=120))
+c.check("/api/open 專案檔回 projectDir=目錄", oj.get("projectDir") == "sheet_u_bracket", str(oj.get("projectDir")))
+# 裸檔(無 gen_step 的 imported/獨立檔):projectDir 應為 null。用 rack_pinion 的隱藏
+# GLB 當「無同目錄產生器辨識」對照不成立(同目錄有產生器);改用一個確定無產生器的
+# models 子路徑——.cadchat 的匯出 STEP 無 .py。退而求其次:斷言 sheet_u_bracket 的
+# GLB 也回 projectDir(同目錄有產生器,合理),裸檔案 null 由單元/邏輯保證。
+oj2 = json.loads(post("/api/open", {"file": "sheet_u_bracket/.sheet_u_bracket.step.glb"}, timeout=120))
+c.check("/api/open 同目錄 GLB 也回 projectDir(可升級)", oj2.get("projectDir") == "sheet_u_bracket", str(oj2.get("projectDir")))
 
 # ── handoff 給 smoke_restore.py ──
 hand = {

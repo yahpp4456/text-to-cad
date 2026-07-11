@@ -31,8 +31,9 @@ def open_step(page, dirname):
     row = page.locator(
         ".fb-row", has=page.locator(".fb-name", has_text=f"{dirname}.step")
     ).first
-    # 「開啟」必須全等比對:同 overlay 裡目錄列的「開啟專案」是子字串超集
-    row.locator(".fb-action", has_text=re.compile(r"^開啟$")).click()
+    # 這些 fixture 都是可編輯專案(有 gen_step)→ 智慧路由下檔案列主鈕「開啟」會開成
+    # 專案(v1 session);本測試驗的是「唯讀檢視版」的去重/載入,故點「僅檢視」逃生口。
+    row.locator(".fb-action", has_text=re.compile(r"^僅檢視$")).click()
     # 同步點:FileBrowser 只在 onOpenFile(dispatch 完成)後才 onClose → overlay
     # 消失=ADD_VERSION/PRESENT 已提交。canvas.cad-canvas 在第二次開檔起「立即為真」
     # (舊 canvas 殘留),不能當同步點;/api/open 偶發變慢時會量到 dispatch 前的假象。

@@ -273,6 +273,18 @@ with sync_playwright() as p:
     c.check("D: 已驗證版 STEP 鈕=直連 href 型(免閘)",
             page.locator(".version-dl", has_text="STEP").first.get_attribute("href") is not None)
 
+    # 鈑金 DXF 鈕:hasDxf 才亮;RESTORE 快照帶旗標 = 重整後仍在(M3 回歸鎖)
+    c.check("D: 非鈑金版無 DXF 展開圖鈕", page.locator(".version-dl", has_text="DXF").count() == 0)
+    page.evaluate(
+        "() => window.__cadDispatch({ type: 'RESTORE', snapshot: { sessionId: 's_fake_ui',"
+        " versions: [{ id: 'v1', name: 'x', source: 'generated', verified: false, hasDxf: true,"
+        " file: 'models/.cadchat/s_fake_ui/versions/v1/.x.step.glb', glbUrl: '', formats: ['STEP','GLB','DXF'] }],"
+        " activeVer: 'v1' } })"
+    )
+    page.wait_for_timeout(250)
+    c.check("D: 鈑金版(hasDxf)重整還原後 DXF 展開圖鈕仍在",
+            page.locator(".version-dl", has_text="DXF 展開圖").count() == 1)
+
     page.evaluate("() => window.__cadDispatch({ type: 'ADD_USER', text: '測試訊息' })")
     page.wait_for_timeout(150)
     c.check("D: user 氣泡不再染模式色(無 data-mode)",

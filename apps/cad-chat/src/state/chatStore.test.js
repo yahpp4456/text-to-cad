@@ -164,6 +164,48 @@ test("PRESENT:同 glbUrl 保留 status(重複開同一檔 re-present 不卡 load
   assert.equal(changed.canvas.status, "loading"); // mtime buster 變了 → 真重載
 });
 
+test("canvas.flatGlbUrl:PRESENT 帶入、切版本沿用、非鈑金版歸 null(摺疊/攤平切換依據)", () => {
+  let s = reducer(initialState, {
+    type: "PRESENT", glbUrl: "/f.glb", name: "u", code: "u", ver: "v1",
+    flatGlbUrl: "/f.flat.glb",
+  });
+  assert.equal(s.canvas.flatGlbUrl, "/f.flat.glb");
+  // 一般產出無 flatGlbUrl → null(不繼承)
+  const gen = reducer(s, { type: "PRESENT", glbUrl: "/g.glb", name: "g", code: "g", ver: "v2" });
+  assert.equal(gen.canvas.flatGlbUrl, null);
+  // 切版帶回該版 flatGlbUrl
+  let s2 = reducer(initialState, {
+    type: "ADD_VERSION",
+    version: { id: "v1", name: "u", glbUrl: "/f.glb", flatGlbUrl: "/f.flat.glb" },
+  });
+  s2 = reducer(s2, { type: "ADD_VERSION", version: { id: "v2", name: "g", glbUrl: "/g.glb" } });
+  assert.equal(reducer(s2, { type: "SELECT_VERSION", id: "v1" }).canvas.flatGlbUrl, "/f.flat.glb");
+  assert.equal(reducer(s2, { type: "SELECT_VERSION", id: "v2" }).canvas.flatGlbUrl, null);
+});
+
+test("canvas.projectDir:openFile 唯讀檢視帶入、切版本沿用、一般產出歸 null", () => {
+  // openFile PRESENT 帶 projectDir(唯讀但屬可編輯專案)→ submitText 據此自動帶入編輯
+  let s = reducer(initialState, {
+    type: "PRESENT", glbUrl: "/a.glb", name: "u_bracket", code: "u_bracket",
+    ver: "o1", source: "opened", projectDir: "sheet_u_bracket",
+  });
+  assert.equal(s.canvas.projectDir, "sheet_u_bracket");
+  assert.equal(s.canvas.source, "opened");
+  // 一般 SSE 產出 present 無 projectDir → null(不繼承)
+  const gen = reducer(s, { type: "PRESENT", glbUrl: "/b.glb", name: "g", code: "g", ver: "v1" });
+  assert.equal(gen.canvas.projectDir, null);
+  // 切回唯讀檢視版:版本物件的 projectDir 帶回 canvas
+  let s2 = reducer(initialState, {
+    type: "ADD_VERSION",
+    version: { id: "o1", name: "u", glbUrl: "/a.glb", source: "opened", projectDir: "sheet_u_bracket" },
+  });
+  s2 = reducer(s2, { type: "ADD_VERSION", version: { id: "v1", name: "g", glbUrl: "/b.glb", source: "generated" } });
+  const back = reducer(s2, { type: "SELECT_VERSION", id: "o1" });
+  assert.equal(back.canvas.projectDir, "sheet_u_bracket");
+  const fwd = reducer(back, { type: "SELECT_VERSION", id: "v1" });
+  assert.equal(fwd.canvas.projectDir, null); // 生成版無 projectDir
+});
+
 // ── 兩步澄清精靈:turnSpec / SET_CLARIFY(mint id + 併 specs)/ RESTORE re-arm ──
 
 const CHIPS = [{ k: "導軌", v: "HGR15", assumed: true }];

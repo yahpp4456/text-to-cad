@@ -90,17 +90,18 @@ export default function FileBrowser({ open, onClose, onOpenFile, onImportFile, o
           {entries.map((e) => (
             <div className="fb-row" key={e.rel} data-kind={e.kind}>
               {e.kind === "dir" ? (
-                <>
+                e.project && onOpenProject ? (
+                  // 可編輯專案目錄:整列點擊=一鍵開啟可編輯專案(不進資料夾——裡面只有
+                  // 一個 .step,導航無意義;無獨立按鈕、無唯讀)。
+                  <a className="fb-name fb-dir fb-projrow" onClick={() => onOpenProject(e.rel)}>
+                    {e.name}/<span className="fb-projtag">· 可編輯專案</span>
+                  </a>
+                ) : (
+                  // 非專案目錄(.cadchat/ 等容器):維持導航進去。
                   <a className="fb-name fb-dir" onClick={() => setDir(e.rel)}>
                     ▸ {e.name}/
                   </a>
-                  <span className="grow" />
-                  {e.project && onOpenProject && (
-                    <a className="fb-action" onClick={() => onOpenProject(e.rel)}>
-                      開啟專案
-                    </a>
-                  )}
-                </>
+                )
               ) : (
                 <>
                   <span className="fb-name">
@@ -123,6 +124,8 @@ export default function FileBrowser({ open, onClose, onOpenFile, onImportFile, o
                       </a>
                     </span>
                   ) : (
+                    // 裸檔(非專案目錄內):唯讀開啟看圖 + 匯入場景。專案目錄不再進得來,
+                    // 故無「智慧路由」分支。
                     <>
                       <a className="fb-action" onClick={() => !busy && openFile(e.rel)}>
                         {busy === e.rel ? "處理中…" : "開啟"}

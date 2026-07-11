@@ -227,5 +227,138 @@ class SteeringBoxGateTests(unittest.TestCase):
         self.m.check_geometry(self.m.gen_step())
 
 
+class SheetUBracketGateTests(unittest.TestCase):
+    """Sheet-metal minimal gate: the U bracket's fold tree is the single source
+    of truth -- the flat depth matches the closed form (outer legs, BA), the
+    folded and the flat twins both pass the gate, and the DXF carries exactly
+    the layer contract (CUT + BEND_UP_90, one line per bend)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.m = _load_model("sheet_u_bracket", "sheet_u_bracket")
+
+    def test_flat_depth_closed_form(self):
+        from cadpy.parts import bend_allowance
+
+        p = self.m.PARAMS
+        ba = bend_allowance(90.0, p["bend_r"], p["thick"], p["k_factor"])
+        web = p["leg_h"] - p["bend_r"] - p["thick"]
+        dx, dy = self.m._build().flat_size()
+        self.assertAlmostEqual(dx, p["base_w"], places=6)
+        self.assertAlmostEqual(dy, p["base_d"] + 2.0 * (ba + web), places=6)
+
+    def test_folded_and_flat_both_pass_the_gate(self):
+        # gen_step 恆回摺疊、gen_flat 回攤平(folded 已非 PARAMS,改由 3D 視圖切換)
+        self.m.check_geometry(self.m.gen_step())
+        flat = self.m.gen_flat()
+        self.m.check_geometry(flat)
+        bb = flat.bounding_box()
+        self.assertAlmostEqual(bb.max.Z - bb.min.Z, self.m.PARAMS["thick"], places=6)
+
+    def test_dxf_layer_contract(self):
+        from tests.python.packages.cadpy.test_sheet_metal import _dxf_counts
+
+        counts = _dxf_counts(self.m.gen_dxf())
+        self.assertEqual(counts["layers"], {"CUT", "BEND_UP_90"})
+        self.assertEqual(counts["bend_up"], 2)            # one line per bend
+        self.assertEqual(counts["circles"], 4)            # 2 base + 2 leg holes
+        self.assertEqual(counts["polys"], 1)              # outer contour only
+
+    def test_bad_bend_radius_must_fail(self):
+        self.addCleanup(lambda: self.m.PARAMS.update(bend_r=3.0))
+        self.m.PARAMS["bend_r"] = 0.5                     # < thick/2
+        with self.assertRaises(ValueError):
+            self.m.gen_step()
+
+
+class SheetControlBoxGateTests(unittest.TestCase):
+    """Sheet-metal box gate: inside placement gives the declared OUTER footprint,
+    four auto corner reliefs, hems and cutouts survive both twins, and the flat
+    width matches the closed form across three bend kinds (90, 90, 180)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.m = _load_model("sheet_control_box", "sheet_control_box")
+
+    def test_flat_width_closed_form(self):
+        from cadpy.parts import bend_allowance
+
+        p = self.m.PARAMS
+        inset = p["bend_r"] + p["thick"]
+        web = p["box_h"] - inset
+        ba90 = bend_allowance(90.0, p["bend_r"], p["thick"], p["k_factor"])
+        ba180 = bend_allowance(180.0, p["thick"] / 2.0, p["thick"], p["k_factor"])
+        expect = (p["box_w"] - 2.0 * inset) + 2.0 * (ba90 + web) + 2.0 * (ba180 + p["hem_len"])
+        self.assertAlmostEqual(self.m._build().flat_size()[0], expect, places=6)
+
+    def test_folded_outer_footprint_is_declared_size(self):
+        body = self.m.gen_step()
+        self.m.check_geometry(body)
+        bb = body.bounding_box()
+        self.assertAlmostEqual(bb.max.X - bb.min.X, self.m.PARAMS["box_w"], places=6)
+        self.assertAlmostEqual(bb.max.Y - bb.min.Y, self.m.PARAMS["box_d"], places=6)
+
+    def test_flat_twin_passes_the_gate(self):
+        self.m.check_geometry(self.m.gen_flat())
+
+    def test_dxf_layer_contract(self):
+        from tests.python.packages.cadpy.test_sheet_metal import _dxf_counts
+
+        counts = _dxf_counts(self.m.gen_dxf())
+        self.assertEqual(counts["layers"], {"CUT", "BEND_UP_90", "BEND_UP_180"})
+        self.assertEqual(counts["bend_up"], 6)            # 4 walls + 2 hems
+        self.assertEqual(counts["circles"], 1)            # cable hole
+        self.assertEqual(counts["polys"], 2)              # outer contour + vent
+
+    def test_oversized_vent_must_fail(self):
+        self.addCleanup(lambda: self.m.PARAMS.update(vent_w=40.0))
+        self.m.PARAMS["vent_w"] = self.m.PARAMS["box_w"]  # spans across the bends
+        with self.assertRaises(ValueError):
+            self.m.gen_step()
+
+
+class SheetStepperMountGateTests(unittest.TestCase):
+    """Sheet + standard parts gate: the bracket carries a SELECTED stepper; the
+    only positive-volume overlaps are the declared screw seats + the motor's own
+    shaft root -- screw x bracket clearance holes and the face-on-wall contact
+    must stay at zero volume (subset assertion, not an exact pair count)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.m = _load_model("sheet_stepper_mount", "sheet_stepper_mount")
+
+    def test_motor_is_selected_not_hand_sized(self):
+        spec = self.m.MOTOR_SPEC
+        self.assertIn("model", spec)
+        self.assertGreater(spec["selected_for"]["margin"], 1.0)
+
+    def test_overlaps_are_subset_of_declared(self):
+        from cadpy.geometry_checks import enumerate_interferences
+
+        overlaps = {
+            frozenset((p.a, p.b))
+            for p in enumerate_interferences(self.m.gen_step()).overlaps
+        }
+        declared = {frozenset(pair) for pair in self.m.INTENDED_CONTACT}
+        self.assertLessEqual(overlaps, declared)
+        # the load path we most care about: motor face sits ON the wall
+        # (planar contact), it must never interpenetrate the bracket
+        self.assertNotIn(frozenset(("bracket", "motor_body")), overlaps)
+        # anti-vacuous: at least the four screw seats really overlap
+        for i in range(4):
+            self.assertIn(frozenset((f"screw_{i}", "motor_body")), overlaps)
+
+    def test_full_assembly_check_geometry_passes(self):
+        self.m.check_geometry(self.m.gen_step())
+
+    def test_dxf_is_bracket_flat_only(self):
+        from tests.python.packages.cadpy.test_sheet_metal import _dxf_counts
+
+        counts = _dxf_counts(self.m.gen_dxf())
+        self.assertEqual(counts["bend_up"], 1)            # single L bend
+        self.assertEqual(counts["polys"], 1)              # bracket outer contour
+        self.assertEqual(counts["circles"], 7)            # pilot + 4 screws + 2 foot
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -118,6 +118,9 @@ async function handleOpen(body, res) {
   const dir = path.dirname(abs);
   const base = path.basename(abs);
   const relDir = path.relative(MODELS_ROOT, dir).split(path.sep).join("/");
+  // projectDir:此檔所屬目錄是否為可編輯專案(有 gen_step)。非 null = 前端可把這個
+  // 唯讀檢視「帶入可編輯工作區」(open-project 目標);裸檔(匯入/獨立)→ null。
+  const projectDir = dirHasGenerator(dir) ? (relDir && relDir !== "." ? relDir : "") : null;
   // glbUrl 帶檔案 mtime buster(同 emitPresent 的 &v= 慣例):同一檔重複開啟時,
   // 檔案沒變=同 URL(前端不重載),外部重生過=新 URL(逼前端真重載)。
   const assetUrl = (rel, srcAbs) => {
@@ -137,6 +140,7 @@ async function handleOpen(body, res) {
       name: stem,
       type: typeFromManifest(dir, stem) || "",
       file: fileParam,
+      projectDir,
       glbUrl: assetUrl(fileParam, abs),
     });
     return;
@@ -196,6 +200,7 @@ async function handleOpen(body, res) {
     // 類型:manifest 優先;無 manifest 時採使用者指定的 kind(推導值,badge 誠實標示來源)
     type: mfType || (body?.kind === "assembly" || body?.kind === "part" ? body.kind : ""),
     file: fileParam,
+    projectDir,
     glbUrl: assetUrl(glbRel, glbAbs),
   });
 }
@@ -217,6 +222,8 @@ export function filesMiddleware() {
         });
         return;
       }
+      // 每個子目錄列各自的 project 旗標(可編輯專案 → 整列一鍵開)在 listDir 已標;
+      // 當前目錄不再進得去專案(option C:專案目錄整列開啟不導航),故無需回當前目錄旗標。
       sendJson(res, 200, { ok: true, dir: relDir, entries });
       return;
     }
