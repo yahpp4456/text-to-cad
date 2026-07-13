@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "type": "assembly",
+  "generator": "linear_stage.py",
+  "partCount": 15,
+  "parts": [
+    {
+      "label": "base"
+    },
+    {
+      "label": "pillar_neg"
+    },
+    {
+      "label": "pillar_pos"
+    },
+    {
+      "label": "motor_mount"
+    },
+    {
+      "label": "rail_neg"
+    },
+    {
+      "label": "rail_pos"
+    },
+    {
+      "label": "guide_block_neg"
+    },
+    {
+      "label": "guide_block_pos"
+    },
+    {
+      "label": "screw_shaft"
+    },
+    {
+      "label": "screw_nut"
+    },
+    {
+      "label": "bearing_neg"
+    },
+    {
+      "label": "bearing_pos"
+    },
+    {
+      "label": "motor"
+    },
+    {
+      "label": "coupling"
+    },
+    {
+      "label": "carriage"
+    }
+  ],
+  "imports": [],
+  "updatedAt": "2026-07-12T17:01:53.307Z"
+}

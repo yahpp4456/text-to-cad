@@ -16,6 +16,7 @@ const MCP_TOOLS = [
   "emit_clarify",
   "emit_retry",
   "emit_params",
+  "emit_lesson_offer",
   "cad_import",
   "cad_source_part",
   "cad_build",

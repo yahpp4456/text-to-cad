@@ -15,7 +15,8 @@ export const initialState = {
   // projectDir:唯讀檢視的檔案若屬可編輯專案(有 gen_step),存其目錄 rel;submitText
   // 據此「自動帶入編輯」。非專案檢視/一般產出 = null。
   // flatGlbUrl:鈑金件(有 gen_flat)的攤平預覽 GLB;非 null → 3D 視圖出摺疊/攤平切換鈕。
-  canvas: { glbUrl: "", name: "", code: "", ver: "", status: "empty", type: "", source: "", projectDir: null, flatGlbUrl: null }, // status: empty|loading|ready|error
+  // flatLinesUrl:折彎線 sidecar;攤平態疊虛線 overlay 用。
+  canvas: { glbUrl: "", name: "", code: "", ver: "", status: "empty", type: "", source: "", projectDir: null, flatGlbUrl: null, flatLinesUrl: null }, // status: empty|loading|ready|error
   params: { defs: [], values: {}, dirty: false },
   pickRefs: [], // [{token,label}] 帶入對話的幾何參考(多選;UI 上限 4,去重,超限丟最舊)
   propsOpen: false,
@@ -179,6 +180,18 @@ export function reducer(state, action) {
         ),
       };
 
+    // 人工記教訓「是/否卡」作答:標記該卡 answered(added|skipped);冪等,答過即 disabled。
+    // 非阻塞——不進 busy、不像 clarify 那樣 gate turn;answered 隨 RESTORE items 快照存活。
+    case "ANSWER_LESSON_OFFER":
+      return {
+        ...state,
+        items: state.items.map((it) =>
+          it.id === action.id && it.type === "lesson_offer"
+            ? { ...it, answered: action.outcome }
+            : it,
+        ),
+      };
+
     case "UPSERT_TOOL": {
       const { id, patch } = action;
       const { items, found } = patchTool(state.items, id, patch);
@@ -233,6 +246,7 @@ export function reducer(state, action) {
           source: v.source || "",
           projectDir: v.projectDir ?? null, // 切到唯讀專案檢視版 → 帶回其升級目錄
           flatGlbUrl: v.flatGlbUrl ?? null, // 切版帶回該版攤平 GLB(非鈑金版=null)
+          flatLinesUrl: v.flatLinesUrl ?? null, // 切版帶回該版折彎線
         },
       };
     }
@@ -256,6 +270,7 @@ export function reducer(state, action) {
           source: action.source || "generated",
           projectDir: action.projectDir ?? null, // openFile 唯讀檢視帶入;其餘路徑 null
           flatGlbUrl: action.flatGlbUrl ?? null, // 鈑金攤平 GLB(present 帶;非鈑金=null)
+          flatLinesUrl: action.flatLinesUrl ?? null, // 折彎線 sidecar
         },
       };
     }

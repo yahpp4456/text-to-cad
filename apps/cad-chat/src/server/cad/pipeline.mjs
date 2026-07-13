@@ -600,8 +600,9 @@ function snapshotVersion(session, name, verNum, { type, partCount }) {
   const n = sanitizeName(name);
   const dir = snapshotDir(session, verNum);
   fs.mkdirSync(dir, { recursive: true });
-  // .flat.step.glb:鈑金攤平預覽 GLB,切舊版也要能切攤平 → 進快照(存在才複)
-  for (const f of [`${n}.py`, `${n}.step`, `.${n}.step.glb`, `.${n}.flat.step.glb`, `${n}.asm.json`, `.${n}.step.js`]) {
+  // .flat.step.glb + .flat.lines.json:鈑金攤平預覽 GLB 與折彎線 overlay,切舊版也要能
+  // 切攤平/看折彎線 → 一併進快照(存在才複)
+  for (const f of [`${n}.py`, `${n}.step`, `.${n}.step.glb`, `.${n}.flat.step.glb`, `.${n}.flat.lines.json`, `${n}.asm.json`, `.${n}.step.js`]) {
     const src = path.join(session.workdir, f);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, f));
   }
@@ -691,17 +692,19 @@ export function emitPresent(session, name, emit) {
     (name || "PART").replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase() || "PART";
   const hasDxf = generatorHasDxf(session, name);
   const formats = hasDxf ? ["STEP", "GLB", "DXF"] : ["STEP", "GLB"];
-  // 攤平預覽 GLB 的本版快照 URL(產生器有 gen_flat 且攤平 GLB 真的凍進快照才給)——
-  // 前端據此顯示「摺疊/攤平」即時切換鈕。快照失敗退頂層攤平 GLB。
+  // 攤平預覽 GLB + 折彎線 sidecar 的本版快照 URL(產生器有 gen_flat 且檔案真的凍進
+  // 快照才給)——前端據此顯示「摺疊/攤平」切換鈕與攤平態折彎虛線。快照失敗退頂層。
   let flatGlbUrl = null;
+  let flatLinesUrl = null;
   if (generatorHasFlat(session, name)) {
     const nn = sanitizeName(name);
-    const flatSnapRel = snapshotOk
-      ? `versions/v${session.version}/.${nn}.flat.step.glb`
-      : `.${nn}.flat.step.glb`;
-    if (fs.existsSync(path.join(session.workdir, flatSnapRel))) {
-      flatGlbUrl = `/api/asset?file=${encodeURIComponent(`${session.workdirRel}/${flatSnapRel}`)}&v=${session.version}`;
-    }
+    const snapPre = snapshotOk ? `versions/v${session.version}/` : "";
+    const assetUrl = (rel) =>
+      `/api/asset?file=${encodeURIComponent(`${session.workdirRel}/${rel}`)}&v=${session.version}`;
+    const glbRelP = `${snapPre}.${nn}.flat.step.glb`;
+    const linesRelP = `${snapPre}.${nn}.flat.lines.json`;
+    if (fs.existsSync(path.join(session.workdir, glbRelP))) flatGlbUrl = assetUrl(glbRelP);
+    if (fs.existsSync(path.join(session.workdir, linesRelP))) flatLinesUrl = assetUrl(linesRelP);
   }
   emit("artifact", {
     ver, name, code: name, ghost, formats,
@@ -723,9 +726,10 @@ export function emitPresent(session, name, emit) {
     snapshot: snapshotOk, // false = 本版無凍結快照(退回頂層檔,無法回退)
     hasDxf, // 鈑金件(產生器有 gen_dxf)→ 前端亮「⤓ DXF 展開圖」鈕
     flatGlbUrl, // 鈑金件(有 gen_flat)→ 前端「摺疊/攤平」即時切換(null=無)
+    flatLinesUrl, // 折彎線 sidecar → 攤平態疊虛線 overlay(null=無)
     ...stamp, // verified(前端 badge / 匯出閘依賴)
   });
-  emit("present", { ver, name, code: name, file: stepRel, glbUrl: gUrl, type, flatGlbUrl });
+  emit("present", { ver, name, code: name, file: stepRel, glbUrl: gUrl, type, flatGlbUrl, flatLinesUrl });
   persistSession(session); // version/lastName 剛變動 → 落盤(重整/重啟後計數不歸零)
   return { ver, glbUrl: gUrl };
 }

@@ -17,7 +17,7 @@ import {
   REFERENCE_SELECTED_FILL_OPACITY,
 } from "cadjs/lib/viewer/referenceGeometry";
 
-export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFrame, onPickPart } = {}) {
+export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFrame, onPickPart, bendLines } = {}) {
   const liveRef = useRef({});
 
   useEffect(() => {
@@ -118,11 +118,51 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
       // 座標系:世界原點三軸(X 紅 / Y 綠 / Z 藍)——CAD 產生器的座標原點有語義。
       const axes = new THREE.AxesHelper(radius * 1.2);
       viewport.scene.add(axes);
+      // 鈑金攤平態折彎虛線 overlay(仿 axes:輔助幾何直接加進 scene)。只在載入攤平
+      // GLB 時傳入 bendLines(Canvas3D view==="flat" 才給),摺疊態不傳 → 不建;切換
+      // 是整個場景重建,故天然「攤平顯示、摺疊消失」。座標直接用 builder flat XY
+      // (GLB 無 recenter、Z-up,世界座標==flat XY),疊在頂面 z=t+ε 防 z-fighting。
+      const bendGroup = new THREE.Group();
+      bendGroup.renderOrder = 26;
+      if (bendLines && Array.isArray(bendLines.lines) && bendLines.lines.length) {
+        const zTop = (Number(bendLines.t) || 0) + Math.max(radius * 0.001, 0.02);
+        const mkLine = (segs, color) => {
+          if (!segs.length) return null;
+          const pos = new Float32Array(segs.length * 6);
+          segs.forEach((s, i) => {
+            pos.set([s.a[0], s.a[1], zTop, s.b[0], s.b[1], zTop], i * 6);
+          });
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+          const mat = new THREE.LineDashedMaterial({
+            color,
+            dashSize: Math.max(radius * 0.025, 1.5),
+            gapSize: Math.max(radius * 0.018, 1.0),
+            transparent: true,
+            opacity: 0.95,
+            depthWrite: false,
+            toneMapped: false,
+          });
+          const line = new THREE.LineSegments(geo, mat);
+          line.computeLineDistances(); // LineDashedMaterial 必須,否則不斷線
+          line.frustumCulled = false;
+          line.renderOrder = 27;
+          return line;
+        };
+        const up = mkLine(bendLines.lines.filter((l) => l.up), 0x2f6fe0); // 藍 = 上折
+        const down = mkLine(bendLines.lines.filter((l) => !l.up), 0xd64848); // 紅 = 下折
+        if (up) bendGroup.add(up);
+        if (down) bendGroup.add(down);
+        viewport.scene.add(bendGroup);
+      }
       const setGrid = (on) => {
         if (gridMesh) gridMesh.visible = !!on;
       };
       const setAxes = (on) => {
         axes.visible = !!on;
+      };
+      const setBendLines = (on) => {
+        bendGroup.visible = !!on;
       };
 
       const ro =
@@ -332,6 +372,7 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
         canvasEl,
         gridMesh,
         axes,
+        bendGroup,
         faceFill,
         onPointerDown,
         onClick,
@@ -354,10 +395,11 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
           setAutoRotate,
           setGrid,
           setAxes,
+          setBendLines,
           setFaceHighlights,
           faceFillCount,
           faceFillDebug,
-          chrome: { grid: gridMesh, axes }, // dev/測試檢視用(visible 斷言)
+          chrome: { grid: gridMesh, axes, bendLines: bendGroup }, // dev/測試檢視用(visible/children 斷言)
         });
       }
     }
@@ -392,6 +434,13 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
           s.axes.parent?.remove(s.axes);
           s.axes.dispose?.();
         }
+        if (s.bendGroup) {
+          for (const child of [...s.bendGroup.children]) {
+            child.geometry?.dispose?.();
+            child.material?.dispose?.();
+          }
+          s.bendGroup.parent?.remove(s.bendGroup);
+        }
         s.viewport?.dispose?.();
         s.model?.dispose?.();
         s.canvasEl?.remove();
@@ -401,5 +450,5 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
       liveRef.current = {};
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [glbUrl]);
+  }, [glbUrl, bendLines]);
 }

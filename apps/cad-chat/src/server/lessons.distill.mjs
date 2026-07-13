@@ -246,8 +246,10 @@ export async function maybeDistill({
       const groups = pendingGroups(readStore(file)).filter(
         (g) =>
           g.count >= threshold &&
-          // 自動蒸餾對連敗 ≥MAX_AUTO_ATTEMPTS 的叢集放棄(退避);手動 force 不受限
-          (force || (g.attempts || 0) < MAX_AUTO_ATTEMPTS),
+          // 自動蒸餾:排除人工記的 manual: 教訓(定案「留 pending 手動蒸餾」——只由使用者
+          // 面板「立即蒸餾」升級),且對連敗 ≥MAX_AUTO_ATTEMPTS 的叢集放棄(退避);
+          // 手動 force 兩者皆不受限。
+          (force || (!g.signature.startsWith("manual:") && (g.attempts || 0) < MAX_AUTO_ATTEMPTS)),
       );
       const limit = force ? 5 : 3;
       const distilled = [];

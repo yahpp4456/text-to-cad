@@ -53,6 +53,10 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
 - **背景起 server 要在 `apps/cad-chat` 目錄**:repo 根 `npm run dev` 是 enoent(exit 127)。
 - CLI sidecar 匯出(`--stl OUT`)的 OUT 是**相對 STEP 所在目錄**且拒絕絕對路徑——只傳檔名。
 - 煙測產物(截圖/handoff)一律寫 `tests/smoke/.out/`(gitignored),別寫測試目錄根。
+- **煙測 seed 真資料檔(如 `models/.cadchat/lessons.json`,server 每請求重讀免重啟)要
+  三段式備份**:①開頭偵測前次殘留備份(硬中止時 finally 沒跑,磁碟=假資料/備份=真資料)
+  先還原、②`copy2` 備份、③`finally` 還原或刪除。範本:`smoke_lessons.py` /
+  `smoke_lesson_offer.py`。少了 ①,無條件 copy2 會用假資料蓋掉唯一真備份。
 - **`node --test` 不解析 cadjs Vite alias**:import `cadjs/...` 的前端 lib(如 `cadMotion.js`)
   無法直接 node 測 → 把純邏輯抽到無 cadjs 依賴的檔(如 `cadMotionMath.js`)再 L1 測;
   render/side-effect 部分靠 L3 `__cadMotion`。`three` 本身在 node 可解析(node_modules)。
@@ -107,6 +111,15 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   PRESENT dispatch 要**手帶 `flatGlbUrl`**(SSE 路徑走 events.js 自動帶,但 App.jsx 的
   openProject/revert 是手組 present——漏帶則 chip 不出現)。動鈑金攤平 → `smoke_flat_toggle.py`
   (chip 切換 + 攔 asset 證明載入 .flat.step.glb + 零 /api/chat)+ smoke_versions flatGlbUrl 段。
+- **攤平折彎虛線 overlay(2026-07-11 三版)**:攤平態板面疊折彎中心線(藍上折/紅下折)。
+  資料源 `SheetMetal.flat_bend_lines()`(公開,動它要 sync-vendored)→ `flat_glb.py` 併寫
+  `.<name>.flat.lines.json` sidecar → `flatLinesUrl` **完全鏡射 flatGlbUrl 全鏈**(快照凍結
+  清單、project revert 清單、emitPresent、version/present、events/App/store),漏一處則
+  overlay 跨切版/重整失效。`useCadViewport` 新 opt `bendLines`(仿 axes chrome 直接
+  `viewport.scene.add`,deps 加 `bendLines`);`bendGroup` 恆建(空)供 `setBendLines`/
+  `chrome.bendLines`——**摺疊態斷言用 count===0 而非「group 不存在」**。座標直接對位(攤平
+  GLB Z-up 無 recenter)。dev 鉤 `__cadChrome.bendLines()` → {visible,count};smoke_flat_toggle
+  已擴充(攤平 count>0、摺疊 count=0)。
 - **單一快路徑 + 匯出閘(2026-07-10 收斂,雙模式已拆)**:產圖回合一律零 spawn 快路徑;
   完整驗證只在精算(/api/validate)、匯出閘(/api/export、/api/export-parts 內建;
   /api/validate-ver 是 STEP 直下載的單獨入口)、開專案、回退。verified memo=

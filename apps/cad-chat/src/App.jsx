@@ -339,6 +339,7 @@ export default function App() {
             ver: j.present.ver,
             fileType: j.present.type || "",
             flatGlbUrl: j.present.flatGlbUrl ?? null, // 鈑金攤平切換(JSON 路徑亦需帶)
+            flatLinesUrl: j.present.flatLinesUrl ?? null, // 攤平折彎線 overlay
           });
         }
         if (j.params?.length) dispatch({ type: "SET_PARAMS", defs: j.params });
@@ -401,6 +402,9 @@ export default function App() {
     [state.versions],
   );
 
+  // 防雙擊:同步 in-flight 守衛(不依賴 React re-render 收鈕,擋同一 tick 內的重複點擊
+  // →否則會發出多個 POST /api/lessons/record,落重複 manual case)。
+  const lessonOfferBusyRef = useRef(new Set());
   const handlers = useMemo(
     () => ({
       onToggle: (id) => dispatch({ type: "TOGGLE_ITEM", id }),
@@ -409,6 +413,38 @@ export default function App() {
       // 點規格 chip → 預填 composer 讓使用者接著改值
       onChipEdit: (chip) =>
         dispatch({ type: "SET_PREFILL", text: `${chip.k} 改為 ` }),
+      // 人工記教訓「是/否卡」:否=純前端標記;是=POST 落一筆未蒸餾 case。sessionId 讀
+      // stateRef(handlers memo deps 不含 state,直讀 state.sessionId 會是 stale closure);
+      // 依 j.ok 決定成功/錯誤,不吞成假✓。
+      onLessonOffer: async (id, outcome, payload) => {
+        if (outcome !== "added") {
+          dispatch({ type: "ANSWER_LESSON_OFFER", id, outcome: "skipped" });
+          return;
+        }
+        if (lessonOfferBusyRef.current.has(id)) return; // 同步守衛:雙擊只送一次
+        lessonOfferBusyRef.current.add(id);
+        dispatch({ type: "ANSWER_LESSON_OFFER", id, outcome: "pending" }); // 樂觀:立即收鈕
+        try {
+          const r = await fetch("/api/lessons/record", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ sessionId: stateRef.current.sessionId, ...payload }),
+          });
+          const j = await r.json();
+          if (j.ok) {
+            dispatch({ type: "ANSWER_LESSON_OFFER", id, outcome: "added" });
+            notify("已加入教訓(未蒸餾)。可在「教訓」面板按「立即蒸餾」升級。");
+          } else {
+            dispatch({ type: "ANSWER_LESSON_OFFER", id, outcome: null }); // 回滾:恢復鈕可重試
+            notify(j.error === "disabled" ? "教訓系統已停用。" : "加入教訓失敗。", true);
+          }
+        } catch {
+          dispatch({ type: "ANSWER_LESSON_OFFER", id, outcome: null });
+          notify("無法連線到本機伺服器", true);
+        } finally {
+          lessonOfferBusyRef.current.delete(id);
+        }
+      },
     }),
     [submitText],
   );
@@ -442,6 +478,7 @@ export default function App() {
             ver: j.present.ver,
             fileType: j.present.type || "",
             flatGlbUrl: j.present.flatGlbUrl ?? null, // 鈑金攤平切換(JSON 路徑亦需帶)
+            flatLinesUrl: j.present.flatLinesUrl ?? null, // 攤平折彎線 overlay
           });
         }
         if (j.params?.length) dispatch({ type: "SET_PARAMS", defs: j.params });

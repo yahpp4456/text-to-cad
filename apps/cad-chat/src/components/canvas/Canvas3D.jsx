@@ -99,6 +99,24 @@ export default function Canvas3D({
   // 攤平 GLB 存在且 view=flat 才顯示攤平,否則摺疊(換版/非鈑金件 flatGlbUrl=null → 恆摺疊)
   const flatUrl = canvas.flatGlbUrl || null;
   const activeGlbUrl = view === "flat" && flatUrl ? flatUrl : canvas.glbUrl;
+  // 折彎線資料:換版時 fetch 該版 sidecar JSON(很小),攤平態疊虛線 overlay 用。
+  const [flatLines, setFlatLines] = useState(null);
+  useEffect(() => {
+    if (!canvas.flatLinesUrl) {
+      setFlatLines(null);
+      return undefined;
+    }
+    let live = true;
+    fetch(canvas.flatLinesUrl)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (live) setFlatLines(j && Array.isArray(j.lines) ? j : null);
+      })
+      .catch(() => live && setFlatLines(null));
+    return () => {
+      live = false;
+    };
+  }, [canvas.flatLinesUrl]);
   // 換版重置回摺疊(避免上一版停在攤平、新版無 flatGlbUrl 時卡住)
   useEffect(() => {
     setView("folded");
@@ -160,6 +178,8 @@ export default function Canvas3D({
 
   useCadViewport(mountRef, activeGlbUrl, {
     name: canvas.name,
+    // 攤平態才疊折彎虛線(摺疊態傳 null → 不建 overlay)
+    bendLines: view === "flat" ? flatLines : null,
     onStatus: (status) => dispatch({ type: "SET_CANVAS_STATUS", status }),
     onReady: ({
       runtime,
@@ -169,6 +189,7 @@ export default function Canvas3D({
       setAutoRotate,
       setGrid,
       setAxes,
+      setBendLines,
       setFaceHighlights,
       faceFillCount,
       faceFillDebug,
@@ -185,6 +206,7 @@ export default function Canvas3D({
         setAutoRotate,
         setGrid,
         setAxes,
+        setBendLines,
         setFaceHighlights,
         faceFillCount,
         faceFillDebug,
@@ -243,6 +265,11 @@ export default function Canvas3D({
       window.__cadChrome = {
         grid: () => apiRef.current.chrome?.grid?.visible ?? null,
         axes: () => apiRef.current.chrome?.axes?.visible ?? null,
+        // 折彎線 overlay 探針:{visible, count=線段組數(藍+紅)}(攤平態才存在)
+        bendLines: () => {
+          const g = apiRef.current.chrome?.bendLines;
+          return g ? { visible: g.visible, count: g.children.length } : null;
+        },
       };
       window.__cadFaceFill = {
         count: () => apiRef.current.faceFillCount?.() ?? 0,

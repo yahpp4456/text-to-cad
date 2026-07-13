@@ -241,6 +241,61 @@ function ClarifyCard({ it, pending }) {
   );
 }
 
+// 人工記教訓的「是/否卡」——對話流第一張會打 API 的互動卡(其餘卡皆被動紀錄)。
+// 「是」→ handlers.onLessonOffer 打 POST /api/lessons/record;「否」→ 純前端標記。
+// 答過(it.answered)後鎖定並顯示結果。
+function LessonOfferCard({ it, onLessonOffer }) {
+  const answered = it.answered; // "added" | "skipped" | undefined
+  return (
+    <div className="card lesson-offer-card" style={{ "--ac": "var(--emit)" }}>
+      <div className="card-head">
+        <span className="bar bar-emit" />
+        <span className="card-eyebrow grow">要把這件事加入教訓嗎?</span>
+      </div>
+      <div className="lesson-offer-body">
+        {it.symptom && (
+          <span className="lesson-offer-line">
+            <b>症狀</b> {it.symptom}
+          </span>
+        )}
+        {it.fix && (
+          <span className="lesson-offer-line">
+            <b>修法</b> {it.fix}
+          </span>
+        )}
+      </div>
+      {answered ? (
+        <div className="lesson-offer-done" data-outcome={answered}>
+          {answered === "added"
+            ? "✓ 已加入(未蒸餾),可在「教訓」面板蒸餾升級"
+            : answered === "pending"
+              ? "加入中…"
+              : "已略過"}
+        </div>
+      ) : (
+        <div className="lesson-offer-actions">
+          <a
+            className="fb-action primary"
+            onClick={() =>
+              onLessonOffer?.(it.id, "added", {
+                symptom: it.symptom,
+                rootCause: it.rootCause,
+                fix: it.fix,
+                tag: it.tag,
+              })
+            }
+          >
+            是,加入教訓
+          </a>
+          <a className="fb-action" onClick={() => onLessonOffer?.(it.id, "skipped")}>
+            否
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Message({ it, handlers, pending }) {
   switch (it.type) {
     case "user":
@@ -261,6 +316,8 @@ export default function Message({ it, handlers, pending }) {
       return <ArtifactCard it={it} onSelectVersion={handlers.onSelectVersion} />;
     case "clarify":
       return <ClarifyCard it={it} pending={pending} />;
+    case "lesson_offer":
+      return <LessonOfferCard it={it} onLessonOffer={handlers.onLessonOffer} />;
     default:
       return null;
   }

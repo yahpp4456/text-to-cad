@@ -42,8 +42,20 @@ def main() -> int:
     if not hasattr(mod, "gen_flat"):
         return _fail("產生器沒有 gen_flat()(非獨立鈑金件,無攤平預覽)")
 
+    from cadpy.parts import SheetMetal
+
+    # 取 SheetMetal(鈑金產生器的 _build() 慣例)→ 一次 build 拿攤平實體 + 折彎線;
+    # 拿不到(非慣例產生器)就退回 gen_flat() 只出 GLB、無折彎線(best-effort)。
+    sm = None
+    if hasattr(mod, "_build"):
+        try:
+            cand = mod._build()
+            if isinstance(cand, SheetMetal):
+                sm = cand
+        except Exception:  # noqa: BLE001
+            sm = None
     try:
-        shape = mod.gen_flat()
+        shape = sm.flat() if sm is not None else mod.gen_flat()
     except Exception as exc:  # noqa: BLE001
         return _fail(f"gen_flat() 執行失敗:{type(exc).__name__}: {exc}")
 
@@ -81,7 +93,23 @@ def main() -> int:
     written = Path(written)
     if not written.is_file() or written.stat().st_size == 0:
         return _fail("攤平 GLB 未落地")
-    print(json.dumps({"ok": True, "file": str(written)}, ensure_ascii=False))
+
+    # 折彎線 sidecar(有 SheetMetal 才寫):與攤平 GLB 同目錄同基名 .flat.lines.json,
+    # 前端疊虛線 overlay 用({t=厚度,lines=[{a,b,up}]},2D flat 座標 + up/down)。
+    lines_file = None
+    if sm is not None:
+        try:
+            # .<name>.flat.step.glb → .<name>.flat.lines.json(與 pipeline 快照命名一致)
+            nm = written.name
+            base = nm[:-len(".step.glb")] if nm.endswith(".step.glb") else nm[:-4]
+            lp = written.parent / (base + ".lines.json")
+            with open(lp, "w", encoding="utf-8") as f:
+                json.dump({"t": sm.thickness, "lines": sm.flat_bend_lines()}, f, ensure_ascii=False)
+            lines_file = str(lp)
+        except Exception:  # noqa: BLE001
+            lines_file = None  # best-effort:折彎線失敗不擋攤平 GLB
+
+    print(json.dumps({"ok": True, "file": str(written), "lines_file": lines_file}, ensure_ascii=False))
     return 0
 
 

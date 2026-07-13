@@ -19,6 +19,7 @@ import {
   writeGenerator,
 } from "../cad/pipeline.mjs";
 import { condenseTraceback, spawnPython } from "../cad/python.mjs";
+import { lessonsEnabled } from "../config.mjs";
 import { unescapeNewlines } from "../../lib/clarifyText.js";
 import {
   noteBuildSuccess,
@@ -141,6 +142,30 @@ export function buildCadchatServer({ session, emit, signal }) {
           session._paramsEmitted = true;
           emit("params", { defs });
           return result({ ok: true });
+        },
+      ),
+      tool(
+        "emit_lesson_offer",
+        "修正『驗證全綠卻看圖才發現』的缺陷後,問使用者是否把它記成教訓(對話流是/否卡)。" +
+          "symptom=原本錯在哪、rootCause=為何是決定性可預防的且驗證為何沒攔到、fix=下次正確寫法" +
+          "(具體到 API)、tag=短主題 slug(如 mirror-symmetry)。只在使用者回饋的視覺/幾何缺陷" +
+          "且該缺陷通過了驗證時用;build/validate 紅燈的自修已自動記錄,不要為它發卡。",
+        {
+          symptom: z.string(),
+          rootCause: z.string(),
+          fix: z.string(),
+          tag: z.string(),
+        },
+        async ({ symptom, rootCause, fix, tag }) => {
+          // 停用時不出卡(避免「卡出了按了沒反應」);出卡不寫任何東西,提交交給按鈕。
+          if (!lessonsEnabled()) return result({ ok: false, note: "教訓系統已停用,未出卡。" });
+          emit("lesson_offer", {
+            symptom: unescapeNewlines(symptom),
+            rootCause: unescapeNewlines(rootCause),
+            fix: unescapeNewlines(fix),
+            tag: String(tag || "").trim(),
+          });
+          return result({ ok: true, note: "已請使用者確認是否加入教訓。" });
         },
       ),
 

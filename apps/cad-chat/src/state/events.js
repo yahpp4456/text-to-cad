@@ -131,6 +131,7 @@ export function handleEvent(dispatch, type, data = {}) {
           snapshot: data.snapshot, // false = 無凍結快照(JSON 路徑經 App.jsx 直傳,兩邊欄位要一致)
           hasDxf: data.hasDxf === true, // 鈑金件(產生器有 gen_dxf)→ DXF 展開圖鈕
           flatGlbUrl: data.flatGlbUrl ?? null, // 鈑金件(有 gen_flat)→ 摺疊/攤平即時切換
+          flatLinesUrl: data.flatLinesUrl ?? null, // 折彎線 sidecar → 攤平態虛線 overlay
           projectDir: data.projectDir ?? null, // 唯讀檢視版的升級目錄(一般產出=null)
           // 產圖模式戳記(server versionStamp 權威發;舊事件無欄位 → undefined 三態)
           mode: data.mode === "actual" ? "actual" : data.mode === "design" ? "design" : undefined,
@@ -148,6 +149,7 @@ export function handleEvent(dispatch, type, data = {}) {
         fileType: data.type || "",
         projectDir: data.projectDir ?? null,
         flatGlbUrl: data.flatGlbUrl ?? null,
+        flatLinesUrl: data.flatLinesUrl ?? null,
       });
       break;
     case "params":
@@ -159,6 +161,21 @@ export function handleEvent(dispatch, type, data = {}) {
       break;
     case "motion":
       dispatch({ type: "SET_MOTION", motion: data });
+      break;
+    case "lesson_offer":
+      // 「驗證全綠卻看圖才發現」缺陷修正後,agent 問是否記教訓(對話流是/否卡)。
+      // payload 帶整理好的內容(server choke point 已正規化;這裡兜舊事件再防禦一次)。
+      // **不放 id 鍵**:chatStore ADD_ITEM 是 { id, ...action.item },帶 id 會蓋掉 mint 的。
+      dispatch({
+        type: "ADD_ITEM",
+        item: {
+          type: "lesson_offer",
+          symptom: unescapeNewlines(data.symptom),
+          rootCause: unescapeNewlines(data.rootCause),
+          fix: unescapeNewlines(data.fix),
+          tag: String(data.tag || "").trim(),
+        },
+      });
       break;
     case "error":
       dispatch({ type: "ADD_ITEM", item: { type: "ai", text: `⚠ ${data.message}`, isError: true } });

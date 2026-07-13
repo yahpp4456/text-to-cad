@@ -83,6 +83,22 @@ class LBracketTests(unittest.TestCase):
         self.assertAlmostEqual(bb.max.Z, 40.0, places=6)  # length = OUTER leg
         self.assertAlmostEqual(bb.max.X, 60.0, places=6)  # base 56 + (R+t)
 
+    def test_flat_bend_lines(self) -> None:
+        # L bracket: 1 bend, up-fold → 1 line, up=True, in flat XY
+        sm = _l_bracket()
+        lines = sm.flat_bend_lines()
+        self.assertEqual(len(lines), 1)
+        self.assertTrue(lines[0]["up"])
+        self.assertEqual(len(lines[0]["a"]), 2)  # 2D
+        # down-fold → up=False; span length == bend span (56×30 base, x+ full edge=30)
+        smd = SheetMetal(thickness=2.0, bend_radius=2.0, label="down")
+        smd.base_rect(56.0, 30.0).flange("x+", angle=-90.0, web=36.0)
+        dl = smd.flat_bend_lines()
+        self.assertEqual(len(dl), 1)
+        self.assertFalse(dl[0]["up"])
+        seg = math.dist(dl[0]["a"], dl[0]["b"])
+        self.assertAlmostEqual(seg, 30.0, places=6)  # full x+ edge span
+
     def test_down_fold_mirrors_up_fold(self) -> None:
         sm = SheetMetal(thickness=2.0, bend_radius=2.0, label="down")
         sm.base_rect(56.0, 30.0).flange("x+", angle=-90.0, web=36.0)

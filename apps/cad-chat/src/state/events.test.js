@@ -25,6 +25,23 @@ test("spec 事件:ADD_ITEM + SET_TURN_SPEC 雙 dispatch,chips 字面 \\n 已正�
   assert.deepEqual(turn.chips, add.item.chips); // 兩路吃同一份正規化資料
 });
 
+test("lesson_offer 事件:單一 ADD_ITEM、字面 \\n 正規化、不帶 id 鍵(讓 reducer mint)", () => {
+  const actions = collect("lesson_offer", {
+    symptom: "肋錯位\\n右肋內縮",
+    rootCause: "繞向破壞對稱",
+    fix: "extrude(..., both=True)",
+    tag: "mirror-symmetry",
+  });
+  assert.equal(actions.length, 1);
+  const [add] = actions;
+  assert.equal(add.type, "ADD_ITEM");
+  assert.equal(add.item.type, "lesson_offer");
+  assert.equal(add.item.symptom, "肋錯位\n右肋內縮"); // 字面 \n → 真換行
+  assert.equal(add.item.rootCause, "繞向破壞對稱");
+  assert.equal(add.item.tag, "mirror-symmetry");
+  assert.ok(!("id" in add.item), "不帶 id 鍵,否則覆蓋 chatStore ADD_ITEM mint 的 id");
+});
+
 test("version 事件:hasDxf 嚴格 === true 透傳(鈑金 DXF 鈕依據;舊事件無欄位 → false)", () => {
   const on = collect("version", { id: "v1", name: "x", glbUrl: "u", hasDxf: true });
   assert.equal(on[0].version.hasDxf, true);
@@ -33,9 +50,10 @@ test("version 事件:hasDxf 嚴格 === true 透傳(鈑金 DXF 鈕依據;舊事�
 });
 
 test("version/present 事件:projectDir + flatGlbUrl 透傳(缺 → null)", () => {
-  const v = collect("version", { id: "v1", name: "x", glbUrl: "u", projectDir: "d", flatGlbUrl: "f" });
+  const v = collect("version", { id: "v1", name: "x", glbUrl: "u", projectDir: "d", flatGlbUrl: "f", flatLinesUrl: "ln" });
   assert.equal(v[0].version.projectDir, "d");
   assert.equal(v[0].version.flatGlbUrl, "f");
+  assert.equal(v[0].version.flatLinesUrl, "ln");
   const v0 = collect("version", { id: "v2", name: "x", glbUrl: "u" });
   assert.equal(v0[0].version.projectDir, null);
   assert.equal(v0[0].version.flatGlbUrl, null);

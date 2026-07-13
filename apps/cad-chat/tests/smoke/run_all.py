@@ -31,6 +31,7 @@ ORDER = [
     "smoke_versions.py",
     "smoke_restore.py",
     "smoke_lessons.py",
+    "smoke_lesson_offer.py",
 ]
 # 消耗訂閱/API 回合
 LLM_GATED = [
@@ -40,6 +41,7 @@ LLM_GATED = [
     "smoke_image_clarify_live.py",
     "smoke_sheetmetal_live.py",
     "smoke_canvas_context_live.py",
+    "smoke_lesson_offer_live.py",
 ]
 
 if not server_alive():

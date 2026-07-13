@@ -362,6 +362,17 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
   (歷史產物非生成教訓)、measure/align 等工具使用錯誤、**使用者中斷/斷線殺掉的
   子程序**(`signal.aborted` 守衛,人為中止不是生成失敗;漏網的 killed 子程序另分型
   `build:killed`)。interrupt 後新舊 turn 交錯時,flush 以 buffer 身份比對,只刷自己的。
+- **人工記教訓(是/否卡,2026-07-13)**:上面全靠**紅色**觸發,但有一整類缺陷是
+  「驗證全綠、只有看渲染才發現」(如鏡射對稱破壞的肋錯位——`assert_valid_solid` 過、
+  所有 validate 檢查 SKIP,agent 一次 `cad_build(edits)` 修好、零失敗案例 → 迴圈對它是
+  瞎的)。補法:agent 修正這類「假綠」缺陷後呼叫 `emit_lesson_offer(symptom, rootCause,
+  fix, tag)`,對話流出一張「要把這件事加入教訓嗎?」**是/否卡**;按「是」→ 前端
+  `POST /api/lessons/record` → `recordManualLesson` **直寫**一筆 `source:"manual"` 的未蒸餾
+  pending case(不經 per-turn buffer——提交是按鈕點擊的獨立請求;寫入失敗故意 throw 由
+  middleware 回 500,不吞成假✓),按「否」→ 純前端 dismiss。signature=`manual:<slug(tag)>`,
+  命中既有教訓即連結+計數。**刻意不自動蒸餾**(定案「留 pending 手動蒸餾」):`maybeDistill`
+  非 force 排除 `manual:` 前綴,由使用者在面板按「立即蒸餾」升級。何時該發卡的紀律在
+  `agent/prompt.mjs`(只限使用者回饋的視覺/幾何缺陷且通過驗證;RED 自修已自動記錄,不發)。
 - **分類(signature)**:`build:<Exc>[:subtype]` / `validate:<checkId>[:subtype]` /
   `turn:*`——例外類+穩定訊息前綴,AssertionError 依 geometry_checks 訊息分
   interference / invalid-solid / motion-clear(不分型會蒸成一鍋糊)。
@@ -390,7 +401,8 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
   `window.__cadLessons`。
 - **API**:`GET /api/lessons`(pending 分組帶逐筆 `cases[]`)、`GET /api/lessons/digest`
   (與注入 prompt 完全相同的字串,驗證用)、`POST /api/lessons/{distill,redistill,
-  update,delete,delete-case}`(`delete-case` 刪單筆未蒸餾案例,壞/已連結 id → 404)。
+  update,delete,delete-case,record}`(`delete-case` 刪單筆未蒸餾案例,壞/已連結 id → 404;
+  `record` 人工記教訓,缺內容 → ok:false empty、寫入失敗 → 500)。
 - **開關**:`CADCHAT_LESSONS=0` 整個子系統停用(錄製/蒸餾/注入全 no-op)。
 
 ## 煙測(Playwright,`tests/smoke/`)
@@ -481,6 +493,15 @@ ghost×運動示意組成 + 樹選件連動 toggle)、`smoke_open_dedupe.py`(重
   零 Python;攤平態藏運動鈕)。偵測用 `generatorHasFlat`(`/^def gen_flat/m`)——精準
   命中獨立鈑金件,**自動排除組合件**(如 sheet_stepper_mount 有 gen_dxf 但無 gen_flat,
   攤平組合件無意義)。改尺寸滑桿才重算(攤平 GLB 隨之重建)。
+- **攤平態折彎虛線 overlay(2026-07-11 三版)**:攤平 3D 視圖的板面上疊折彎中心線
+  (虛線),**藍=上折 / 紅=下折**(對齊 DXF BEND_UP/BEND_DOWN),看得出往哪折。資料源
+  =`SheetMetal.flat_bend_lines()`(公開方法,包 `_flat_geo()` 的 bend_lines);`flat_glb.py`
+  併寫 `.<name>.flat.lines.json` sidecar(`{t, lines:[{a,b,up}]}`,2D flat 座標),沿
+  `flatGlbUrl` 同路(快照/emitPresent `flatLinesUrl`/version·present/events/store)下到
+  Canvas3D;攤平態 fetch 後傳 `bendLines` 給 `useCadViewport`,仿 axes chrome 直接
+  `viewport.scene.add` 藍/紅兩組 `LineSegments`(`LineDashedMaterial`+`computeLineDistances`,
+  疊頂面 z=t+ε)。座標直接對位(攤平 GLB 無 recenter、Z-up,世界座標==builder flat XY)。
+  摺疊/攤平切換是整場景重建 → overlay 天然只在攤平態存在。dev 鉤 `__cadChrome.bendLines()`。
 
 ## 跨重整續聊 + 版本快照真回退(2026-07-04)
 

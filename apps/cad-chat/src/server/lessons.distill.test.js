@@ -238,6 +238,28 @@ test("maybeDistill:門檻(預設 3)未達 → 不呼叫 LLM;force → 門檻 1",
   }
 });
 
+test("maybeDistill:manual: 前綴人工教訓自動蒸餾不碰(達門檻也跳過),force 才蒸", async () => {
+  const dir = mkTmp();
+  try {
+    const f = path.join(dir, "lessons.json");
+    seedPending(f, "manual:mirror-symmetry", 3, { resolved: true }); // 已達預設門檻 3
+    let calls = 0;
+    const fake = async () => {
+      calls += 1;
+      return VALID_OUT;
+    };
+    // 自動:即使達門檻也被 manual: 前綴排除,零 LLM call(定案「留 pending 手動蒸餾」)
+    const auto = await maybeDistill({ file: f, env: ENV, callLlm: fake });
+    assert.deepEqual([auto.distilled, calls], [[], 0], "manual: 叢集自動蒸餾應跳過");
+    // 手動 force:照蒸
+    const forced = await maybeDistill({ file: f, env: ENV, callLlm: fake, force: true });
+    assert.deepEqual(forced.distilled, ["LS-1"]);
+    assert.equal(calls, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("maybeDistill:認證未備 / 停用 / single-flight 三種擋路", async () => {
   const dir = mkTmp();
   try {

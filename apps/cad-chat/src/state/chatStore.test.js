@@ -4,6 +4,34 @@ import { test } from "node:test";
 
 import { initialState, reducer } from "./chatStore.js";
 
+// ── 人工記教訓「是/否卡」──
+
+test("ADD_ITEM(lesson_offer):mint id、無 answered;ANSWER_LESSON_OFFER 標記該卡", () => {
+  let s = reducer(initialState, {
+    type: "ADD_ITEM",
+    item: { type: "lesson_offer", symptom: "s", fix: "f", tag: "t" },
+  });
+  const id = s.items[0].id;
+  assert.ok(id && s.items[0].answered === undefined);
+  s = reducer(s, { type: "ANSWER_LESSON_OFFER", id, outcome: "added" });
+  assert.equal(s.items[0].answered, "added");
+  // 冪等/純函式:再答覆寫成新結果
+  s = reducer(s, { type: "ANSWER_LESSON_OFFER", id, outcome: "skipped" });
+  assert.equal(s.items[0].answered, "skipped");
+});
+
+test("ANSWER_LESSON_OFFER:不存在 id / 非 lesson_offer 型別 → no-op", () => {
+  let s = reducer(initialState, { type: "ADD_ITEM", item: { type: "ai", text: "x" } });
+  const aiId = s.items[0].id;
+  const before = s.items;
+  // 打到 AI 卡的 id(型別不符)→ 不動
+  s = reducer(s, { type: "ANSWER_LESSON_OFFER", id: aiId, outcome: "added" });
+  assert.deepEqual(s.items, before);
+  // 不存在的 id → 不動
+  s = reducer(s, { type: "ANSWER_LESSON_OFFER", id: "m999", outcome: "added" });
+  assert.deepEqual(s.items, before);
+});
+
 // ── 版本 verified stamp(server versionStamp 發;badge / 匯出閘依賴)──
 // mode 欄位是雙模式時代遺留:reducer 對未知欄位原樣透傳,不特別處理。
 
@@ -167,9 +195,10 @@ test("PRESENT:同 glbUrl 保留 status(重複開同一檔 re-present 不卡 load
 test("canvas.flatGlbUrl:PRESENT 帶入、切版本沿用、非鈑金版歸 null(摺疊/攤平切換依據)", () => {
   let s = reducer(initialState, {
     type: "PRESENT", glbUrl: "/f.glb", name: "u", code: "u", ver: "v1",
-    flatGlbUrl: "/f.flat.glb",
+    flatGlbUrl: "/f.flat.glb", flatLinesUrl: "/f.lines.json",
   });
   assert.equal(s.canvas.flatGlbUrl, "/f.flat.glb");
+  assert.equal(s.canvas.flatLinesUrl, "/f.lines.json"); // 折彎線 sidecar 同路透傳
   // 一般產出無 flatGlbUrl → null(不繼承)
   const gen = reducer(s, { type: "PRESENT", glbUrl: "/g.glb", name: "g", code: "g", ver: "v2" });
   assert.equal(gen.canvas.flatGlbUrl, null);

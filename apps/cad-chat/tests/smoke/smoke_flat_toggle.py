@@ -58,11 +58,21 @@ with sync_playwright() as p:
     c.check("攤平段轉 active",
             page.locator(".fold-seg", has_text="攤平").get_attribute("data-on") == "true")
 
-    # 點回「摺疊」段
+    # 折彎線 overlay:攤平態板面上疊虛線(u_bracket 2 條上折 → 藍線 1 組)
+    bl = page.evaluate("() => window.__cadChrome && window.__cadChrome.bendLines()")
+    c.check("攤平態出現折彎線 overlay(count>0、可見)",
+            bl and bl.get("visible") and bl.get("count", 0) > 0, str(bl))
+
+    # 點回「摺疊」段 → overlay 消失(場景重建、不含 bendLines)
     page.locator(".fold-seg", has_text="摺疊").click()
+    page.wait_for_function("() => !document.querySelector('.canvas-loading')", timeout=30000)
     page.wait_for_timeout(400)
     c.check("點回摺疊段 active",
             page.locator(".fold-seg", has_text="摺疊").get_attribute("data-on") == "true")
+    # bendGroup 永遠建(供 setBendLines/chrome),但摺疊態不加線段 → count=0(重建後空)
+    bl2 = page.evaluate("() => window.__cadChrome && window.__cadChrome.bendLines()")
+    c.check("摺疊態無折彎線段(count=0,場景重建不加 bendLines)",
+            bl2 and bl2.get("count") == 0, str(bl2))
 
     c.check("全程無 JS 錯誤", not errs, "; ".join(errs[:3]))
     page.screenshot(path=out_path("smoke_flat_toggle.png"))

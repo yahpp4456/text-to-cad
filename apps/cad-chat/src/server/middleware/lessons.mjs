@@ -13,6 +13,7 @@ import {
   lessonsFile,
   pendingGroups,
   readStore,
+  recordManualLesson,
   updateLessonStatus,
 } from "../lessons.mjs";
 import { maybeDistill, redistillLesson } from "../lessons.distill.mjs";
@@ -137,6 +138,29 @@ export function lessonsMiddleware({ file = lessonsFile() } = {}) {
         return;
       }
       sendJson(res, r.ok ? 200 : 404, r);
+      return;
+    }
+    // 人工記教訓(對話流「是/否卡」按「是」)。直寫 store,失敗會 throw → catch 回 500
+    // (同其他寫入端點,絕不吞成假✓)。缺內容/停用 → ok:false 誠實回,不是協定錯誤。
+    if (url.pathname === "/api/lessons/record") {
+      let r;
+      try {
+        r = recordManualLesson(
+          {
+            sessionId: typeof body.sessionId === "string" ? body.sessionId : null,
+            symptom: body.symptom,
+            rootCause: body.rootCause,
+            fix: body.fix,
+            tag: body.tag,
+            partName: body.partName,
+          },
+          { file },
+        );
+      } catch (err) {
+        sendJson(res, 500, { ok: false, error: "store_write_failed", detail: scrubPaths(String(err?.message || err)) });
+        return;
+      }
+      sendJson(res, r.ok ? 200 : 400, r);
       return;
     }
     sendJson(res, 404, { error: "not found" });

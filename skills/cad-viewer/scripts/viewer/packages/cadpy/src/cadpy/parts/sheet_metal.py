@@ -742,6 +742,18 @@ class SheetMetal:
             ys += [p[1] for p in pts]
         return (max(xs) - min(xs), max(ys) - min(ys))
 
+    def flat_bend_lines(self) -> list[dict]:
+        """Bend center lines in FLAT coordinates, one per bend:
+        ``[{"a": [x, y], "b": [x, y], "up": bool}]`` -- ``up`` = fold toward +Z
+        (angle > 0), matching the DXF BEND_UP / BEND_DOWN convention. A viewer
+        can overlay these (dashed) on the flat-pattern preview to show where the
+        part folds. Same flat XY frame as ``flat()`` (z = 0 mid-plane)."""
+        _panels, _straps, blines = self._flat_geo()
+        return [
+            {"a": [p0[0], p0[1]], "b": [p1[0], p1[1]], "up": ang > 0}
+            for p0, p1, ang in blines
+        ]
+
     # -- 3D construction ---------------------------------------------------------
     def _panel_face(self, node: _Node):
         from build123d import Circle, Polygon, Pos

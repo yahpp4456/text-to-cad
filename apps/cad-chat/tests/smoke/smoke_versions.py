@@ -171,6 +171,15 @@ _flat_rel = urllib.parse.unquote((d_v1.get("flatGlbUrl") or "").split("file=")[-
 c.check("flatGlbUrl 指 versions/v1 快照且落盤",
         "versions/v1/" in _flat_rel and os.path.exists(os.path.join(REPO, _flat_rel.replace("/", os.sep))),
         _flat_rel)
+# flatLinesUrl(折彎線 sidecar)也帶、落盤、內容含 up/down
+c.check("鈑金 v1 帶 flatLinesUrl(折彎線 overlay)", bool(d_v1.get("flatLinesUrl")), str(d_v1.get("flatLinesUrl")))
+_ln_rel = urllib.parse.unquote((d_v1.get("flatLinesUrl") or "").split("file=")[-1].split("&")[0])
+_ln_abs = os.path.join(REPO, _ln_rel.replace("/", os.sep))
+c.check("flatLinesUrl 指 versions/v1 快照且落盤", "versions/v1/" in _ln_rel and os.path.exists(_ln_abs), _ln_rel)
+if os.path.exists(_ln_abs):
+    _ld = json.load(open(_ln_abs, encoding="utf-8"))
+    c.check("折彎線 sidecar 內容:2 條折彎線 + 厚度",
+            len(_ld.get("lines") or []) == 2 and _ld.get("t") == 2.0, str(_ld)[:150])
 
 de = json.loads(post("/api/export", {"sessionId": d_sid, "ver": "v1", "format": "dxf"}, timeout=300))
 c.check("鈑金匯 dxf ok(經匯出閘)", de.get("ok") is True, str(de)[:250])

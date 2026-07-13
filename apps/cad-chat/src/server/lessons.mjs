@@ -390,6 +390,77 @@ export function flushTurnRecorder(session, { file = lessonsFile(), rec } = {}) {
   }
 }
 
+// ── 人工記教訓(對話流「是/否卡」按「是」→ POST /api/lessons/record → 這裡)──
+// 補教訓迴圈唯一缺口:一整類缺陷是「驗證全綠、只有看渲染才發現」(如鏡射對稱破壞的
+// 肋錯位),使用者口頭回饋 → agent 一次 cad_build(edits) 修好,前面零失敗案例、零
+// emit_retry → flushTurnRecorder 一個 case 都沒產生 → 迴圈對它是瞎的。此函式讓 agent
+// 整理好的(症狀/根因/修法)不經 RED 直接落成一筆未蒸餾 pending case。
+//
+// **不走 per-turn buffer**:提交是按鈕點擊的獨立 HTTP 請求,可能落在非同回合(甚至無
+// 進行中 turn)——直寫 store。**throw 契約與 CRUD 端點一致**(不同於本檔 capture/digest
+// 的 no-throw 鐵則):writeStore 失敗讓它 throw,由 middleware catch 回 500,絕不吞成
+// 假✓(前端卡會顯示「已加入」但磁碟什麼都沒有)。
+export function manualSignature(tag) {
+  const slug = String(tag ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return `manual:${slug || "misc"}`;
+}
+
+export function recordManualLesson(
+  { sessionId, symptom, rootCause, fix, tag, partName } = {},
+  { file = lessonsFile() } = {},
+) {
+  if (!lessonsEnabled()) return { ok: false, error: "disabled" };
+  const sym = cap(scrub(symptom), 200);
+  const rc = cap(scrub(rootCause), 200);
+  const fx = cap(scrub(fix), 200);
+  if (!sym && !fx) return { ok: false, error: "empty" }; // 至少要有症狀或修法才成一筆教訓
+  const signature = manualSignature(tag);
+  const store = readStore(file);
+  store.seq += 1;
+  const at = nowIso();
+  const kase = {
+    id: `c_${store.seq}`,
+    at,
+    sessionId: sessionId || null,
+    turnId: null,
+    source: "manual",
+    signature,
+    userText: sym, // 蒸餾 prompt 讀 userText 當「需求」欄 → 放症狀語境
+    note: cap(`${sym}${rc ? ` — 根因:${rc}` : ""}`, 300),
+    stderrTail: null,
+    partName: partName || null,
+    partCount: 0,
+    attempt: 0,
+    // retry.reason/adjustment 是蒸餾最高價值原料(同 emit_retry 自診慣例):症狀 → 修法。
+    retry: { reason: sym, adjustment: fx },
+    resolved: true,
+    resolvedBy: "manual",
+    fixEdits: fx ? [cap(fx, 80)] : null,
+    lessonId: null,
+  };
+  // 命中既有教訓的 signature/altSignatures → 直接連結+計數(同 flushTurnRecorder 語意);
+  // 否則留 pending(未蒸餾),由使用者面板「立即蒸餾」升級(自動蒸餾不碰 manual:,見 distill)。
+  const lesson = store.lessons.find(
+    (l) =>
+      l.signature === signature ||
+      (Array.isArray(l.altSignatures) && l.altSignatures.includes(signature)),
+  );
+  if (lesson) {
+    kase.lessonId = lesson.id;
+    lesson.caseCount = (lesson.caseCount || 0) + 1;
+    if (kase.resolved) lesson.resolvedCount = (lesson.resolvedCount || 0) + 1;
+    lesson.lastHitAt = at;
+  }
+  store.cases.push(kase);
+  writeStore(store, file); // 失敗會 throw → middleware catch 回 500(見檔頭契約說明)
+  return { ok: true, caseId: kase.id, signature, linkedLessonId: lesson ? lesson.id : null };
+}
+
 // ── pending 統計(API 面板 + 蒸餾排程共用)──
 export function pendingGroups(store) {
   const map = new Map();

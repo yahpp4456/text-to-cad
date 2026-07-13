@@ -723,6 +723,49 @@
   color: #7a5a1e;
 }
 
+/* 人工記教訓「是/否卡」(對話流互動卡;唯一會打 API 的卡) */
+.lesson-offer-card {
+  border-color: color-mix(in oklab, var(--emit) 40%, var(--line));
+}
+.lesson-offer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0 10px;
+}
+.lesson-offer-line {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.lesson-offer-line b {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-right: 6px;
+}
+.lesson-offer-actions {
+  display: flex;
+  gap: 8px;
+}
+.lesson-offer-actions .fb-action.primary {
+  color: #fff;
+  background: var(--emit);
+  border-color: var(--emit);
+}
+.lesson-offer-done {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+}
+.lesson-offer-done[data-outcome="added"] {
+  color: var(--emit);
+}
+
 /* artifact */
 .artifact-card {
   --ac: var(--emit);
