@@ -18,6 +18,7 @@ from _util import BASE, HERE, server_alive
 ORDER = [
     "smoke_view_chrome.py",
     "smoke_clarify_wizard.py",
+    "smoke_spec_panel.py",
     "smoke_upload.py",
     "smoke_verify_gate.py",
     "smoke_asm_ui.py",
@@ -28,6 +29,7 @@ ORDER = [
     # 檔去重」工作流;同 glbUrl 保留 status 由 chatStore.test.js 單元測覆蓋。
     "smoke_open_project.py",
     "smoke_flat_toggle.py",
+    "smoke_sketch.py",
     "smoke_versions.py",
     "smoke_restore.py",
     "smoke_lessons.py",
@@ -42,6 +44,8 @@ LLM_GATED = [
     "smoke_sheetmetal_live.py",
     "smoke_canvas_context_live.py",
     "smoke_lesson_offer_live.py",
+    "smoke_sketch_live.py",
+    "smoke_sketch_clarify_live.py",
 ]
 
 if not server_alive():

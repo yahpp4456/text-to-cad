@@ -55,6 +55,45 @@ effort 的模型有效,否則 SDK 靜默降級)、`CADCHAT_THINKING`(深度思�
 `off|disabled|adaptive|<正整數 budgetTokens>`,**預設 off**——不做可見深度思考、避免長
 停頓,深度由 effort 控)。三者只作用於主 agent(`runner.mjs`);教訓蒸餾 agent 用 SDK 預設。
 
+## 打包散布(Electron 內測版;操作手冊見 [PACKAGING.md](PACKAGING.md),計畫/驗證紀錄見 repo 根 `b-calm-swing.md`)
+
+**日常打包/換 key = 編輯 `.env.bake` → `npm run dist`**(bake 驗證→vite build→electron-builder
+一條龍);細節、檢查清單、troubleshooting 全在 PACKAGING.md。以下是機制說明:
+
+發給內部可信同事的 Windows 桌面版。**認證 = build 時注入 Sam 自備 API key(方案 B)**;
+key 明文躺產物內是已知並接受的風險(防線 = 可信對象 + 專屬 key + Console 花費上限;
+asar 非加密,寫死源碼同樣可抽,故不採)。
+
+- **單一貼入點**:build 機建 `apps/cad-chat/.env.bake`(gitignored)貼
+  `ANTHROPIC_API_KEY`(必填,`sk-ant-` 形狀檢查)+ 任何 `CADCHAT_*` 預設(選填,鍵白名單)。
+  `npm run bake-auth` 驗證後產 `.env.baked`(隨包散布);`npm run build:packaged` 一條龍。
+- **執行期載入**(`config.loadBakedEnv`):**fallback-only**——真 env / `.env.local` 已有
+  任一認證則整檔略過(`resolveAuth` 的 tie-break 是 apikey 一律勝 oauth,不加這道 guard,
+  dev 機殘留 `.env.baked` 會靜默改用 baked key 計費)。
+- **路徑契約**(`config.mjs`,env 優先 + `import.meta.url` fallback;dev 不設 = 恆等式零回歸):
+  `CADCHAT_RUNTIME_ROOT`(唯讀程式資產根)/`CADCHAT_DATA_ROOT`(可寫資料根)/
+  `CADCHAT_PYTHON_EXE`/`CADCHAT_DIST_ROOT`/`CADCHAT_MODELS_FIXTURES_ROOT`。models 為
+  雙層:可寫 `DATA_ROOT/models` 優先、唯讀 fixtures fallback(`cad/paths.mjs
+  resolveModelRead`;寫入永遠只准可寫層)。`spawnPython` 腳本絕對化到 RUNTIME_ROOT、
+  `cwd=DATA_ROOT`(產物相對基準);`scrubPaths` 雙根+HOME 全遮。
+- **可搬移 Python runtime**(`build-runtime/python/`,gitignored):python.org embeddable
+  3.13 + 白名單套件(build123d novtk 鏈 + ezdxf)+ **非-editable** cadpy wheel——無
+  `.pth` 絕對路徑、無 Store Python 依賴、無 vtk/playwright,約 556MB。重建腳本見
+  `b-calm-swing.md` P0-1。
+- **SDK CLI 釘死**:兩處 `query()`(runner + lessons.distill)在 packaged 下傳
+  `pathToClaudeCodeExecutable`(`resolveClaudeCliExe`:asar→`.unpacked` 改寫、
+  `CADCHAT_CLAUDE_CLI` 覆寫;dev 回 null 走 SDK 內建);`agentEnv` 恆刪
+  `ELECTRON_RUN_AS_NODE`,packaged 下設 `CLAUDE_CONFIG_DIR=DATA_ROOT/.claude` 隔離 transcript。
+- **Electron 殼(Phase 1)**:`npm run electron:dev` 起桌面殼(dev 模式,走 repo 恆等式+Vite)。
+  組裝鏈:`electron/main.cjs`(CJS,single-instance、BrowserWindow `contextIsolation+sandbox`
+  無 preload——渲染層=純瀏覽器,信任模型與網頁版相同)→ 動態 import `electron/launch.mjs`
+  (`computeRuntimeEnv` 依 `app.isPackaged` 算 `CADCHAT_*` 路徑 env,**只餵路徑不碰憑證**;
+  `CADCHAT_PORT=0`=OS 配臨時埠免競態)→ `utilityProcess.fork src/server/entry.child.mjs`
+  (`ready` IPC 回實際 port/url)→ `loadURL`。退出:`before-quit` → `taskkill /pid /T /F`
+  連根清 server 子樹(python.exe / claude.exe 孫程序)。server 組裝本體在
+  `src/server/start.mjs` 的 `startServer({dev,port})`(`server.mjs` 只是薄 CLI wrapper,
+  `npm run dev/serve` 介面不變)。
+
 ## 架構
 
 - **單一埠 `node:http` 伺服器**(`src/server/`):dev 委派 Vite middlewareMode,prod serve `dist/`。
@@ -103,6 +142,74 @@ effort 的模型有效,否則 SDK 靜默降級)、`CADCHAT_THINKING`(深度思�
 - 對話 scratch(`models/.cadchat/`)已被 `.gitignore` 忽略。**啟動時 GC** 會刪掉
   超過 `CADCHAT_GC_DAYS`(預設 7)天沒動過的 session 目錄;設 0 停用。中斷留下的
   半成品在期限內保留 —— rehydrate 與 edits 修復靠它們。
+
+## 草模模式(MOTION SKETCH,2026-07-14)
+
+「**草模**」是與現行「**設計**」並列的第二種聊天模式(Header 正中央切換器):
+描述機構構想 → agent 產出**宣告式場景 JSON**(基元幾何+關節+1~2 DOF 閉式運動
++動作腳本)→ 3D 視圖即時播放剛體運動示意(播放/速度/回原位、DofBar 滑桿 scrub、
+傳動角紅黃綠讀數、圖例、軌跡虛線)。**零 Python、零 STEP**——快速驗證拓撲與動作,
+要產可製造零件再「⇪ 轉為正式設計」。
+
+- **模式契約(per-session 恆定)**:`mode` 在 session 出生時決定(`POST /api/chat`
+  body 帶 `mode`,`sessions.mjs` persist/hydrate;hydrate 產物守衛 mode-aware——
+  草模認 `<name>.sketch.json` 非 `.py`)。UI 切換=開新對話(有內容先 confirm);
+  處女 session(upload 先 mint 的)首則訊息可採納 mode(`resolveTurnMode`,
+  `middleware/chat.mjs`);已有歷史不符 → `400 mode_mismatch`(不靜默改道)。
+- **scene schema v1 單一真相源**:`src/lib/sketch/sketchSchema.js`(normalize+validate,
+  零依賴、前後端共用;**此鏈禁 import three**——asar 排除 node_modules/three)。
+  求值:`sketchMath.js`(自帶 vec3/mat4)+ `sketchEval.js`(compile topo 排序/timeline
+  段首 fold/致動器自動配尺寸/軌跡預取樣;evalProgram+evalPose 純函數,FSM 是 masterT
+  的純函數、scrub 決定性)。mesh:`sketchMesh.js`(唯一碰 three;基元 box/cylinder/
+  plate/hole + macro pin_clevis/gear/rack/link_eye;actuator/coupler/attach 派生視覺)。
+  agent 契約整份內嵌 `agent/prompt.sketch.mjs`(範例由 `prompt.sketch.test.js` 用真
+  validator 鎖住防漂移);工具集 `agent/tools.sketch.mjs` = 共用 emit_stage/spec/
+  clarify/retry(`tools.shared.mjs` 抽取)+ `sketch_present`(驗證失敗回 errors 給
+  agent 自修 ≤3 次,不寫檔不 bump;**無 Read/Glob/Grep、無 cad_***)。
+- **驅動/傳動先問(2026-07-14)**:需求含運動軸而**未指明「驅動方式(汽缸/馬達)」
+  或「傳動呈現(皮帶/齒輪齒條/直接耦合的加工幾何)」→ 必 emit_clarify**(拓撲級
+  選擇,猜錯整台重搭;紀律搬自設計模式 prompt 的「未指明驅動必列澄清」)。一次整合
+  問完:options=2~4 個**整機配置組合**(人話寫齊各軸驅動+傳動)、suggested=建議組合
+  全文;已指明的軸不重複問、使用者明示免問則直接 assumed 搭;尺寸類照舊不問。
+  emit_spec 逐軸出「驅動(軸名)」「傳動(軸名)」chips → 事後在視圖 SpecPanel 走
+  「規格修正:」改驅動/傳動 = 拓撲變更,agent 重新設計傳動鏈後整份重送。
+  配套三個**傳動呈現積木**(part macro,純視覺、零 eval/derived 改動):
+  `motor{axis,at,r?,l?,shaftLen?,shaftR?}`(機身+法蘭+軸伸沿 +axis)、
+  `pulley{axis,r,width,at}`(輪面+雙凸緣;role 繼承 body)、
+  `belt{axis,a,b,rA,rB,width,t?}`(繞兩輪心的外公切線跑道環,掛共同安裝體;
+  **由 a/b 定位、帶非零 at 或 rot 是 error**;validator 驗平面性 a/b 沿 axis 同座標
+  + 輪心距 > rA+rB 輪面不相碰)。運動耦合沿用
+  「同 drive + scale」:**皮帶從動 scale=rA/rB 同號;外嚙合齒輪對 −z1/z2 異號**,
+  中心距=module×(z1+z2)/2(fixture:`fixtures/belt_drive.json` 馬達+皮帶減速 3:1)。
+- **產物與版本**:`sketch_present` → `src/server/sketch/present.mjs` 寫
+  `<name>.sketch.json` → version++ → `versions/vN/`(只凍 scene+meta)→ 發
+  artifact/version/present 三事件(`type:"sketch"` + `sceneUrl` + `dofs` 摘要;
+  **不帶 glbUrl/verified、禁帶 `mode` 欄位**——events.js 有已拆除雙模式的 legacy
+  `mode` 映射殘留,撞名必踩)。回退走 `meta.json` 分流:複回一個 JSON 檔+
+  `emitSketchPresent`,零 spawn。
+- **端點行為**:草模 session 打 `/api/export`、`/api/export-parts`、`/api/validate`、
+  `/api/validate-ver`、`/api/import`、`/api/save-project` → **顯式 400**(訊息含
+  「草模」,不靠 404 兜底)。精算/匯出閘/教訓 digest/lesson_offer 均不適用草模。
+- **前端**:`state.mode`(RESET 保留;localStorage `cadchat.mode` 記偏好;session
+  事件的 mode 回聲校正切換器)。草模世界:`SketchCanvas3D`(fetch `canvas.sceneUrl`
+  → 防禦性 compile → `useSketchViewport` 單 RAF 恆跑、自動播放)+ `DofBar`(純客端
+  scrub,拖曳自動暫停、播放中 thumb 跟動)取代 Canvas3D+ParamsBar;StageStepper 換
+  3 段(理解→搭建→演示);時間軸草模 chip=琥珀 S 縮圖+「草模」badge,動作只有
+  ⟲ 回退與「⇪ 轉為正式設計」(confirm → 設計模式新對話 + 規格摘要 prefill,不自動
+  送出)。dev 鉤 `window.__cadSketch`(scene/state/applyAt/setDrive/readout/frame)。
+- **已知限制(v1 defer)**:另存專案/open-project/FileBrowser 不支援草模 session
+  (升級路徑是草模的耐久出口);圓∩圓派生(真四連桿搖桿閉鏈)、任意表達式讀數、
+  螺旋牙紋視覺排 v1.5。
+- **測試**:L1 `src/lib/sketch/*.test.js`(schema/math/eval 對 ref 閉式的已知值;
+  belt_drive 皮帶比閉式 + motor/pulley/belt 負案例)+
+  `sketch.present.test.js`/`chat.mode.test.js`/`prompt.sketch.test.js`(含驅動/傳動
+  先問措辭鎖)/`sessions.persist.test.js`(mode 段)+ events/chatStore 擴充;
+  L3 `smoke_sketch.py`(切換器/注入渲染/`__cadSketch` 契約/B2 皮帶積木渲染+耦合/
+  負案例/回退磁碟斷言/混排守衛/跨重整);L4 `smoke_sketch_live.py`(真回合:工具面
+  隔離+場景結構最低限;訊息明說「馬達直驅」避開必問規則)+
+  `smoke_sketch_clarify_live.py`(未指明驅動 → 必 clarify、含驅動/傳動關鍵詞、
+  零 present——「必問」的模型判斷驗證點)。
+  **注意 L1 glob**:`src/lib/*.test.js` 掃不到子目錄,要加 `src/lib/sketch/*.test.js`。
 
 ## MOTION 運動宣告(linear + revolute + couple)
 
@@ -288,6 +395,51 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
   都重付**(單張上限 ~1.6k tokens;CLI prompt cache 5 分內命中約一折)。緩解:上限
   4 張/訊息、建議先裁切到需要的區域;不做自動壓縮。
 
+## 視圖作答面(2026-07-14):需要使用者回答的一律在視圖操作
+
+原則收斂(兩模式通用):**凡需要使用者作答的「選項類/規格類」互動,唯一作答面在
+3D 視圖區;聊天卡一律是被動紀錄**(clarify 聚光燈精靈 2026-07-10 已如此,本輪把
+剩下兩個聊天內互動一併遷移)。聊天側僅保留非作答型操作(計畫/LOG 展開、產物卡
+「在 3D 開啟」等導航)。
+
+- **規格修正 → `SpecPanel.jsx`**(視圖左上,`.canvas-spec`,可收合):資料源=
+  transcript **最新一張 spec 卡**(`latestSpecItem`,`src/lib/clarifyText.js`;跨回合
+  持續有效——它就是目前設計的已解析規格,RESTORE 免額外持久化)。**全部 chip 可點**
+  開 inline 輸入框修改(不限「假設」——事後修正=變更請求),`套用修正(N)→` 走
+  `composeClarifyReply({edits})` 的「規格修正:」prompt 契約送出(回合中送出由佇列
+  接手)。父層 `key={spec.id}`:新 spec 到達即 remount 歸零 edits。聊天 SpecCard
+  eyebrow 改「解析規格」、chips 變 span 不可點無 ✎,最新一張標
+  「可修正 · 請在右側畫布操作 ▸」指路(同一 helper 推導,兩端不漂移)。
+  舊行為(點聊天 chip 預填 composer 的 `onChipEdit`)移除。
+- **教訓是/否 → `LessonOfferPanel.jsx`**(視圖下方置中,`.canvas-offer`):資料源=
+  **最舊一張未答** lesson_offer(`pendingLessonOffer`;佇列語意——多張未答依序輪答,
+  答完自動出下一張;`answered:"pending"`(POST 進行中)留在原卡顯示「加入中…」)。
+  按鈕仍走 App 的 `onLessonOffer`(樂觀收鈕/防雙擊/失敗回滾邏輯不動)。聊天
+  LessonOfferCard 未答顯示「請在右側畫布回答 ▸」,答過顯示結果(隨 RESTORE 存活)。
+- **chips 編輯器抽共用 `SpecChips.jsx`**(受控 edits;inline 草稿自持,卸載即棄):
+  ClarifyWizard 步驟 1 與 SpecPanel 共用;`editableAll` 開關(精靈只讓「假設」可改,
+  面板全開)。編輯中 chip 的視覺從硬編碼 `data-assumed="true"` 改 `data-editing`。
+- **讓位規則**:clarify 待答時兩個面板都隱藏(`!clarify`)——精靈步驟 1 本身就是
+  規格確認面,scrim 也會蓋住下層互動,不重複、不誤觸。**面板未套用的草稿會轉交
+  精靈續用**(SpecPanel `onEditsChange` → App `specDraftRef` → ClarifyWizard
+  `initialEdits`,只收本份規格有的鍵;面板重掛即清 ref 防重複 seed)——否則
+  「emit_spec 後幾秒 emit_clarify」的標準流程會把剛改的值靜默丟掉。
+- **對抗審查後補上的護欄(2026-07-14 同輪)**:
+  - `CLEAR_WORKSPACE`(open-project 換 session=換設計)把舊 spec 卡標 `stale`,
+    `latestSpecItem` 跳過——否則舊設計的規格面板浮在新專案上,套用會把無關鍵值
+    打進新 session;聊天指路同 helper 一併熄滅。
+  - `RESTORE` 把 lesson_offer 的 `answered:"pending"`(POST 在途時關頁落盤的樂觀
+    暫態)收斂回未答——否則面板永久「加入中…」且佇列頭死鎖,聊天卡已無按鈕可解。
+  - `submitText` 回傳布林(同步早退=false),SpecPanel 套用失敗**保留 edits** 供
+    重試(附件上傳中/唯讀升級失敗不再靜默蒸發修正)。
+  - specs 空的 clarify(單步精靈)待答時聊天 spec 卡的指路熄滅(右側沒有規格面)。
+  - CSS:`.canvas-spec` 有 max-height+內捲(chips 多時套用鈕不被 `.canvas`
+    overflow:hidden 裁掉);`.canvas-offer` bottom:88px(不與 `.sel-nameplate`
+    同位直疊)。
+- 煙測:`smoke_spec_panel.py`(聊天卡靜態化/面板修改套用契約/同鍵 remount/收合/
+  雙面板 clarify 讓位/草稿轉交精靈/單步 clarify 指路熄滅/草模模式共用)+
+  `smoke_lesson_offer.py` UI 段改打視圖面板(佇列輪答/防雙擊/record 失敗回滾)。
+
 ## 元件 / 組合件檔案類型 + 開檔 / 匯入 / 結合(2026-07-03)
 
 - **檔案類型**:validate 後伺服端從權威 parts 清單決定性寫 `<name>.asm.json` manifest
@@ -366,7 +518,8 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
   「驗證全綠、只有看渲染才發現」(如鏡射對稱破壞的肋錯位——`assert_valid_solid` 過、
   所有 validate 檢查 SKIP,agent 一次 `cad_build(edits)` 修好、零失敗案例 → 迴圈對它是
   瞎的)。補法:agent 修正這類「假綠」缺陷後呼叫 `emit_lesson_offer(symptom, rootCause,
-  fix, tag)`,對話流出一張「要把這件事加入教訓嗎?」**是/否卡**;按「是」→ 前端
+  fix, tag)`,對話流出一張「要把這件事加入教訓嗎?」**是/否卡**(2026-07-14 起
+  聊天卡為被動紀錄,作答面在視圖 `LessonOfferPanel`,見「視圖作答面」章);按「是」→ 前端
   `POST /api/lessons/record` → `recordManualLesson` **直寫**一筆 `source:"manual"` 的未蒸餾
   pending case(不經 per-turn buffer——提交是按鈕點擊的獨立請求;寫入失敗故意 throw 由
   middleware 回 500,不吞成假✓),按「否」→ 純前端 dismiss。signature=`manual:<slug(tag)>`,
@@ -427,11 +580,14 @@ revolute 契約——agent 產出 revolute dof;掃掠由精算端點斷真跑)�
 memo 冪等/打滑 fixture 擋下 + toggle 拆除迴歸 + STEP 鈕依 verified 分流 + flip
 revolute 動畫 + steering_box 耦合動畫:斷 couple 從動借主動相位、純滾動 y=-R·θ 不打滑)、
 `smoke_clarify_wizard.py`(兩步精靈:步驟閘門/inline 修改/合成回覆——
-`/api/chat` 以 page.route stub 截 POST body)、`smoke_upload.py`(上傳端點正負案例 +
+`/api/chat` 以 page.route stub 截 POST body)、`smoke_spec_panel.py`(視圖「解析規格」
+面板:聊天卡靜態化/inline 修改套用「規格修正:」契約/新 spec remount/收合/
+clarify 讓位/草模模式共用)、`smoke_upload.py`(上傳端點正負案例 +
 磁碟落地 + 附件 UI + 破圖降級)、`smoke_part_visibility.py`(眼睛三態循環 +
-ghost×運動示意組成 + 樹選件連動 toggle)、`smoke_open_dedupe.py`(重複開同檔
-去重 + 同 glbUrl 不卡「載入 3D 模型…」+ 開不同檔負對照 + 跨版切換重載 +
-序號自版本推導 + 對話中途開專案清舊工作區)。
+ghost×運動示意組成 + 樹選件連動 toggle)、`smoke_open_project.py`(專案目錄
+整列一鍵開 → v1 session + 滑桿、換專案清舊工作區、唯讀聊天自動升級先
+open-project 再送;`smoke_open_dedupe.py` 已隨開檔 option C 退場,不在 ORDER——
+同 glbUrl 保留 status 由 chatStore.test.js 單元測覆蓋)。
 截圖與 handoff 檔寫 `tests/smoke/.out/`(gitignored)。單支可獨立跑
 (versions 先於 restore)。不接 `scripts/test/test.sh`(CI 面不動)。
 

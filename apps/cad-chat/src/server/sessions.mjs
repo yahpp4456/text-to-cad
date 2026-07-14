@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { REPO_ROOT, SESSIONS_ROOT } from "./config.mjs";
+import { DATA_ROOT, SESSIONS_ROOT } from "./config.mjs";
 
 const sessions = new Map();
 
@@ -15,15 +15,16 @@ export function createSessionId() {
 // sessionId 來自 client 且會進檔案路徑 — 只接受安全字元,否則視為無效重新產生。
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-export function getOrCreateSession(sessionId) {
+export function getOrCreateSession(sessionId, opts = {}) {
   let id = SAFE_ID.test(String(sessionId || "")) ? sessionId : null;
   if (!id || !sessions.has(id)) {
     if (!id) id = createSessionId();
     const workdir = path.join(SESSIONS_ROOT, id);
     fs.mkdirSync(workdir, { recursive: true });
-    // 給 Python CLI 用的 cwd 相對(正斜線)路徑。
+    // 給 Python CLI 用的 cwd 相對(正斜線)路徑(spawnPython cwd=DATA_ROOT;
+    // SESSIONS_ROOT 在 DATA_ROOT 之下,dev 下即 repo 相對,與舊版一致)。
     const workdirRel = path
-      .relative(REPO_ROOT, workdir)
+      .relative(DATA_ROOT, workdir)
       .split(path.sep)
       .join("/");
     const session = {
@@ -31,6 +32,9 @@ export function getOrCreateSession(sessionId) {
       sdkSessionId: null, // 由 SDK init 訊息填入,之後 resume
       workdir,
       workdirRel,
+      // 模式是 session 出生時的恆定屬性(草模/設計不混一條 transcript);
+      // 只在 mint 時採納 opts.mode,既有 session 忽略之(呼叫端向後相容)。
+      mode: opts.mode === "sketch" ? "sketch" : "design",
       version: 0,
       lastName: null, // 最近成功 build 的產生器基底名(無副檔名)
       lastPartCount: 0, // 最近一次驗證的零件數(規模分級:≥8 視為大型組合件)
@@ -87,6 +91,7 @@ export function persistSession(session) {
       path.join(session.workdir, SESSION_META),
       JSON.stringify(
         {
+          mode: session.mode === "sketch" ? "sketch" : "design",
           sdkSessionId: session.sdkSessionId || null,
           version: session.version || 0,
           lastName: session.lastName || null,
@@ -112,10 +117,17 @@ function hydrateSession(session) {
   } catch {
     return; // 沒有 / 壞掉 → 維持乾淨新 session
   }
+  // mode 是身分不是產物,在產物守衛「之前」還原:GC 殘缺的草模 session 也不得
+  // 誤翻回 design(否則重掛後 runner 會拿錯 prompt/工具集)。舊 session.json 無
+  // mode 欄位 → design(向後相容)。
+  session.mode = meta.mode === "sketch" ? "sketch" : "design";
   const lastName = typeof meta.lastName === "string" && meta.lastName ? meta.lastName : null;
   // 產物該在而不在(GC 後重建的空目錄、殘缺樹):什麼都不還原——
   // 尤其 sdkSessionId,resume 會 replay 引用不存在檔案的對話,LLM 必踩空。
-  if (lastName && !fs.existsSync(path.join(session.workdir, `${lastName}.py`))) return;
+  // 產物守衛 mode-aware:草模 session 的真相源是 <name>.sketch.json,不是 .py
+  // (不分流則草模重掛必 bail → version 歸零 → v-id 相撞)。
+  const artifact = session.mode === "sketch" ? `${lastName}.sketch.json` : `${lastName}.py`;
+  if (lastName && !fs.existsSync(path.join(session.workdir, artifact))) return;
   const version = Math.trunc(Number(meta.version));
   session.version = Number.isFinite(version) && version > 0 ? version : 0;
   session.lastName = lastName;
@@ -152,8 +164,11 @@ export function probeSessionOnDisk(id) {
   const lastName =
     live?.lastName || (typeof meta?.lastName === "string" ? meta.lastName : null) || null;
   const version = live ? live.version : Number(meta?.version) || 0;
+  const mode = (live ? live.mode : meta?.mode) === "sketch" ? "sketch" : "design";
   const hasGenerator = !!lastName && fs.existsSync(path.join(workdir, `${lastName}.py`));
-  return { exists: true, lastName, version, hasGenerator };
+  // 草模 session 的「還救得回來」訊號(前端開機還原用 hasGenerator||hasSketch 放行)
+  const hasSketch = !!lastName && fs.existsSync(path.join(workdir, `${lastName}.sketch.json`));
+  return { exists: true, lastName, version, mode, hasGenerator, hasSketch };
 }
 
 // 啟動時 GC:刪掉超過 maxAgeDays 沒動過的 session 目錄(models/.cadchat/*)。

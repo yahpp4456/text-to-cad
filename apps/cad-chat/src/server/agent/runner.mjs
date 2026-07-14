@@ -1,13 +1,22 @@
 // 用 Agent SDK query() 驅動一個對話回合,把訊息串流映射成 SSE 事件。
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
-import { REPO_ROOT, agentEnv, resolveEffort, resolveModel, resolveThinking } from "../config.mjs";
+import {
+  REPO_ROOT,
+  agentEnv,
+  resolveClaudeCliExe,
+  resolveEffort,
+  resolveModel,
+  resolveThinking,
+} from "../config.mjs";
 import { scrubPaths } from "../cad/python.mjs";
 import { getLessonsDigest, recordTurnError } from "../lessons.mjs";
 import { persistSession } from "../sessions.mjs";
 import { buildSystemPrompt } from "./prompt.mjs";
+import { buildSketchSystemPrompt } from "./prompt.sketch.mjs";
 import { makeToolGuard } from "./guards.mjs";
 import { buildCadchatServer } from "./tools.mjs";
+import { SKETCH_MCP_TOOLS, buildSketchServer } from "./tools.sketch.mjs";
 
 const MCP_TOOLS = [
   "emit_stage",
@@ -28,6 +37,10 @@ const MCP_TOOLS = [
 ].map((t) => `mcp__cadchat__${t}`);
 
 const ALLOWED = ["Read", "Glob", "Grep", ...MCP_TOOLS];
+
+// 草模模式:純 MCP 白名單(不含 Read/Glob/Grep——schema 契約整份內嵌 prompt,
+// 沒有值得讀的參考檔,保留只會誘導漂回 CAD 思維)。
+const SKETCH_ALLOWED = [...SKETCH_MCP_TOOLS];
 
 // CLI harness 層的非同步/編排工具不經過 canUseTool(實測 Agent 子代理與 ScheduleWakeup
 // 直接放行),必須用 disallowedTools 從工具清單整個移除。cad-chat 的契約是
@@ -56,10 +69,16 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
   session._paramsEmitted = false;
   session._clarifyPending = false; // 使用者的新訊息 = 已回答上回合的提問
 
-  const mcp = buildCadchatServer({ session, emit, signal: abort.signal });
+  // 模式選路:prompt / 工具集 / 白名單三路一起換(session.mode 是 mint 時的恆定屬性)。
+  const isSketch = session.mode === "sketch";
+  const mcp = isSketch
+    ? buildSketchServer({ session, emit, signal: abort.signal })
+    : buildCadchatServer({ session, emit, signal: abort.signal });
+  const allowed = isSketch ? SKETCH_ALLOWED : ALLOWED;
   // 累積教訓摘要:每 turn 重算一次(讀一個小 JSON;失敗回 "" 絕不擋 turn),
   // buildSystemPrompt 讀 session._lessonsDigest 注入「# 累積教訓」段。
-  session._lessonsDigest = getLessonsDigest();
+  // 草模不注入:現有教訓全是 build123d/幾何驗證語彙,對草模是純 token 浪費+契約污染。
+  session._lessonsDigest = isSketch ? "" : getLessonsDigest();
 
   // prompt 恆走 streaming input(單一程式路徑):SDK 的字串 prompt 會被傳輸層硬編成
   // 純 text block,永遠帶不了 image content block;這裡自組同形狀的 user message
@@ -76,25 +95,31 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
   }
 
   const model = resolveModel();
+  // packaged:釘死 SDK spawn 的 claude CLI(asar → .unpacked 改寫);dev 回 null
+  // → 不傳,SDK 內建解析(行為與舊版完全一致)。
+  const claudeCli = resolveClaudeCliExe();
   const q = query({
     prompt: promptStream(),
     options: {
       ...(model ? { model } : {}),
+      ...(claudeCli ? { pathToClaudeCodeExecutable: claudeCli } : {}),
       effort: resolveEffort(), // 預設 xhigh(CADCHAT_EFFORT 可調)
       thinking: resolveThinking(), // 預設 disabled(CADCHAT_THINKING 可調)
       cwd: REPO_ROOT,
       resume: session.sdkSessionId || undefined,
+      // packaged RUNTIME_ROOT 不 ship .claude/(讀不到即空,與 dev 行為一致;
+      // 打包實機驗證項——若 SDK 對缺目錄報錯則改傳 [])。
       settingSources: ["project"],
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
-        append: buildSystemPrompt(session),
+        append: isSketch ? buildSketchSystemPrompt(session) : buildSystemPrompt(session),
       },
       mcpServers: { cadchat: mcp },
-      allowedTools: ALLOWED,
+      allowedTools: allowed,
       disallowedTools: DISALLOWED,
       permissionMode: "default",
-      canUseTool: makeToolGuard(ALLOWED),
+      canUseTool: makeToolGuard(allowed, { sketch: isSketch }),
       abortController: abort,
       // 串流 partial messages:沒有它,從送出到第一段完整文字之間(推理+寫產生器
       // 原始碼可達數十秒)前端完全沒有回饋。
@@ -146,6 +171,7 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
           sessionId: session.sessionId,
           sdkSessionId: msg.session_id,
           authSource: msg.apiKeySource,
+          mode: session.mode,
         });
       } else if (msg.type === "assistant" && msg.parent_tool_use_id == null) {
         for (const block of msg.message?.content || []) {
@@ -185,10 +211,12 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
           session._resumedFromDisk = false;
           session._resumeFailedOnce = false;
           if (session.lastName) {
-            session._rehydrateNote =
-              `（先前的對話紀錄無法續接,本訊息以新對話接續既有產物 ${session.lastName}。` +
-              `產生器已在 ${session.workdirRel}/${session.lastName}.py,修改前先 Read 它,` +
-              `沿用其 PARAMS/INTENDED_CONTACT/MOTION 結構,用 cad_build(edits) 精修。）`;
+            session._rehydrateNote = isSketch
+              ? `（先前的對話紀錄無法續接,本訊息以新對話接續既有草模 ${session.lastName}。` +
+                `使用者畫布上已有上一版草模;依其需求重新設計場景,用 sketch_present 整份重送。）`
+              : `（先前的對話紀錄無法續接,本訊息以新對話接續既有產物 ${session.lastName}。` +
+                `產生器已在 ${session.workdirRel}/${session.lastName}.py,修改前先 Read 它,` +
+                `沿用其 PARAMS/INTENDED_CONTACT/MOTION 結構,用 cad_build(edits) 精修。）`;
           }
           persistSession(session);
           emit("error", {

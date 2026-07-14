@@ -37,6 +37,29 @@ export function composeClarifyReply({ edits, answer, suggested } = {}) {
     : `規格修正:${fixes}。其餘依你的建議值繼續,不必再確認。`;
 }
 
+// 視圖「解析規格」面板的資料源:transcript 最新一張「非 stale」spec 卡(跨回合
+// 持續有效——它就是目前設計的已解析規格;修正走「規格修正:」契約)。stale=
+// CLEAR_WORKSPACE(open-project 換 session=換設計)標記,舊設計的規格不再是
+// 作答面。App(面板)與 Conversation(聊天卡指路)共用,避免兩端各自推導漂移。
+export function latestSpecItem(items) {
+  for (let i = (items?.length || 0) - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it?.type === "spec" && !it.stale) return it;
+  }
+  return null;
+}
+
+// 視圖教訓「是/否」面板的資料源:最舊一張未答的 lesson_offer(佇列語意,答完
+// 自動輪到下一張;聊天卡是被動紀錄,唯一作答面在視圖)。answered:"pending"
+// (POST 進行中)也算「輪到中」——面板要留在原卡顯示進度,不能先跳下一張。
+export function pendingLessonOffer(items) {
+  return (
+    (items || []).find(
+      (it) => it?.type === "lesson_offer" && (!it.answered || it.answered === "pending"),
+    ) || null
+  );
+}
+
 // RESTORE re-arm:從 transcript 尾端往回掃——先遇 user = 選擇題已答(不 re-arm);
 // 先遇 clarify = 未答,連同「同一段落」(不跨 user)最近的 spec chips 一起重建,
 // 讓重整後精靈(含步驟 1 規格)與左欄凍結一致重現。

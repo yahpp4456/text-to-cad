@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 
 export default function Composer({
   running,
+  mode, // "design" | "sketch":placeholder 換文案(「我這句會產出什麼」的提示)
   pickRefs = [],
   pendingImages = [], // [{id,name,url,status:"uploading"|"ready"|"error",error?}] 附件縮圖 chips
   onAttachFiles,
@@ -140,7 +141,11 @@ export default function Composer({
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKey}
           onPaste={onPaste}
-          placeholder="描述零件,或追加修改（Enter 送出）…"
+          placeholder={
+            mode === "sketch"
+              ? "描述機構構想,幾秒搭出可玩草模（Enter 送出）…"
+              : "描述零件,或追加修改（Enter 送出）…"
+          }
         />
         {running ? (
           <a className="composer-btn interrupt" title="中斷" onClick={onInterrupt}>

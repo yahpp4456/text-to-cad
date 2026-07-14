@@ -21,6 +21,7 @@ export default function VersionTimeline({
   onDownloadStep,
   onValidate,
   onExportParts,
+  onPromote, // 草模版「⇪ 轉為正式設計」(切設計模式開新對話+prefill 規格摘要)
   exporting,
   running,
 }) {
@@ -51,9 +52,12 @@ export default function VersionTimeline({
               key={v.id}
               className="version-chip"
               data-active={v.id === activeVer}
+              data-sketch={v.type === "sketch" || undefined}
               onClick={() => onSelect(v.id)}
             >
-              <span className="version-thumb">{v.id.replace(/^[vo]/, "V")}</span>
+              <span className="version-thumb">
+                {v.type === "sketch" ? v.id.replace(/^v/, "S") : v.id.replace(/^[vo]/, "V")}
+              </span>
               <div className="version-info">
                 <span className="version-id">
                   {v.id}
@@ -89,7 +93,19 @@ export default function VersionTimeline({
               ⟲ 回到 {active.id} 繼續
             </a>
           )}
+          {/* 草模版:⇪ 轉為正式設計(唯一升級出口;精算/匯出對草模無意義,下方各鈕
+              以 type!=="sketch" 守衛,混排時間軸也不誤亮) */}
+          {active && active.type === "sketch" && onPromote && (
+            <a
+              className="version-dl version-promote"
+              title="切到「設計」模式開新對話,並把此草模的規格摘要帶入輸入框(可先修改再送出)"
+              onClick={() => !running && !exporting && onPromote(active)}
+            >
+              ⇪ 轉為正式設計
+            </a>
+          )}
           {active &&
+            active.type !== "sketch" &&
             active.source !== "opened" &&
             latestGen &&
             active.id === latestGen.id &&
@@ -127,6 +143,7 @@ export default function VersionTimeline({
               </a>
             ))}
           {active &&
+            active.type !== "sketch" &&
             active.source !== "opened" &&
             /^v\d+$/.test(active.id) &&
             onExport &&
@@ -149,6 +166,7 @@ export default function VersionTimeline({
               );
             })}
           {active &&
+            active.type !== "sketch" &&
             active.source !== "opened" &&
             /^v\d+$/.test(active.id) &&
             onExportParts && (

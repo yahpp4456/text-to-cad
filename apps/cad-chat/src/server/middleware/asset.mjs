@@ -5,9 +5,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { MODELS_ROOT } from "../config.mjs";
 import { parseUrl, sendText } from "../httpUtil.mjs";
-import { pathIsInside } from "../cad/paths.mjs";
+import { resolveModelRead } from "../cad/paths.mjs";
 
 const CONTENT_TYPES = {
   ".glb": "model/gltf-binary",
@@ -37,11 +36,13 @@ export function assetMiddleware() {
       sendText(res, 400, "missing file");
       return;
     }
-    // file 是相對 REPO_ROOT 的 models 路徑(如 models/.cadchat/<id>/.part.step.glb),
-    // 或相對 models/ 的路徑。兩者都解析到 MODELS_ROOT 內。
+    // file 是「models/ 前綴」或「models 內相對」路徑。雙根讀取解析(可寫層優先、
+    // 唯讀 fixtures 層 fallback;dev 同根 = 舊單根行為),越界 403。
     const normalized = fileParam.replace(/^models[\\/]/, "");
-    const resolved = path.resolve(MODELS_ROOT, normalized);
-    if (!pathIsInside(resolved, MODELS_ROOT)) {
+    let resolved;
+    try {
+      resolved = resolveModelRead(normalized);
+    } catch {
       sendText(res, 403, "forbidden");
       return;
     }

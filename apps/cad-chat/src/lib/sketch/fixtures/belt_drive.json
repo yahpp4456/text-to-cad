@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "name": "belt_drive",
+  "title": "馬達+皮帶減速(3:1)",
+  "bodies": [
+    {
+      "id": "frame",
+      "label": "機架・馬達",
+      "role": "frame",
+      "parts": [
+        { "type": "box", "size": [170, 110, 8], "at": [45, -10, 4] },
+        { "type": "box", "size": [36, 30, 36], "at": [0, -40, 26] },
+        { "type": "motor", "axis": "y", "at": [0, -40, 60], "r": 16, "l": 40, "shaftLen": 22, "shaftR": 4 },
+        { "type": "box", "size": [20, 14, 52], "at": [90, 15, 34] },
+        { "type": "belt", "axis": "y", "a": [0, 0, 60], "b": [90, 0, 60], "rA": 15, "rB": 45, "width": 10, "t": 3 }
+      ]
+    },
+    {
+      "id": "pulley_in",
+      "label": "主動輪(馬達側)",
+      "role": "clevis",
+      "origin": [0, 0, 60],
+      "joint": { "type": "revolute", "axis": [0, 1, 0], "drive": "theta", "scale": 1 },
+      "parts": [
+        { "type": "pulley", "axis": "y", "r": 15, "width": 12, "at": [0, 0, 0] }
+      ]
+    },
+    {
+      "id": "pulley_out",
+      "label": "從動輪(輸出)",
+      "role": "output",
+      "origin": [90, 0, 60],
+      "joint": { "type": "revolute", "axis": [0, 1, 0], "drive": "theta", "scale": 0.3333333 },
+      "parts": [
+        { "type": "pulley", "axis": "y", "r": 45, "width": 12, "at": [0, 0, 0] },
+        { "type": "cylinder", "axis": "y", "r": 5, "len": 24, "at": [0, 8, 0], "role": "pin" },
+        { "type": "box", "size": [34, 4, 8], "at": [22, -9, 0], "role": "accent" },
+        { "type": "hole", "axis": "y", "r": 3, "depth": 4, "at": [36, -9, 0] }
+      ]
+    }
+  ],
+  "drives": [
+    { "id": "theta", "label": "馬達轉角 θ", "unit": "°", "min": 0, "max": 360, "home": 0, "speed": 120 }
+  ],
+  "derived": [],
+  "program": { "mode": "pingpong" },
+  "readouts": [
+    { "kind": "drive", "drive": "theta", "label": "馬達轉角 θ", "decimals": 0 },
+    { "kind": "joint", "body": "pulley_out", "label": "從動輪轉角", "unit": "°", "decimals": 1 }
+  ],
+  "annotations": [],
+  "camera": { "target": [45, 0, 55], "distance": 340 }
+}

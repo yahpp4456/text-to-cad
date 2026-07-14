@@ -1,5 +1,6 @@
 import React from "react";
 
+import ModeSwitch from "./ModeSwitch.jsx";
 import TypeBadge from "./TypeBadge.jsx";
 
 export default function Header({
@@ -7,6 +8,8 @@ export default function Header({
   hasVersions,
   canvasType,
   canvasPartCount,
+  mode,
+  onSwitchMode,
   onOpenFiles,
   onSaveProject,
   onNewChat,
@@ -26,6 +29,8 @@ export default function Header({
           <h1 className="hdr-title">對話式 CAD 產圖</h1>
         </div>
       </div>
+      {/* 模式切換器:Header 正中央(絕對置中,不擠佔左右功能區) */}
+      {onSwitchMode && <ModeSwitch mode={mode} running={running} onSwitch={onSwitchMode} />}
       <div className="hdr-right">
         <TypeBadge type={canvasType} partCount={canvasPartCount} />
         {onNewChat && (

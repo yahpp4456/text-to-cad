@@ -4,6 +4,9 @@ import { pendingClarifyFromItems } from "../lib/clarifyText.js";
 export const initialState = {
   _seq: 0,
   sessionId: null,
+  // 模式:「design」真幾何 CAD(現行)|「sketch」草模(快速機構示意)。
+  // per-session 恆定屬性——切換=開新對話;RESET 保留(新對話沿用當前模式)。
+  mode: "design",
   phase: "idle", // idle | running | done
   running: false,
   stageIdx: -1, // 驅動 StageStepper(D)
@@ -16,7 +19,8 @@ export const initialState = {
   // 據此「自動帶入編輯」。非專案檢視/一般產出 = null。
   // flatGlbUrl:鈑金件(有 gen_flat)的攤平預覽 GLB;非 null → 3D 視圖出摺疊/攤平切換鈕。
   // flatLinesUrl:折彎線 sidecar;攤平態疊虛線 overlay 用。
-  canvas: { glbUrl: "", name: "", code: "", ver: "", status: "empty", type: "", source: "", projectDir: null, flatGlbUrl: null, flatLinesUrl: null }, // status: empty|loading|ready|error
+  // sceneUrl:草模場景 JSON(type:"sketch" 的版本);SketchCanvas3D 據此載入播放。
+  canvas: { glbUrl: "", name: "", code: "", ver: "", status: "empty", type: "", source: "", projectDir: null, flatGlbUrl: null, flatLinesUrl: null, sceneUrl: null }, // status: empty|loading|ready|error
   params: { defs: [], values: {}, dirty: false },
   pickRefs: [], // [{token,label}] 帶入對話的幾何參考(多選;UI 上限 4,去重,超限丟最舊)
   propsOpen: false,
@@ -52,6 +56,10 @@ export function reducer(state, action) {
   switch (action.type) {
     case "SET_SESSION":
       return { ...state, sessionId: action.sessionId ?? state.sessionId };
+
+    // 模式切換(切換器/開機還原/伺服端 session 事件校正);非法值收斂 design。
+    case "SET_MODE":
+      return { ...state, mode: action.mode === "sketch" ? "sketch" : "design" };
 
     case "ADD_USER": {
       const { seq, id } = nextId(state);
@@ -229,15 +237,17 @@ export function reducer(state, action) {
     case "SELECT_VERSION": {
       const v = state.versions.find((x) => x.id === action.id);
       if (!v) return state;
-      // 同 glbUrl 保留現有 status:useCadViewport 只依賴 glbUrl,URL 沒變不會重載,
-      // 設 "loading" 就永遠等不到 ready(重複開同檔的檢視版、點已啟用的 chip 都會踩)。
-      const sameUrl = v.glbUrl === state.canvas.glbUrl;
+      // 同 glbUrl(草模版=同 sceneUrl)保留現有 status:viewport 只依賴 URL,URL 沒變
+      // 不會重載,設 "loading" 就永遠等不到 ready(重複開同檔的檢視版、點已啟用的
+      // chip 都會踩)。
+      const sameUrl =
+        (v.glbUrl || v.sceneUrl || "") === (state.canvas.glbUrl || state.canvas.sceneUrl || "");
       return {
         ...state,
         activeVer: v.id,
         canvas: {
           ...state.canvas,
-          glbUrl: v.glbUrl,
+          glbUrl: v.glbUrl || "",
           name: v.name,
           code: v.name, // 不繼承前一個模型的 code(版本物件無獨立 code,各路徑 code===name)
           ver: v.id,
@@ -247,6 +257,7 @@ export function reducer(state, action) {
           projectDir: v.projectDir ?? null, // 切到唯讀專案檢視版 → 帶回其升級目錄
           flatGlbUrl: v.flatGlbUrl ?? null, // 切版帶回該版攤平 GLB(非鈑金版=null)
           flatLinesUrl: v.flatLinesUrl ?? null, // 切版帶回該版折彎線
+          sceneUrl: v.sceneUrl ?? null, // 草模版帶回場景 JSON(CAD 版=null)
         },
       };
     }
@@ -260,17 +271,22 @@ export function reducer(state, action) {
         ...state,
         motion,
         canvas: {
-          glbUrl: action.glbUrl,
+          glbUrl: action.glbUrl || "",
           name: action.name || state.canvas.name,
           code: action.code || state.canvas.code,
           ver: action.ver || state.canvas.ver,
-          // 同 glbUrl 保留現有 status(同 SELECT_VERSION 的理由;重複開同一檔會走到這)
-          status: action.glbUrl === state.canvas.glbUrl ? state.canvas.status : "loading",
+          // 同 URL 保留現有 status(同 SELECT_VERSION 的理由;重複開同一檔會走到這)
+          status:
+            (action.glbUrl || action.sceneUrl || "") ===
+            (state.canvas.glbUrl || state.canvas.sceneUrl || "")
+              ? state.canvas.status
+              : "loading",
           type: action.fileType || "", // 未帶類型就藏 badge(誠實,不繼承舊模型的)
           source: action.source || "generated",
           projectDir: action.projectDir ?? null, // openFile 唯讀檢視帶入;其餘路徑 null
           flatGlbUrl: action.flatGlbUrl ?? null, // 鈑金攤平 GLB(present 帶;非鈑金=null)
           flatLinesUrl: action.flatLinesUrl ?? null, // 折彎線 sidecar
+          sceneUrl: action.sceneUrl ?? null, // 草模場景 JSON(present type:"sketch" 帶)
         },
       };
     }
@@ -348,9 +364,16 @@ export function reducer(state, action) {
     // 凍結一致重現;已答(clarify 後有 user)不 re-arm。
     case "RESTORE": {
       const s = action.snapshot || {};
-      const items = (Array.isArray(s.items) ? s.items : []).map((it) =>
-        it?.streaming ? { ...it, streaming: false } : it,
-      );
+      const items = (Array.isArray(s.items) ? s.items : []).map((it) => {
+        let out = it?.streaming ? { ...it, streaming: false } : it;
+        // lesson_offer 樂觀暫態:「加入中」(answered:"pending")若在 POST 在途時
+        // 關頁/崩潰會落盤——原樣回灌則 pendingLessonOffer 視它為「輪到中」,面板
+        // 只渲染「加入中…」無按鈕,佇列頭永久死鎖。一律收斂回未答,恢復可重試。
+        if (out?.type === "lesson_offer" && out.answered === "pending") {
+          out = { ...out, answered: null };
+        }
+        return out;
+      });
       const pendingClarify = pendingClarifyFromItems(items);
       // verified 三態 normalize:舊快照無欄位 → undefined(未知,不顯 badge)——
       // 絕不能預設 false,否則舊資料全掛「未驗證」誤報。舊快照的 mode 欄位(雙模式
@@ -362,11 +385,14 @@ export function reducer(state, action) {
       return {
         ...initialState,
         sessionId: s.sessionId || null,
+        // mode normalize:非 "sketch" 一律 design(舊快照無欄位 → design,向後相容)
+        mode: s.mode === "sketch" ? "sketch" : "design",
         _seq: Math.max(Math.trunc(Number(s._seq)) || 0, items.length),
         items,
         versions,
         activeVer: s.activeVer || null,
-        canvas: s.canvas?.glbUrl
+        // 「畫布有內容」判定放寬:草模版只有 sceneUrl 沒有 glbUrl
+        canvas: s.canvas?.glbUrl || s.canvas?.sceneUrl
           ? { ...initialState.canvas, ...s.canvas, status: "loading" }
           : { ...initialState.canvas },
         params: Array.isArray(s.params?.defs)
@@ -390,11 +416,18 @@ export function reducer(state, action) {
         activeVer: null,
         motion: null,
         params: { ...initialState.params },
+        // 換 session=換設計:舊 spec 卡標 stale(latestSpecItem 會跳過)——否則
+        // 舊設計的「解析規格」面板浮在新專案上,「套用修正」會把無關鍵值以
+        // 「規格修正:」契約打進新 session;聊天指路(同 helper)一併熄滅。
+        items: state.items.map((it) =>
+          it?.type === "spec" && !it.stale ? { ...it, stale: true } : it,
+        ),
       };
 
     // 「新對話」:回到初始狀態(對話/版本/畫布/參數/選取/運動/選擇題全清)。
+    // mode 保留:正在草模腦暴的人開新對話,多半還要草模(切模式走 SET_MODE)。
     case "RESET":
-      return { ...initialState };
+      return { ...initialState, mode: state.mode };
 
     case "SET_MOTION":
       return {

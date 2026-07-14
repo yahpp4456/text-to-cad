@@ -1,0 +1,75 @@
+# cad-chat Electron 打包設定(方案 B;佈局=Phase 0 出口閘驗證過的 runtime/ 鏡射)
+# 三種原生程序(claude.exe / python.exe / 被 spawn 的 .py)都讀不到 asar:
+#   - claude.exe → asarUnpack(SDK platform dep 整包留在 app.asar.unpacked)
+#   - python + .py 腳本 + models fixtures + dist → extraResources(resources/runtime/)
+# server 的 .mjs 與 .env.baked 留在 asar(utilityProcess 有 asar shim 讀得到;
+# asar 非加密=key 可被抽出是已知並接受的風險——防線是可信同事+專屬 key+花費上限)。
+appId: local.cadchat.internal
+productName: cad-chat
+directories:
+  output: dist-electron
+
+files:
+  - electron/**/*
+  - src/server/**/*
+  - src/lib/**/* # server 端也 import(tools.mjs → clarifyText.js unescapeNewlines)
+  - package.json
+  - .env.baked
+  - "!**/*.test.js"
+  - "!**/__pycache__/**"
+  # 前端-only 依賴不進 runtime asar(dist 已 build 完;three 的 examples/ 很肥)
+  - "!node_modules/three/**"
+  - "!node_modules/react/**"
+  - "!node_modules/react-dom/**"
+  - "!node_modules/gifenc/**"
+  - "!node_modules/scheduler/**"
+
+asar: true
+asarUnpack:
+  - node_modules/@anthropic-ai/claude-agent-sdk/**
+  - node_modules/@anthropic-ai/claude-agent-sdk-win32-x64/**
+
+extraResources:
+  # 可搬移 Python runtime(embeddable 3.13 + novtk 白名單 + 非-editable cadpy)
+  - from: build-runtime/python
+    to: runtime/python
+  # 前端靜態檔(fork 出的 server 直接 fs 讀,不進 asar)
+  - from: dist
+    to: runtime/dist
+  # 被 spawn 的 CLI 腳本(python <dir> 執行)
+  - from: ../../skills/cad/scripts/step
+    to: runtime/skills/cad/scripts/step
+    filter: ["**/*", "!**/__pycache__/**"]
+  - from: ../../skills/cad/scripts/inspect
+    to: runtime/skills/cad/scripts/inspect
+    filter: ["**/*", "!**/__pycache__/**"]
+  - from: ../../skills/dxf/scripts/dxf
+    to: runtime/skills/dxf/scripts/dxf
+    filter: ["**/*", "!**/__pycache__/**"]
+  # cad-chat 自帶的 4 支 spawn 腳本
+  - from: src/server/cad
+    to: runtime/apps/cad-chat/src/server/cad
+    filter: ["*.py"]
+  # agent 執行期 Read 的教學文件(few-shot 品質必需)
+  - from: ../../skills/cad/SKILL.md
+    to: runtime/skills/cad/SKILL.md
+  - from: ../../skills/cad/references
+    to: runtime/skills/cad/references
+  # models fixtures 全套(23MB;few-shot 5 專案 + 檔案瀏覽器/匯入來源)
+  - from: ../../models
+    to: runtime/models
+    filter: ["**/*", "!.cadchat/**", "!**/__pycache__/**"]
+
+win:
+  target:
+    - nsis
+    - portable
+
+nsis:
+  # 免管理員、裝 %LOCALAPPDATA%\Programs(短路徑,規避 OCP 的 Windows 260 字元上限)
+  perMachine: false
+  oneClick: true
+  artifactName: ${productName}-${version}-setup.${ext}
+
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}

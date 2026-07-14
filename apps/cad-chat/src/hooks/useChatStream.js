@@ -6,7 +6,9 @@ import { useCallback, useRef } from "react";
 
 import { handleEvent } from "../state/events.js";
 
-export function useChatStream(dispatch) {
+// modeRef(可選):App 端的 { current: "design"|"sketch" }——每次 POST 帶上當前
+// 模式(per-session 恆定;新 session 據此 mint,既有 session 相符通過/不符 400)。
+export function useChatStream(dispatch, modeRef) {
   const ctrlRef = useRef(null);
   const sessionIdRef = useRef(null);
   const busyRef = useRef(false); // 本地 in-flight 旗標(state.running 的同步鏡像,免等 render)
@@ -46,6 +48,7 @@ export function useChatStream(dispatch) {
           body: JSON.stringify({
             message: text,
             sessionId: sessionIdRef.current,
+            mode: modeRef?.current || undefined,
             pickRefs: pickRefs?.length
               ? pickRefs.map((r) => ({
                   token: String(r.token || "").slice(0, 120),
@@ -121,7 +124,7 @@ export function useChatStream(dispatch) {
         }
       }
     },
-    [dispatch],
+    [dispatch, modeRef],
   );
   sendRef.current = send;
 

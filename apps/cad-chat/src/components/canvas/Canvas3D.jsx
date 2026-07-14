@@ -6,7 +6,9 @@ import { createMotionPlayer } from "../../lib/cadMotion.js";
 import { buildTopologyModel } from "../../lib/cadTopology.js";
 import { STAGES } from "../StageStepper.jsx";
 import ClarifyWizard from "./ClarifyWizard.jsx";
+import LessonOfferPanel from "./LessonOfferPanel.jsx";
 import PropertiesDrawer from "./PropertiesDrawer.jsx";
+import SpecPanel from "./SpecPanel.jsx";
 
 // 面標記「預設顯示」上限:每件 6 個、整體 12(避免菱形海)。這只是預設——
 // 候選面不設限,使用者可從「◇ 面標記」面板切全部/隱藏/逐面勾選。
@@ -58,6 +60,11 @@ export default function Canvas3D({
   stageIdx,
   toolFeed,
   clarify,
+  clarifySeedEdits,
+  spec,
+  lessonOffer,
+  onLessonOffer,
+  onSpecEdits,
   onSubmitText,
   onExportParts,
   partsBusy,
@@ -722,6 +729,20 @@ export default function Canvas3D({
         </>
       )}
 
+      {/* 需要使用者作答的介面一律在視圖(聊天卡全為被動紀錄):
+          規格修正 → SpecPanel(左上;clarify 待答時讓位,精靈步驟 1 即規格面);
+          教訓是/否 → LessonOfferPanel(下方置中;同樣讓位給 clarify 聚光燈)。 */}
+      {spec && !clarify && (
+        <SpecPanel
+          key={spec.id}
+          spec={spec}
+          onSubmitText={onSubmitText}
+          onEditsChange={onSpecEdits}
+        />
+      )}
+      {lessonOffer && !clarify && (
+        <LessonOfferPanel offer={lessonOffer} onLessonOffer={onLessonOffer} />
+      )}
       {/* 選擇題(clarify)= 焦點模式:scrim 壓暗背景 + 置中兩步精靈(步驟 1 確認/修改
           解析規格 → 步驟 2 選項;無 specs 退化單步)。左欄那張卡是被動紀錄(反灰、
           選項不可點),這裡才是唯一作答面。AI 還在講也能點;佇列會等回合結束自動送出。
@@ -732,6 +753,7 @@ export default function Canvas3D({
           <ClarifyWizard
             key={clarify.id || clarify.q}
             clarify={clarify}
+            initialEdits={clarifySeedEdits}
             onSubmitText={onSubmitText}
           />
         </>

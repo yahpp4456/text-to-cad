@@ -8,12 +8,16 @@ import Conversation from "./components/conversation/Conversation.jsx";
 import Composer from "./components/conversation/Composer.jsx";
 import Canvas3D from "./components/canvas/Canvas3D.jsx";
 import ParamsBar from "./components/canvas/ParamsBar.jsx";
+import SketchCanvas3D from "./components/canvas/SketchCanvas3D.jsx";
 import VersionTimeline from "./components/versions/VersionTimeline.jsx";
 import { useChatStream } from "./hooks/useChatStream.js";
+import { latestSpecItem, pendingLessonOffer } from "./lib/clarifyText.js";
 import { initialState, reducer } from "./state/chatStore.js";
 
 // 跨重整續聊的 localStorage key(bump 版號即讓舊快照自然失效)
 const STORE_KEY = "cadchat.session.v1";
+// 模式偏好(草模/設計):跨開機記住切換器位置(session 快照另有 mode,還原時以快照為準)
+const MODE_KEY = "cadchat.mode";
 
 function AuthBanner({ warnings }) {
   return (
@@ -29,6 +33,51 @@ function AuthBanner({ warnings }) {
           ⚠ {w}
         </span>
       ))}
+    </div>
+  );
+}
+
+// 通用確認框(取代原生 window.confirm 的醜視窗):沿用 SaveDialog 的視覺語言。
+// box = { eyebrow, body, actionLabel, accent?, onConfirm } | null。
+// Enter=確定、Escape=取消(全域監聽,開著才掛)。
+function ConfirmDialog({ box, onClose }) {
+  useEffect(() => {
+    if (!box) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+      if (e.key === "Enter") {
+        onClose();
+        box.onConfirm?.();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [box, onClose]);
+  if (!box) return null;
+  return (
+    <div className="fb-overlay" onClick={onClose}>
+      <div
+        className="save-dialog confirm-dialog"
+        style={box.accent ? { borderTopColor: box.accent } : undefined}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <span className="save-eyebrow">{box.eyebrow || "CONFIRM · 確認"}</span>
+        <p className="confirm-msg">{box.body}</p>
+        <div className="save-actions">
+          <a
+            className="save-btn"
+            onClick={() => {
+              onClose();
+              box.onConfirm?.();
+            }}
+          >
+            {box.actionLabel || "確定"}
+          </a>
+          <a className="save-btn save-cancel" onClick={onClose}>
+            取消
+          </a>
+        </div>
+      </div>
     </div>
   );
 }
@@ -105,10 +154,14 @@ function SaveDialog({ open, defaultName, onClose, onSave }) {
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const { send, interrupt, setSessionId, resetSession } = useChatStream(dispatch);
+  // 每次 POST /api/chat 帶當前模式(useChatStream 開火時讀 ref,不吃 stale closure)
+  const modeRef = useRef("design");
+  modeRef.current = state.mode;
+  const { send, interrupt, setSessionId, resetSession } = useChatStream(dispatch, modeRef);
   const [health, setHealth] = useState(null);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
+  const [confirmBox, setConfirmBox] = useState(null); // 通用確認框(切模式/升級)
   const [lessonsOpen, setLessonsOpen] = useState(false);
   const [exporting, setExporting] = useState(null); // "v2:stl" | null(匯出中鎖鈕)
   // 附件圖片(composer 暫態,刻意不進 reducer/localStorage 快照;選檔即上傳,
@@ -122,6 +175,25 @@ export default function App() {
       .then(setHealth)
       .catch(() => setHealth({ agentReady: false, warnings: ["無法連線到本機伺服器。"] }));
   }, []);
+
+  // 模式偏好:開機還原切換器位置(session 快照的 RESTORE 之後會以快照 mode 蓋過,
+  // 兩者一致——快照存在即上次也在那個模式);之後每次變動回寫。
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(MODE_KEY) === "sketch") {
+        dispatch({ type: "SET_MODE", mode: "sketch" });
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem(MODE_KEY, state.mode);
+    } catch {
+      /* ignore */
+    }
+  }, [state.mode]);
 
   // 開發/預覽捷徑:?glb=<asset-url>&name=<n>[&motion=<json>] 直接載入畫布(不需對話)。
   useEffect(() => {
@@ -153,11 +225,14 @@ export default function App() {
   // openProject 定義在 submitText 之後(TDZ),用 ref 轉接讓「自動帶入編輯」呼叫得到。
   const openProjectRef = useRef(null);
 
+  // 回傳布林=「這次送出有沒有真的成立」:false 是同步早退(空文字/附件上傳中/
+  // 唯讀升級失敗)。SpecPanel 等旁路呼叫端靠它決定要不要清掉自己的草稿——
+  // Composer 走自身 UI 閘,不讀回傳值。
   const submitText = useCallback(
     async (text) => {
       const ready = pendingImages.filter((p) => p.status === "ready");
-      if ((!text || !text.trim()) && ready.length === 0) return;
-      if (pendingImages.some((p) => p.status === "uploading")) return; // Composer 已擋,雙保險
+      if ((!text || !text.trim()) && ready.length === 0) return false;
+      if (pendingImages.some((p) => p.status === "uploading")) return false; // Composer 已擋,雙保險
       const pickRefs = state.pickRefs;
       const cv = state.canvas;
       dispatch({
@@ -173,7 +248,7 @@ export default function App() {
       // guard `!state.sessionId`:升級後有 session,之後聊天走現狀不重複升級。
       if (cv.source === "opened" && cv.projectDir && !state.sessionId) {
         const sid = await openProjectRef.current?.(cv.projectDir, { auto: true });
-        if (!sid) return; // 升級失敗:openProject 已 notify,使用者文字已在 transcript
+        if (!sid) return false; // 升級失敗:openProject 已 notify,使用者文字已在 transcript
       }
       // 當前畫布身分只在唯讀檢視(source "opened")時附上——那是 agent 否則零語境的
       // 情境;升級後 session 靠 _rehydrateNote 已知模型(server 端會略過此注入)。
@@ -193,6 +268,7 @@ export default function App() {
         imageRefs: ready.length ? ready.map((p) => p.rel) : undefined,
         canvas,
       });
+      return true;
     },
     [send, state.pickRefs, state.canvas, state.sessionId, state.versions, pendingImages],
   );
@@ -405,14 +481,16 @@ export default function App() {
   // 防雙擊:同步 in-flight 守衛(不依賴 React re-render 收鈕,擋同一 tick 內的重複點擊
   // →否則會發出多個 POST /api/lessons/record,落重複 manual case)。
   const lessonOfferBusyRef = useRef(new Set());
+  // SpecPanel 草稿(未套用的 chip 修正)最新值;見 clarifySeedEdits 註解。
+  const specDraftRef = useRef(null);
+  const onSpecEdits = useCallback((specId, edits) => {
+    specDraftRef.current = { specId, edits };
+  }, []);
   const handlers = useMemo(
     () => ({
       onToggle: (id) => dispatch({ type: "TOGGLE_ITEM", id }),
       onSubmitText: submitText,
       onSelectVersion: (ver) => dispatch({ type: "SELECT_VERSION", id: ver }),
-      // 點規格 chip → 預填 composer 讓使用者接著改值
-      onChipEdit: (chip) =>
-        dispatch({ type: "SET_PREFILL", text: `${chip.k} 改為 ` }),
       // 人工記教訓「是/否卡」:否=純前端標記;是=POST 落一筆未蒸餾 case。sessionId 讀
       // stateRef(handlers memo deps 不含 state,直讀 state.sessionId 會是 stale closure);
       // 依 j.ok 決定成功/錯誤,不吞成假✓。
@@ -722,6 +800,7 @@ export default function App() {
   );
 
   // 新對話:斷開 session、前端狀態全清(不必重新整理頁面),續聊快照一併作廢。
+  // mode 由 reducer RESET 保留(新對話沿用當前模式)。
   const newChat = useCallback(() => {
     if (state.running) return;
     setPendingImages([]); // 圖屬於舊 session(rel 對新 session 無效);遲到的上傳回應 no-op
@@ -738,8 +817,77 @@ export default function App() {
     }
   }, [state.running, resetSession]);
 
-  // 可另存 = 這條 session 產過東西(開檔看圖的 o* 版本不算,那本來就在 models/ 裡)
+  // 模式切換(草模↔設計):mode 是 session 出生時的恆定屬性——已有內容就出
+  // 樣式化確認框(非原生 confirm)後開新對話;還沒開聊(含只上傳過圖的處女
+  // session)直接切,首則訊息會讓 server 採納新 mode(resolveTurnMode 的處女例外)。
+  const switchMode = useCallback(
+    (next) => {
+      if (state.running || next === state.mode) return;
+      const hasContent = state.items.length > 0 || state.versions.length > 0;
+      if (!hasContent) {
+        dispatch({ type: "SET_MODE", mode: next });
+        return;
+      }
+      const name = next === "sketch" ? "草模" : "設計";
+      setConfirmBox({
+        eyebrow: `SWITCH MODE · 切換到「${name}」`,
+        body: "切換模式會開一個新對話:目前的對話與畫布會清空,已產出的檔案仍保留在磁碟。",
+        actionLabel: `切換到「${name}」`,
+        accent: next === "sketch" ? "var(--sketch)" : "var(--design)",
+        onConfirm: () => {
+          newChat();
+          dispatch({ type: "SET_MODE", mode: next });
+        },
+      });
+    },
+    [state.running, state.mode, state.items.length, state.versions.length, newChat],
+  );
+
+  // 草模 → 正式設計(升級路徑):切設計模式開新對話,把場景規格摘要 prefill 進
+  // composer(不自動送出——AI 動手前,人先過目;匯入元件流程的同一哲學)。
+  const promoteSketch = useCallback(
+    (v) => {
+      if (state.running) return;
+      setConfirmBox({
+        eyebrow: "PROMOTE · 轉為正式設計",
+        body: `切到「設計」模式開新對話,並把草模「${v.title || v.name}」的規格摘要(機構件、驅動範圍)帶入輸入框——可先修改再送出。`,
+        actionLabel: "切換並帶入規格",
+        accent: "var(--sketch)",
+        onConfirm: async () => {
+          let specText = `照草模「${v.title || v.name}」做正式設計:沿用其關節配置與行程;截面、材料與軸承配置由你建議,先列規格再動工。`;
+          try {
+            const r = await fetch(v.sceneUrl);
+            if (r.ok) {
+              const doc = await r.json();
+              const drives = (doc.drives || [])
+                .map((d) => `${d.label || d.id} ${d.min}~${d.max}${d.unit || ""}`)
+                .join("、");
+              const bodies = (doc.bodies || [])
+                .filter((b) => b?.label)
+                .map((b) => b.label)
+                .join("、");
+              specText =
+                `照機構草模「${doc.title || v.name}」做正式設計:` +
+                (bodies ? `機構件=${bodies};` : "") +
+                (drives ? `驅動=${drives};` : "") +
+                `沿用其關節配置與行程,截面、材料與軸承配置由你建議,先列規格再動工。`;
+            }
+          } catch {
+            /* fetch 失敗用降級摘要 */
+          }
+          newChat();
+          dispatch({ type: "SET_MODE", mode: "design" });
+          dispatch({ type: "SET_PREFILL", text: specText });
+        },
+      });
+    },
+    [state.running, newChat],
+  );
+
+  // 可另存 = 這條 session 產過東西(開檔看圖的 o* 版本不算,那本來就在 models/ 裡;
+  // 草模 v1 不支援另存——glbUrl 空本來就 false,mode 守衛是雙保險)
   const canSave = !!(
+    state.mode !== "sketch" &&
     state.sessionId &&
     state.canvas.glbUrl &&
     state.canvas.source !== "opened"
@@ -764,6 +912,7 @@ export default function App() {
           STORE_KEY,
           JSON.stringify({
             sessionId: state.sessionId,
+            mode: state.mode,
             _seq: state._seq,
             items: state.items,
             versions: state.versions,
@@ -781,6 +930,7 @@ export default function App() {
     return () => clearTimeout(persistTimerRef.current);
   }, [
     state.sessionId,
+    state.mode,
     state._seq,
     state.items,
     state.versions,
@@ -825,7 +975,9 @@ export default function App() {
           return;
         }
         const hasGenVersions = (snap.versions || []).some((v) => v.source !== "opened");
-        if (info.exists && (!hasGenVersions || info.hasGenerator)) {
+        // 草模 session 的產物訊號是 hasSketch(session-info 另回);設計走 hasGenerator
+        const artifactAlive = snap.mode === "sketch" ? info.hasSketch : info.hasGenerator;
+        if (info.exists && (!hasGenVersions || artifactAlive)) {
           dispatch({ type: "RESTORE", snapshot: snap });
           setSessionId(snap.sessionId);
           notify(`已接續上次對話${info.lastName ? `(${info.lastName})` : ""}。`);
@@ -856,14 +1008,32 @@ export default function App() {
   // 只由 ADD_USER 清成 null(任何送出=已答);running/phase 不參與。
   const clarifyPending = state.clarify != null;
   const needAuth = health && !health.agentReady;
+  const sketchMode = state.mode === "sketch";
+  // 需要使用者作答的介面一律在視圖(聊天卡=被動紀錄):
+  // 最新 spec 卡 → 視圖 SpecPanel(規格修正);最舊未答 lesson_offer → 視圖是/否面板。
+  const liveSpec = useMemo(() => latestSpecItem(state.items), [state.items]);
+  const liveLessonOffer = useMemo(() => pendingLessonOffer(state.items), [state.items]);
+  // 聊天最新 spec 卡的「請在右側操作」指路:specs 空的 clarify(單步精靈)待答時
+  // 右側沒有任何規格編輯面 → 指路要熄,否則主動誤導。
+  const specLiveId =
+    liveSpec && (!state.clarify || (state.clarify.specs || []).length > 0) ? liveSpec.id : null;
+  // SpecPanel 未套用的草稿:clarify 到達會令面板讓位卸載,草稿經此 ref 轉交給
+  // 精靈步驟 1 續用(ref 不觸發重渲染;clarify 到達的那次渲染讀到的即最新草稿,
+  // specId 比對防舊規格殘稿汙染)。
+  const clarifySeedEdits =
+    state.clarify && liveSpec && specDraftRef.current?.specId === liveSpec.id
+      ? specDraftRef.current.edits
+      : null;
 
   return (
-    <div className="app">
+    <div className="app" data-mode={state.mode}>
       <Header
         phase={state.phase}
         hasVersions={state.versions.length > 0}
         canvasType={state.canvas.type}
         canvasPartCount={state.versions.find((v) => v.id === state.activeVer)?.partCount}
+        mode={state.mode}
+        onSwitchMode={switchMode}
         onOpenFiles={() => setBrowserOpen(true)}
         onSaveProject={canSave ? () => setSaveOpen(true) : null}
         onNewChat={newChat}
@@ -871,6 +1041,7 @@ export default function App() {
         running={state.running}
       />
       <LessonsPanel open={lessonsOpen} onClose={() => setLessonsOpen(false)} />
+      <ConfirmDialog box={confirmBox} onClose={() => setConfirmBox(null)} />
       <SaveDialog
         open={saveOpen}
         defaultName={state.canvas.name}
@@ -891,7 +1062,7 @@ export default function App() {
         }}
       />
       {needAuth && <AuthBanner warnings={health.warnings} />}
-      <StageStepper stageIdx={state.stageIdx} />
+      <StageStepper stageIdx={state.stageIdx} mode={state.mode} />
       <div className="body">
         {/* clarify 待答 → 左欄整塊反灰凍結(見 app.css .conv-col[data-frozen]);
             false 時不出屬性,沿用 data-cited 慣例 */}
@@ -902,11 +1073,14 @@ export default function App() {
             running={state.running}
             live={state.live}
             frozen={clarifyPending}
+            mode={state.mode}
+            specLiveId={specLiveId}
             onSubmitText={submitText}
             handlers={handlers}
           />
           <Composer
             running={state.running}
+            mode={state.mode}
             pickRefs={state.pickRefs}
             pendingImages={pendingImages}
             onAttachFiles={attachImages}
@@ -920,59 +1094,87 @@ export default function App() {
           />
         </div>
         <div className="right-col">
-          <Canvas3D
-            canvas={state.canvas}
-            propsOpen={state.propsOpen}
-            selNode={state.selNode}
-            dispatch={dispatch}
-            onBringToChat={bringToChat}
-            pickRefs={state.pickRefs}
-            running={state.running}
-            live={state.live}
-            stageIdx={state.stageIdx}
-            toolFeed={toolFeed}
-            clarify={state.clarify}
-            onSubmitText={submitText}
-            onExportParts={
-              // 檢視開啟的檔案(o* 版)時藏拆件匯出:server 只能從 session 產物抽件,
-              // fallback 會抽到錯的模型(見 exportParts 內的守衛註解)
-              state.sessionId && state.canvas.source !== "opened" ? exportParts : null
-            }
-            partsBusy={exporting === "parts:step" || exporting === "parts:stl"}
-            exportNote={
-              exporting
-                ? exporting === "validate"
-                  ? "精算此版:完整幾何驗證中…"
-                  : exporting === "stepdl"
-                    ? "下載前驗證中(未驗證版的匯出閘)…"
-                    : exporting.startsWith("parts:")
-                      ? `正在匯出零件檔(${(exporting.split(":")[1] || "").toUpperCase()})…`
-                      : `正在轉出 ${(exporting.split(":")[1] || "").toUpperCase()} 檔…`
-                : null
-            }
-            motion={
-              state.motion && state.motion.forVer === state.canvas.ver ? state.motion : null
-            }
-          />
-          <ParamsBar
-            params={state.params}
-            disabled={state.canvas.status !== "ready" || state.running}
-            onParam={(k, v) => dispatch({ type: "SET_PARAM_VALUE", key: k, value: v })}
-            onApply={applyParams}
-          />
+          {sketchMode ? (
+            // 草模世界:SketchCanvas3D(內含 DofBar 底欄)取代 Canvas3D+ParamsBar;
+            // 面標記/物件屬性/匯出提示/運動示意 chip 天然不存在(獨立元件)
+            <SketchCanvas3D
+              canvas={state.canvas}
+              dispatch={dispatch}
+              running={state.running}
+              live={state.live}
+              stageIdx={state.stageIdx}
+              toolFeed={toolFeed}
+              clarify={state.clarify}
+              clarifySeedEdits={clarifySeedEdits}
+              spec={liveSpec}
+              lessonOffer={liveLessonOffer}
+              onLessonOffer={handlers.onLessonOffer}
+              onSpecEdits={onSpecEdits}
+              onSubmitText={submitText}
+            />
+          ) : (
+            <>
+              <Canvas3D
+                canvas={state.canvas}
+                propsOpen={state.propsOpen}
+                selNode={state.selNode}
+                dispatch={dispatch}
+                onBringToChat={bringToChat}
+                pickRefs={state.pickRefs}
+                running={state.running}
+                live={state.live}
+                stageIdx={state.stageIdx}
+                toolFeed={toolFeed}
+                clarify={state.clarify}
+                clarifySeedEdits={clarifySeedEdits}
+                spec={liveSpec}
+                lessonOffer={liveLessonOffer}
+                onLessonOffer={handlers.onLessonOffer}
+                onSpecEdits={onSpecEdits}
+                onSubmitText={submitText}
+                onExportParts={
+                  // 檢視開啟的檔案(o* 版)時藏拆件匯出:server 只能從 session 產物抽件,
+                  // fallback 會抽到錯的模型(見 exportParts 內的守衛註解)
+                  state.sessionId && state.canvas.source !== "opened" ? exportParts : null
+                }
+                partsBusy={exporting === "parts:step" || exporting === "parts:stl"}
+                exportNote={
+                  exporting
+                    ? exporting === "validate"
+                      ? "精算此版:完整幾何驗證中…"
+                      : exporting === "stepdl"
+                        ? "下載前驗證中(未驗證版的匯出閘)…"
+                        : exporting.startsWith("parts:")
+                          ? `正在匯出零件檔(${(exporting.split(":")[1] || "").toUpperCase()})…`
+                          : `正在轉出 ${(exporting.split(":")[1] || "").toUpperCase()} 檔…`
+                    : null
+                }
+                motion={
+                  state.motion && state.motion.forVer === state.canvas.ver ? state.motion : null
+                }
+              />
+              <ParamsBar
+                params={state.params}
+                disabled={state.canvas.status !== "ready" || state.running}
+                onParam={(k, v) => dispatch({ type: "SET_PARAM_VALUE", key: k, value: v })}
+                onApply={applyParams}
+              />
+            </>
+          )}
           <VersionTimeline
             versions={state.versions}
             activeVer={state.activeVer}
             onSelect={(id) => dispatch({ type: "SELECT_VERSION", id })}
             onRevert={revertVersion}
-            onExport={state.sessionId ? exportVersion : null}
-            onDownloadStep={state.sessionId ? downloadStep : null}
-            onValidate={state.sessionId ? validateVersion : null}
+            onExport={!sketchMode && state.sessionId ? exportVersion : null}
+            onDownloadStep={!sketchMode && state.sessionId ? downloadStep : null}
+            onValidate={!sketchMode && state.sessionId ? validateVersion : null}
             onExportParts={
-              state.sessionId && state.canvas.type === "assembly"
+              !sketchMode && state.sessionId && state.canvas.type === "assembly"
                 ? () => exportParts(null, "step")
                 : null
             }
+            onPromote={sketchMode ? promoteSketch : null}
             exporting={exporting}
             running={state.running}
           />

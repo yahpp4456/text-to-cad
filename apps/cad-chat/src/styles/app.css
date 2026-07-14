@@ -478,6 +478,7 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+/* 聊天 spec 卡 chips = 被動紀錄(不可點;修正面在視圖 SpecPanel) */
 .spec-chip {
   display: inline-flex;
   align-items: center;
@@ -487,7 +488,7 @@
   border: 1px solid #dfe6f0;
   padding: 5px 11px;
   clip-path: var(--chamfer-pill);
-  cursor: pointer;
+  cursor: default;
 }
 .chip-k {
   font-family: var(--font-eyebrow);
@@ -763,6 +764,14 @@
   color: var(--text-muted);
 }
 .lesson-offer-done[data-outcome="added"] {
+  color: var(--emit);
+}
+/* 未答=指路提示(作答面在視圖 LessonOfferPanel;聊天卡被動紀錄) */
+.lesson-offer-hint {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 1px;
   color: var(--emit);
 }
 
@@ -1383,13 +1392,17 @@
   pointer-events: none;
   opacity: 0.75;
 }
-.clarify-live {
+.clarify-live,
+.spec-live {
   margin-left: auto;
   font-family: var(--font-eyebrow);
   font-weight: 700;
   font-size: 9px;
   letter-spacing: 1px;
   color: var(--emit);
+}
+.spec-live {
+  color: var(--design);
 }
 
 /* ===================== Composer ===================== */
@@ -1899,6 +1912,18 @@
 .cw-chip[data-edited] {
   border-color: color-mix(in oklab, var(--part) 55%, #dfe6f0);
   background: color-mix(in oklab, var(--part) 6%, #fff);
+}
+/* SpecPanel 全 chip 可改(editableAll):非 assumed 也給點擊 affordance */
+.cw-chip[data-editable] {
+  cursor: pointer;
+}
+.cw-chip[data-editable]:not([data-assumed]):hover {
+  border-color: var(--design);
+}
+/* inline 編輯中(SpecChips;取代抽出前硬編碼 data-assumed="true" 的視覺) */
+.cw-chip[data-editing] {
+  border-color: var(--amber);
+  background: color-mix(in oklab, var(--amber) 6%, #fff);
 }
 .chip-assumed {
   font-family: var(--font-eyebrow);
@@ -2618,14 +2643,6 @@
 }
 
 /* 規格 chip 可點回饋 */
-.spec-chip:hover {
-  border-color: var(--design);
-  background: #eef3fb;
-}
-.spec-chip:hover .chip-edit {
-  color: var(--design);
-}
-
 /* ===================== 畫布工具列(環繞 / 運動示意)+ 圈選名牌 ===================== */
 .canvas-tools {
   position: absolute;
@@ -2829,4 +2846,377 @@
   color: #9aa3b0;
   margin-right: 8px;
   white-space: nowrap;
+}
+
+/* ===================== 草模模式(MOTION SKETCH) ===================== */
+.bar-sketch {
+  background: var(--sketch);
+}
+
+/* Header 正中央模式切換器(放大版 fold-switch;絕對置中不擠佔左右功能區) */
+.hdr {
+  position: relative;
+}
+.mode-switch {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  gap: 3px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(20, 30, 55, 0.1);
+  z-index: 5;
+}
+.mode-switch[data-disabled="true"] {
+  opacity: 0.55;
+  pointer-events: none;
+}
+.mode-seg {
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 5px 20px;
+  border-radius: 7px;
+  transition: background 0.12s, color 0.12s;
+  user-select: none;
+}
+.mode-cn {
+  font-weight: 800;
+  font-size: 13.5px;
+  color: var(--text-dim);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.mode-en {
+  font-family: var(--font-eyebrow);
+  font-size: 8px;
+  letter-spacing: 2.5px;
+  color: #9aa3b0;
+}
+.mode-seg:hover .mode-cn {
+  color: var(--ink);
+}
+.mode-seg[data-on="true"][data-mode="design"] {
+  background: var(--design);
+}
+.mode-seg[data-on="true"][data-mode="sketch"] {
+  background: var(--sketch);
+}
+.mode-seg[data-on="true"] .mode-cn,
+.mode-seg[data-on="true"] .mode-en {
+  color: #fff;
+}
+
+/* 草模世界的「下一句話」提示:composer 上緣琥珀 hairline */
+.app[data-mode="sketch"] .composer {
+  border-top: 2px solid var(--sketch);
+}
+
+/* ── 草模視圖 chrome ── */
+/* 播放叢集(fold-switch 版位):▶/⏸ + 速度 + 回原位 + 視角 */
+.sketch-play {
+  position: absolute;
+  top: 48px;
+  left: 20px;
+  display: inline-flex;
+  align-items: stretch;
+  gap: 3px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  box-shadow: 0 2px 10px rgba(20, 30, 55, 0.12);
+  backdrop-filter: blur(6px);
+  z-index: 7;
+}
+.sketch-play .fold-seg[data-on="true"] {
+  background: var(--sketch);
+}
+.sketch-play .fold-seg.main {
+  min-width: 74px;
+  text-align: center;
+}
+.sketch-play .fold-seg.spd {
+  padding: 7px 9px;
+  font-size: 11px;
+}
+
+/* 圖例(左側,model-info 上方) */
+.sketch-legend {
+  position: absolute;
+  left: 20px;
+  bottom: 156px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid #dde2ec;
+  padding: 9px 12px;
+  box-shadow: 0 6px 18px rgba(31, 42, 68, 0.1);
+  backdrop-filter: blur(6px);
+  max-height: 38%;
+  overflow: auto;
+}
+.sketch-legend-t {
+  font-family: var(--font-eyebrow);
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: #9aa3b0;
+}
+.sketch-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: #4c5568;
+  white-space: nowrap;
+}
+.sketch-sw {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(30, 40, 60, 0.18);
+  flex: none;
+}
+
+/* 讀數條(右下;mono、tabular-nums、紅黃綠狀態點) */
+.sketch-readouts {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.sk-read {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid #e2e7f0;
+  padding: 4px 10px;
+}
+.sk-k {
+  color: #8a93a3;
+  font-size: 10.5px;
+}
+.sk-v {
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.sk-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+.sk-dot[data-status="ok"] {
+  background: #3ddc84;
+  box-shadow: 0 0 6px #3ddc84;
+}
+.sk-dot[data-status="warn"] {
+  background: #f5a524;
+  box-shadow: 0 0 6px #f5a524;
+}
+.sk-dot[data-status="bad"] {
+  background: #e5484d;
+  box-shadow: 0 0 6px #e5484d;
+}
+.sk-manual {
+  color: var(--sketch);
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+/* 誠實標語(常駐;沿用 motion-note 定位樣式) */
+.sketch-note {
+  color: #a58330;
+}
+
+/* 空狀態(草模)副行 */
+.canvas-empty-sub {
+  display: block;
+  text-align: center;
+  font-size: 11.5px;
+  color: #a8b0bd;
+  letter-spacing: 0.4px;
+}
+.canvas-empty-sub.dim {
+  color: #c0c7d2;
+  font-size: 10.5px;
+}
+.canvas-empty-box.sketch {
+  color: var(--sketch);
+  border-color: color-mix(in oklab, var(--sketch) 45%, transparent);
+  font-size: 22px;
+}
+
+/* 版本 chip(草模=琥珀 S 縮圖) */
+.version-chip[data-sketch="true"] .version-thumb {
+  color: var(--sketch);
+  border-color: color-mix(in oklab, var(--sketch) 45%, transparent);
+  background: repeating-linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--sketch) 14%, transparent) 0 1px,
+    transparent 1px 7px
+  );
+}
+.version-chip[data-sketch="true"][data-active="true"] {
+  background: color-mix(in oklab, var(--sketch) 8%, #fff);
+  border-color: var(--sketch);
+}
+.type-badge[data-type="sketch"] {
+  color: #a5741f;
+  border-color: color-mix(in oklab, var(--sketch) 55%, var(--line));
+}
+.version-promote {
+  font-weight: 800;
+  color: #8a6417 !important;
+  border-color: color-mix(in oklab, var(--sketch) 55%, transparent) !important;
+  background: color-mix(in oklab, var(--sketch) 10%, #fff);
+}
+
+/* SketchCard(對話流草模產物卡) */
+.sketch-card .sketch-card-body {
+  padding: 10px 12px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.sketch-card-title {
+  font-weight: 800;
+  font-size: 13.5px;
+}
+.sketch-card-sum {
+  font-size: 11.5px;
+  color: #6b7480;
+}
+.sketch-card-dofs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.sketch-dof-chip {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: #7a6220;
+  background: color-mix(in oklab, var(--sketch) 12%, #fff);
+  border: 1px solid color-mix(in oklab, var(--sketch) 35%, transparent);
+  padding: 2px 8px;
+}
+.sketch-card-play {
+  cursor: pointer;
+  font-family: var(--font-eyebrow);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  color: #fff;
+  background: var(--sketch);
+  padding: 4px 10px;
+  clip-path: var(--chamfer-pill);
+  white-space: nowrap;
+}
+.sketch-card-foot {
+  display: block;
+  padding: 4px 12px 9px;
+  font-size: 10px;
+  color: #a8b0bd;
+  letter-spacing: 0.8px;
+}
+
+/* 通用確認框(切模式/升級;沿用 save-dialog 骨架,accent 由 inline style 換色) */
+.confirm-dialog {
+  width: min(400px, 100%);
+}
+.confirm-msg {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #4c5568;
+}
+
+/* ===================== 視圖作答面板(規格修正 / 教訓是否)=====================
+   需要使用者作答的選項/規格一律在視圖操作;聊天卡是被動紀錄。 */
+.canvas-spec {
+  position: absolute;
+  top: 92px;
+  left: 20px;
+  z-index: 6;
+  max-width: min(380px, calc(100% - 190px));
+  /* .canvas 是 overflow:hidden——不設上限的話 chips 多時底部的套用鈕會被裁出
+     畫布外且無法捲到;內捲把整個面板(含 foot)關在可及範圍內 */
+  max-height: calc(100% - 200px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #dde2ec;
+  padding: 10px 12px;
+  box-shadow: 0 6px 18px rgba(31, 42, 68, 0.1);
+  backdrop-filter: blur(6px);
+}
+.canvas-spec-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.canvas-spec-kicker {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 9.5px;
+  letter-spacing: 2px;
+  color: var(--design);
+}
+.canvas-spec-count {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.canvas-spec-caret {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.canvas-offer {
+  position: absolute;
+  left: 50%;
+  /* 88px 而非貼底:.sel-nameplate(bottom:18 置中同 z)也在底部置中,
+     貼底會整片蓋住圈選名牌的帶入/匯出鈕 */
+  bottom: 88px;
+  transform: translateX(-50%);
+  z-index: 8;
+  width: min(460px, calc(100% - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid color-mix(in oklab, var(--emit) 40%, var(--line));
+  border-top: 2px solid var(--emit);
+  padding: 11px 14px 12px;
+  box-shadow: 0 10px 26px rgba(31, 42, 68, 0.16);
+  backdrop-filter: blur(6px);
+}
+.canvas-offer-kicker {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 9.5px;
+  letter-spacing: 2px;
+  color: var(--emit);
+}
+.canvas-offer .lesson-offer-body {
+  padding: 2px 0 8px;
 }

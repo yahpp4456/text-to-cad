@@ -8,10 +8,18 @@ export const STAGES = [
   ["呈現", "PRESENT"],
 ];
 
-export default function StageStepper({ stageIdx }) {
+// 草模模式只有 3 段(emit_stage 索引 0-2;段數差異本身就是模式訊號)
+export const STAGES_SKETCH = [
+  ["理解", "UNDERSTAND"],
+  ["搭建", "COMPOSE"],
+  ["演示", "PLAY"],
+];
+
+export default function StageStepper({ stageIdx, mode }) {
+  const stages = mode === "sketch" ? STAGES_SKETCH : STAGES;
   return (
     <div className="stepper">
-      {STAGES.map(([cn, en], i) => {
+      {stages.map(([cn, en], i) => {
         const state = i < stageIdx ? "done" : i === stageIdx ? "cur" : "pending";
         return (
           <div className="step" key={en}>

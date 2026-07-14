@@ -3,9 +3,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { MODELS_ROOT, resolveMaxSnapshots } from "../config.mjs";
+import { resolveMaxSnapshots } from "../config.mjs";
 import { persistSession } from "../sessions.mjs";
-import { resolveInside } from "./paths.mjs";
+import { resolveModelRead } from "./paths.mjs";
 import { scrubPaths, spawnPython } from "./python.mjs";
 
 const STEP_DIR = "skills/cad/scripts/step";
@@ -141,7 +141,7 @@ export function resolveImportSource(modelsRelFile) {
     .replace(/^models\//, "");
   let srcAbs;
   try {
-    srcAbs = resolveInside(MODELS_ROOT, clean);
+    srcAbs = resolveModelRead(clean); // 讀取:雙根(可寫層優先、fixtures fallback)
   } catch {
     return { ok: false, error: "路徑超出 models/" };
   }
@@ -618,7 +618,7 @@ function snapshotVersion(session, name, verNum, { type, partCount }) {
 // 沒有它,參數滑桿的每次套用都複製整組 STEP+GLB(大組合件數 MB/版),長 session
 // 會無上限吃磁碟直到快照開始失敗。被剪掉的舊版行為同「較舊的 session 產物」:
 // 時間軸縮圖/下載 404、revert 回誠實的「沒有快照可回退」。
-function pruneSnapshots(session, keep) {
+export function pruneSnapshots(session, keep) {
   if (!Number.isFinite(keep) || keep <= 0) return;
   const root = path.join(session.workdir, "versions");
   let names;

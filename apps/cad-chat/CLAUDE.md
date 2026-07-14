@@ -29,7 +29,7 @@ API key）驅動 repo 既有 text-to-cad pipeline → 真 STEP/GLB + 幾何驗�
 ```bash
 cd apps/cad-chat && npm run dev          # 單一埠，預設 http://127.0.0.1:8788/
 npm run build                            # L0：語法/import/JSX
-cd apps/cad-chat && node --test src/server/*.test.js src/server/cad/*.test.js src/lib/*.test.js src/state/*.test.js  # L1 單元
+cd apps/cad-chat && node --test src/server/*.test.js src/server/cad/*.test.js src/lib/*.test.js src/lib/sketch/*.test.js src/state/*.test.js  # L1 單元
 # 全套煙測（repo 根；server 沒起會印指引後跳過 exit 0）
 PYTHONUTF8=1 .venv/Scripts/python.exe apps/cad-chat/tests/smoke/run_all.py
 ```

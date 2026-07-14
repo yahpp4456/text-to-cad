@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { latestSpecItem, pendingLessonOffer } from "../lib/clarifyText.js";
 import { initialState, reducer } from "./chatStore.js";
 
 // ── 人工記教訓「是/否卡」──
@@ -146,6 +147,7 @@ test("SELECT_VERSION:換 glbUrl 才設 loading;canvas.code 跟著新版(不繼�
 test("CLEAR_WORKSPACE:版本/運動/參數歸零,對話與 session 保留(對話中途 open-project 換 session 用)", () => {
   let s = reducer(initialState, { type: "SET_SESSION", sessionId: "s1" });
   s = reducer(s, { type: "ADD_ITEM", item: { type: "ai", text: "hi" } });
+  s = reducer(s, { type: "ADD_ITEM", item: { type: "spec", chips: [{ k: "外徑", v: "20mm" }] } });
   s = reducer(s, { type: "ADD_VERSION", version: { id: "v1", name: "old", glbUrl: "a" } });
   s = reducer(s, { type: "ADD_VERSION", version: { id: "v2", name: "old", glbUrl: "b" } });
   s = reducer(s, { type: "SET_MOTION", motion: { name: "old", dofs: [{ id: "d" }] } });
@@ -155,8 +157,30 @@ test("CLEAR_WORKSPACE:版本/運動/參數歸零,對話與 session 保留(對話
   assert.equal(c.activeVer, null);
   assert.equal(c.motion, null);
   assert.equal(c.params.defs.length, 0);
-  assert.equal(c.items.length, 1); // 對話保留
+  assert.equal(c.items.length, 2); // 對話保留
   assert.equal(c.sessionId, "s1"); // session 由 SET_SESSION 管,這裡不動
+  // 換 session=換設計:舊 spec 卡標 stale → latestSpecItem 跳過,視圖 SpecPanel
+  // 不再拿舊設計的規格當作答面(否則「套用修正」把無關鍵值打進新 session)
+  assert.equal(c.items[1].stale, true);
+  assert.equal(latestSpecItem(c.items), null);
+  assert.equal(c.items[0].stale, undefined); // 非 spec item 不動
+});
+
+test("RESTORE:lesson_offer 樂觀暫態 answered:'pending' 收斂回未答(佇列死鎖防護)", () => {
+  // POST 在途時關頁/崩潰 → "pending" 落盤;原樣回灌則視圖面板只渲染「加入中…」
+  // 無按鈕,且佇列語意令它永遠擋在最前(聊天卡已是被動紀錄,無任何解鎖路徑)。
+  const s = reducer(initialState, {
+    type: "RESTORE",
+    snapshot: {
+      items: [
+        { id: "m1", type: "lesson_offer", symptom: "x", answered: "pending" },
+        { id: "m2", type: "lesson_offer", symptom: "y", answered: "added" },
+      ],
+    },
+  });
+  assert.equal(s.items[0].answered, null); // 收斂回未答 → 按鈕恢復可重試
+  assert.equal(s.items[1].answered, "added"); // 已定案的不動
+  assert.equal(pendingLessonOffer(s.items)?.id, "m1");
 });
 
 test("SET_PARAM_VALUES:只 merge defs 已知鍵、清 dirty;defs 空 no-op(regen 回滾滑桿拉回)", () => {
@@ -314,4 +338,86 @@ test("RESET:clarify / turnSpec 全清", () => {
   s = reducer(s, { type: "RESET" });
   assert.equal(s.clarify, null);
   assert.equal(s.turnSpec, null);
+});
+
+// ── 草模模式(mode / canvas.sceneUrl)──
+
+test("SET_MODE:sketch/design 正常切;非法值收斂 design;RESET 保留 mode", () => {
+  let s = reducer(initialState, { type: "SET_MODE", mode: "sketch" });
+  assert.equal(s.mode, "sketch");
+  s = reducer(s, { type: "SET_MODE", mode: "bogus" });
+  assert.equal(s.mode, "design");
+  s = reducer(s, { type: "SET_MODE", mode: "sketch" });
+  s = reducer(s, { type: "RESET" });
+  assert.equal(s.mode, "sketch"); // 新對話沿用當前模式
+  assert.equal(s.items.length, 0);
+});
+
+test("PRESENT(sketch):canvas 帶 sceneUrl、glbUrl 空、type sketch、status loading", () => {
+  const s = reducer(initialState, {
+    type: "PRESENT",
+    glbUrl: "",
+    sceneUrl: "su1",
+    name: "mech",
+    ver: "v1",
+    fileType: "sketch",
+  });
+  assert.equal(s.canvas.sceneUrl, "su1");
+  assert.equal(s.canvas.glbUrl, "");
+  assert.equal(s.canvas.type, "sketch");
+  assert.equal(s.canvas.status, "loading");
+  // 同 sceneUrl re-present → status 保留(SketchCanvas3D 只依賴 sceneUrl,URL 沒變不重載)
+  const ready = { ...s, canvas: { ...s.canvas, status: "ready" } };
+  const again = reducer(ready, {
+    type: "PRESENT",
+    sceneUrl: "su1",
+    name: "mech",
+    ver: "v1",
+    fileType: "sketch",
+  });
+  assert.equal(again.canvas.status, "ready");
+});
+
+test("SELECT_VERSION:草模↔CAD 版互切,sceneUrl/glbUrl 正確帶回;同 sceneUrl 保留 status", () => {
+  let s = reducer(initialState, {
+    type: "ADD_VERSION",
+    version: { id: "v1", name: "mech", sceneUrl: "su1", type: "sketch" },
+  });
+  s = reducer(s, {
+    type: "ADD_VERSION",
+    version: { id: "v2", name: "part", glbUrl: "gu2", type: "part" },
+  });
+  // 切回草模版
+  s = reducer(s, { type: "SELECT_VERSION", id: "v1" });
+  assert.equal(s.canvas.sceneUrl, "su1");
+  assert.equal(s.canvas.glbUrl, "");
+  assert.equal(s.canvas.type, "sketch");
+  assert.equal(s.canvas.status, "loading");
+  // 同 sceneUrl 再點 → status 保留
+  s = { ...s, canvas: { ...s.canvas, status: "ready" } };
+  s = reducer(s, { type: "SELECT_VERSION", id: "v1" });
+  assert.equal(s.canvas.status, "ready");
+  // 切到 CAD 版:sceneUrl 歸 null、glbUrl 帶回
+  s = reducer(s, { type: "SELECT_VERSION", id: "v2" });
+  assert.equal(s.canvas.sceneUrl, null);
+  assert.equal(s.canvas.glbUrl, "gu2");
+  assert.equal(s.canvas.status, "loading");
+});
+
+test("RESTORE:mode normalize(舊快照無欄位 → design);canvas 只有 sceneUrl 也算有內容", () => {
+  const legacy = reducer(initialState, { type: "RESTORE", snapshot: { sessionId: "s1" } });
+  assert.equal(legacy.mode, "design");
+  const sk = reducer(initialState, {
+    type: "RESTORE",
+    snapshot: {
+      sessionId: "s2",
+      mode: "sketch",
+      canvas: { sceneUrl: "su1", name: "mech", ver: "v1", type: "sketch" },
+      versions: [{ id: "v1", name: "mech", sceneUrl: "su1", type: "sketch" }],
+    },
+  });
+  assert.equal(sk.mode, "sketch");
+  assert.equal(sk.canvas.sceneUrl, "su1");
+  assert.equal(sk.canvas.status, "loading"); // 回灌走重載
+  assert.equal(sk.versions[0].sceneUrl, "su1");
 });

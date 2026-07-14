@@ -98,3 +98,55 @@ test("clarify 事件:ADD_ITEM(左欄紀錄)+ SET_CLARIFY(精靈)雙 dispatch,全
   assert.equal(set.clarify.q, add.item.q);
   assert.equal(set.clarify.suggested, "全部\n建議值");
 });
+
+// ── 草模模式(sketch):session mode 校正、sceneUrl/dofs 透傳、SketchCard 欄位 ──
+
+test("session 事件:帶 mode → SET_SESSION + SET_MODE;無 mode(舊 server)→ 只 SET_SESSION", () => {
+  const withMode = collect("session", { sessionId: "s1", mode: "sketch" });
+  assert.equal(withMode.length, 2);
+  assert.equal(withMode[0].type, "SET_SESSION");
+  assert.deepEqual(withMode[1], { type: "SET_MODE", mode: "sketch" });
+  const noMode = collect("session", { sessionId: "s1" });
+  assert.equal(noMode.length, 1);
+  // 非法 mode 值不 dispatch(不讓垃圾進 reducer)
+  const bad = collect("session", { sessionId: "s1", mode: "bogus" });
+  assert.equal(bad.length, 1);
+});
+
+test("version 事件:sceneUrl/dofs/title 透傳(草模);CAD 事件無欄位 → sceneUrl null、dofs undefined", () => {
+  const sk = collect("version", {
+    id: "v1",
+    name: "mech",
+    type: "sketch",
+    sceneUrl: "/api/asset?file=x.sketch.json&v=1",
+    dofs: [{ id: "theta", label: "θ", min: 0, max: 30, unit: "°" }],
+    title: "汽缸傾斜",
+  })[0].version;
+  assert.equal(sk.type, "sketch");
+  assert.equal(sk.sceneUrl, "/api/asset?file=x.sketch.json&v=1");
+  assert.equal(sk.dofs.length, 1);
+  assert.equal(sk.title, "汽缸傾斜");
+  assert.equal(sk.glbUrl, undefined); // 草模版無 glbUrl
+  const cad = collect("version", { id: "v2", name: "p", glbUrl: "u" })[0].version;
+  assert.equal(cad.sceneUrl, null);
+  assert.equal(cad.dofs, undefined);
+});
+
+test("present 事件:sceneUrl 透傳;artifact 事件:sketch 摘要欄位(title/dofs/joints)進卡片 item", () => {
+  const pres = collect("present", { ver: "v1", name: "mech", type: "sketch", sceneUrl: "su" })[0];
+  assert.equal(pres.sceneUrl, "su");
+  assert.equal(pres.fileType, "sketch");
+  const art = collect("artifact", {
+    ver: "v1",
+    name: "mech",
+    type: "sketch",
+    partCount: 3,
+    title: "汽缸傾斜",
+    dofs: [{ id: "theta" }],
+    joints: { revolute: 1, prismatic: 0 },
+  })[0];
+  assert.equal(art.item.fileType, "sketch");
+  assert.equal(art.item.title, "汽缸傾斜");
+  assert.equal(art.item.dofs.length, 1);
+  assert.equal(art.item.joints.revolute, 1);
+});

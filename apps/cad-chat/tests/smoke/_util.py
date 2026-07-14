@@ -13,8 +13,13 @@ BASE = os.environ.get("CADCHAT_BASE", "http://127.0.0.1:8788")
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, ".out")
 os.makedirs(OUT, exist_ok=True)
-# apps/cad-chat/tests/smoke → repo 根
-REPO = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
+# apps/cad-chat/tests/smoke → repo 根。煙測用 REPO 做的都是「可寫資料」磁碟斷言/seed
+# (models/.cadchat/… 產物、models/ 下臨時 fixture):打包模擬(Phase 0 出口閘)下
+# server 的可寫資料根被 CADCHAT_DATA_ROOT 指走,煙測跟著同一個 env 對位;未設(dev)
+# = repo 根,行為與舊版完全一致。
+REPO = os.environ.get("CADCHAT_DATA_ROOT") or os.path.abspath(
+    os.path.join(HERE, "..", "..", "..", "..")
+)
 
 
 def out_path(name):

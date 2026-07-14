@@ -14,7 +14,7 @@ description: apps/cad-chat 的分層驗證流程與擴充守則。改動 cad-cha
 | 層 | 驗什麼 | 指令 | 時間 |
 |---|---|---|---|
 | L0 建置 | 語法/import/JSX | `npm --prefix apps/cad-chat run build` | ~5s |
-| L1 單元 | 純函數/reducer/server 邏輯 | `cd apps/cad-chat && node --test src/server/*.test.js src/server/cad/*.test.js src/lib/*.test.js src/state/*.test.js` | ~1s |
+| L1 單元 | 純函數/reducer/server 邏輯 | `cd apps/cad-chat && node --test src/server/*.test.js src/server/cad/*.test.js src/lib/*.test.js src/lib/sketch/*.test.js src/state/*.test.js` | ~1s |
 | L2 API | 免 LLM 端點鏈路(open-project/save/revert/export/asset…) | 煙測內含(smoke_versions),或 curl 手打 | 秒~分 |
 | L3 UI | 真瀏覽器互動與渲染 | `PYTHONUTF8=1 .venv/Scripts/python.exe apps/cad-chat/tests/smoke/run_all.py` | ~6-8min |
 | L4 LLM | 必須靠模型的行為(對話語境/工具編排) | `CADCHAT_SMOKE_LLM=1` 跑 run_all,或手動一輪對話 | 分鐘級+燒回合 |
@@ -45,6 +45,12 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
 ## 環境 gotcha(踩過的坑,先讀省一小時)
 
 - **PYTHONUTF8=1 必帶**:Windows cp950 對 ✓/✗/中文輸出直接 UnicodeEncodeError。
+- **spawned Python 的彩色 traceback 會咬人(2026-07-14)**:dev server 從帶
+  FORCE_COLOR 的終端(agent harness、部分 CI)啟動時,Python 3.13+ 對 pipe 也吐
+  ANSI 彩色 traceback → `condenseTraceback` 行號 regex 抓不到、UI note 滿是逃逸碼、
+  `smoke_verify_gate.py` G 段紅。修在咽喉點 `python.mjs` spawn env 的
+  `PYTHON_COLORS: "0"`(優先權高於 FORCE_COLOR/NO_COLOR)——同一支煙測「換個終端
+  起 server 就紅」十之八九是這根。
 - **Python 是 `.venv/Scripts/python.exe`**(Windows venv;playwright 1.60 已裝,勿另裝)。
 - **fixture 是 LFS**:`models/motorized_linear_stage`、`models/xyz_pickplace_gantry`
   必須是實體檔(STEP 開頭 `ISO-10303-21`、GLB 數百 KB);131B 的是 pointer →
@@ -135,6 +141,14 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   單步(舊煙測注入不必改)。合成回覆「規格修正:…」由 `src/lib/clarifyText.js`
   `composeClarifyReply` 釘死(L1)+ `smoke_clarify_wizard.py` 端到端(page.route stub
   `/api/chat` 截 POST body,免 LLM 可驗送出)。
+- **作答面一律在視圖(2026-07-14)**:需要使用者回答的選項/規格互動,唯一作答面是視圖
+  面板——規格修正 `SpecPanel`(資料源=最新 spec item,`latestSpecItem`)、教訓是/否
+  `LessonOfferPanel`(資料源=最舊未答,`pendingLessonOffer` 佇列語意);聊天卡全為
+  被動紀錄(SpecCard 無 ✎ span 不可點、LessonOfferCard 無按鈕)。兩面板 clarify 待答時
+  讓位(`!clarify`)。chips 編輯器共用 `SpecChips.jsx`(精靈只讓 assumed 可改、面板
+  `editableAll`;編輯中視覺 `data-editing` 非舊硬編碼 `data-assumed`)。動這條路 →
+  `smoke_spec_panel.py` + `smoke_lesson_offer.py` + `smoke_clarify_wizard.py`(精靈 DOM
+  契約迴歸)三支都跑;新聊天互動卡一律先想「作答面能不能放視圖」再動手。
 - **上傳端點超限要「排水」不可立刻 destroy**:client(fetch/urllib)先送完 body 才讀回應,
   馬上斷線只看到 connection reset 而非 413(`readRawBody` 已內建:reject 後丟棄到
   2×limit 才斷)。上傳檔 media_type/副檔名一律信 magic bytes 嗅探(`images.mjs`),
@@ -143,6 +157,32 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   tool JSON 寫字面 `\n`)。改 clarify 欄位/合成格式 → L1 `clarifyText.test.js` +
   `events.test.js`;改 prompt 措辭(消冗/「規格修正:」優先/圖面附件節)→ L4
   `smoke_image_clarify_live.py`(附圖型號表 → 多型號 clarify → 跨回合圖面記憶)。
+- **草模模式(2026-07-14)**:mode 是 session 出生時的恆定屬性(切換=開新對話);
+  **hydrate 產物守衛 mode-aware**(草模認 `<name>.sketch.json` 非 `.py`,漏了則草模
+  session 重啟後 hydrate 必 bail → 版本歸零 v-id 相撞);**version 事件禁帶 `mode`
+  欄位**(events.js 有舊雙模式 legacy 映射殘留,草模身分一律走 `type:"sketch"`+
+  `sceneUrl`);時間軸鈕以 `active.type!=="sketch"` 守衛(混排也不誤亮);草模 revert
+  走 meta.json 分流零 spawn(煙測斷 `<1500ms`);`src/lib/sketch/` 純函數鏈
+  (schema/math/eval)**禁 import three**(server 端 sketch_present 也 import 此鏈,
+  asar 排除 node_modules/three)。動草模 → L1 `src/lib/sketch/*.test.js`(注意 glob
+  掃不到子目錄,指令要明列)+ `sketch.present.test.js`/`chat.mode.test.js`/
+  `prompt.sketch.test.js`(prompt 內嵌範例過真 validator 的防漂移鎖)+
+  `smoke_sketch.py`;動 `prompt.sketch.mjs`/`tools.sketch.mjs`/runner 選路 → L4
+  `smoke_sketch_live.py`(工具面隔離+場景結構)+ `smoke_queue_live.py` 迴歸。
+  UI 探針 `window.__cadSketch`(scene/state/applyAt/setDrive/readout/meshCount;
+  applyAt 回布林,**frame 另取且是 RAF 週期快取——setDrive 後同一 JS task 讀是
+  舊幀,煙測要 wait_for_function 等下一幀**)。**斷「某 part type 有渲染」要用
+  `meshCount()` 釘真 Mesh 數**——圖例/scene() 都只讀 doc,buildPart 對未命中
+  type 靜默 return null 不丟錯,光斷圖例是假綠(對抗審查抓過)。
+- **草模驅動/傳動先問(2026-07-14 二輪)**:prompt 規則=需求含運動軸而未指明
+  「驅動(汽缸/馬達)」或「傳動(皮帶/齒輪齒條/直接耦合)」→ **必 emit_clarify**
+  (options=2~4 個整機配置組合);已指明/明示免問則不問。**動這條規則 → L4 兩支
+  都跑**:`smoke_sketch_clarify_live.py`(未指明→必問+零 present)與
+  `smoke_sketch_live.py`(明說「馬達直驅」→不問直接 present)——兩支互為對照,
+  只跑一支會漏掉規則往任一邊翻倒。三個傳動積木 motor/pulley/belt 是**純 part
+  (零 eval/derived 改動)**的設計決策:belt 帶體=靜態外公切線跑道環掛共同安裝體
+  (輪心距恆定,不做每幀變形),別把它改成 derived;耦合一律「同 drive+scale」
+  (皮帶同號 rA/rB、外嚙合齒輪對 −z1/z2),fixture `belt_drive.json` 有閉式測試釘住。
 
 ## 新需求 → 驗證擴充決策樹
 

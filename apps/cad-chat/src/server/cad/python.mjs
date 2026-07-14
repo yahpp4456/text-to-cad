@@ -1,8 +1,10 @@
-// Windows-aware Python 子程序 spawn helper(用 .venv 的 python,cwd=REPO_ROOT)。
+// Windows-aware Python 子程序 spawn helper(腳本絕對化到 RUNTIME_ROOT,cwd=DATA_ROOT)。
+// dev 下 RUNTIME_ROOT === DATA_ROOT === repo root,行為與舊版(cwd=REPO_ROOT)一致。
 import { spawn } from "node:child_process";
 import os from "node:os";
+import path from "node:path";
 
-import { PYTHON_EXE, REPO_ROOT, sandboxEnv } from "../config.mjs";
+import { DATA_ROOT, PYTHON_EXE, REPO_ROOT, RUNTIME_ROOT, sandboxEnv } from "../config.mjs";
 
 // ---------------------------------------------------------------------------
 // 路徑消毒:把子程序輸出(Python traceback / JSON)裡的本機絕對路徑收斂成相對/
@@ -24,13 +26,18 @@ function looseRootRe(p) {
   // "text-to-cad備份" 這類複本命名的兄弟目錄仍會被誤咬(罕見,接受)。
   return new RegExp(segs.join("[\\\\/]+") + "(?:[\\\\/]+|(?![\\w.-]))", "gi");
 }
-const REPO_RE = looseRootRe(REPO_ROOT);
+const REPO_RE = looseRootRe(RUNTIME_ROOT);
+// packaged 雙根:可寫資料根(session 產物路徑)與唯讀程式根分離,兩者都要遮。
+// dev 同根 → null(單根行為與舊版完全一致)。
+const DATA_RE = DATA_ROOT === RUNTIME_ROOT ? null : looseRootRe(DATA_ROOT);
 const HOME_RE = looseRootRe(os.homedir());
 
-// repo 根先收斂(它在 home 之下,必須先於 home 匹配),其餘 home 內路徑收成 ~/。
+// 兩個根先收斂(常在 home 之下,必須先於 home 匹配),其餘 home 內路徑收成 ~/。
 export function scrubPaths(text) {
   if (text == null) return text;
-  return String(text).replace(REPO_RE, "").replace(HOME_RE, "~/");
+  let s = String(text).replace(REPO_RE, "");
+  if (DATA_RE) s = s.replace(DATA_RE, "");
+  return s.replace(HOME_RE, "~/");
 }
 
 // ---------------------------------------------------------------------------
@@ -87,13 +94,21 @@ export function condenseTraceback(stderr, { generatorName, maxLen = 300 } = {}) 
   return parts.join("\n").slice(0, maxLen * 2);
 }
 
-// scriptDir 為 REPO_ROOT 相對路徑(如 "skills/cad/scripts/step"),以 `python <dir> ...` 執行。
+// scriptDir 為 RUNTIME_ROOT 相對路徑(如 "skills/cad/scripts/step"),以 `python <dir> ...`
+// 執行。腳本在這裡統一絕對化(唯讀程式資產根);cwd=DATA_ROOT(可寫資料根)是產物
+// 相對路徑的基準——打包後兩根分離,cwd 只能當產物基準,腳本必須走絕對路徑。
 export function spawnPython(scriptDir, args, { session, onLog, signal } = {}) {
+  const scriptAbs = path.isAbsolute(scriptDir)
+    ? scriptDir
+    : path.resolve(RUNTIME_ROOT, scriptDir);
   return new Promise((resolve) => {
-    const child = spawn(PYTHON_EXE, [scriptDir, ...args], {
-      cwd: REPO_ROOT,
+    const child = spawn(PYTHON_EXE, [scriptAbs, ...args], {
+      cwd: DATA_ROOT,
       // 強制 Python 子程序以 UTF-8 輸出(否則 Windows 預設 code page 會讓繁中亂碼)。
-      env: { ...sandboxEnv(), PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
+      // PYTHON_COLORS=0:server 若從帶 FORCE_COLOR 的終端啟動,Python 3.13+ 會吐
+      // ANSI 彩色 traceback——condenseTraceback 的行號 regex 抓不到、UI note 滿是
+      // 逃逸碼(PYTHON_COLORS 優先權高於 FORCE_COLOR/NO_COLOR,關這根就夠)。
+      env: { ...sandboxEnv(), PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8", PYTHON_COLORS: "0" },
       windowsHide: true,
     });
     session?.childProcs?.add(child);

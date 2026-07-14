@@ -13,7 +13,7 @@ import path from "node:path";
 
 import { MODELS_ROOT } from "../config.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
-import { resolveInside } from "../cad/paths.mjs";
+import { resolveInside, resolveModelRead } from "../cad/paths.mjs";
 import {
   acquireBusy,
   getOrCreateSession,
@@ -34,6 +34,7 @@ import {
   sanitizeName,
   validateSnapshotFull,
 } from "../cad/pipeline.mjs";
+import { emitSketchPresent, sketchFileName } from "../sketch/present.mjs";
 
 const REBUILD_TIMEOUT_MS = 300_000; // 開專案同步重建上限(大組合件 tessellation 較久)
 const FACTS_TIMEOUT_MS = 30_000;
@@ -56,6 +57,7 @@ async function handleImport(body, res) {
     sendJson(res, 409, { ok: false, error: "session 忙碌中(等目前回合結束)" });
     return;
   }
+  if (rejectSketchSession(session, res, "匯入 STEP")) return;
   const imp = importStepIntoSession(session, body?.file);
   if (!imp.ok) {
     sendJson(res, 200, { ok: false, error: imp.error });
@@ -129,7 +131,7 @@ async function handleOpenProject(body, res) {
     .replace(/^models\//, "");
   let srcAbs;
   try {
-    srcAbs = resolveInside(MODELS_ROOT, clean);
+    srcAbs = resolveModelRead(clean); // 讀取:雙根(可寫層優先、fixtures fallback)
   } catch {
     sendJson(res, 403, { ok: false, error: "路徑超出 models/" });
     return;
@@ -232,6 +234,39 @@ async function handleRevertVersion(body, res) {
     return;
   }
   const name = sanitizeName(meta.name);
+  // 草模版本:複回一個 JSON 檔 + emitSketchPresent,零 spawn(無重建/驗證可言)。
+  // 全程同步無 await → 無 interrupt 窗,不需 busyToken 作廢檢查。
+  if (meta.type === "sketch") {
+    const busyToken = acquireBusy(session);
+    try {
+      const file = sketchFileName(name);
+      const src = path.join(snapDir, file);
+      if (!fs.existsSync(src)) {
+        sendJson(res, 404, { ok: false, error: `${ver} 快照缺草模檔,無法回退` });
+        return;
+      }
+      fs.copyFileSync(src, path.join(session.workdir, file));
+      session.lastName = name;
+      const events = [];
+      emitSketchPresent(session, name, (ev, data) => events.push([ev, data]));
+      const version = events.find(([e]) => e === "version")?.[1] || null;
+      const present = events.find(([e]) => e === "present")?.[1] || null;
+      sendJson(res, 200, {
+        ok: true,
+        from: ver,
+        name,
+        version,
+        present,
+        params: [],
+        motion: null,
+        validateOk: null,
+        warnings: presentWarnings(events),
+      });
+    } finally {
+      releaseBusy(session, busyToken);
+    }
+    return;
+  }
   const busyToken = acquireBusy(session);
   try {
     // 快照複回頂層;單件版要清掉頂層殘留的 asm.json,type 才不會誤判成組合件。
@@ -325,6 +360,17 @@ function makeExportScratch(session, rawVer) {
 // 取既有 session(絕不 mint):getOrCreateSession 對格式合法但已 GC/不存在的 id 會
 // mkdirSync 一個全新空目錄——壞請求(stale localStorage 的死 id)不該在磁碟留垃圾,
 // 空目錄還會讓 session-info 對死 id 誤回 exists:true。probeSessionOnDisk 唯讀。
+// 草模 session 的顯式 400 拒絕:這些端點對草模無意義(無 STEP/產生器)。
+// 不靠 resolveExportBase 的「STEP 不存在」404 兜底——顯式拒絕才誠實、才可測。
+function rejectSketchSession(session, res, what) {
+  if (session?.mode !== "sketch") return false;
+  sendJson(res, 400, {
+    ok: false,
+    error: `草模模式沒有${what}(切到「設計」模式產出真 CAD 後才可用)`,
+  });
+  return true;
+}
+
 function requireExistingSession(body, res) {
   if (!body?.sessionId) {
     sendJson(res, 400, { ok: false, error: "缺 sessionId" });
@@ -455,6 +501,7 @@ async function handleExport(body, res) {
   }
   const session = requireExistingSession(body, res);
   if (!session) return;
+  if (rejectSketchSession(session, res, "匯出")) return;
   if (session.busy) {
     sendJson(res, 409, { ok: false, error: "session 忙碌中(等目前回合結束)" });
     return;
@@ -575,6 +622,7 @@ async function handleExportParts(body, res) {
   }
   const session = requireExistingSession(body, res);
   if (!session) return;
+  if (rejectSketchSession(session, res, "拆件匯出")) return;
   if (session.busy) {
     sendJson(res, 409, { ok: false, error: "session 忙碌中(等目前回合結束)" });
     return;
@@ -663,6 +711,7 @@ function handleSaveProject(body, res) {
     return;
   }
   const session = getOrCreateSession(sid);
+  if (rejectSketchSession(session, res, "另存專案")) return;
   if (!session.lastName) {
     sendJson(res, 400, { ok: false, error: "目前沒有可保存的產物(先讓 AI 產出模型)" });
     return;
@@ -702,6 +751,7 @@ function handleSaveProject(body, res) {
 async function handleValidate(body, res) {
   const session = requireExistingSession(body, res);
   if (!session) return;
+  if (rejectSketchSession(session, res, "精算")) return;
   if (!session.lastName) {
     sendJson(res, 400, { ok: false, error: "目前沒有可驗證的產物(先讓 AI 產出模型)" });
     return;
@@ -763,6 +813,7 @@ async function handleValidate(body, res) {
 async function handleValidateVer(body, res) {
   const session = requireExistingSession(body, res);
   if (!session) return;
+  if (rejectSketchSession(session, res, "匯出前驗證")) return;
   if (session.busy) {
     sendJson(res, 409, { ok: false, error: "session 忙碌中(等目前回合結束)" });
     return;

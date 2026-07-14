@@ -6,7 +6,9 @@ import { test } from "node:test";
 import {
   composeClarifyReply,
   isAssumedChip,
+  latestSpecItem,
   pendingClarifyFromItems,
+  pendingLessonOffer,
   stripAssumedTag,
   unescapeNewlines,
 } from "./clarifyText.js";
@@ -105,4 +107,52 @@ test("pendingClarifyFromItems:空/無 clarify → null", () => {
   assert.equal(pendingClarifyFromItems([]), null);
   assert.equal(pendingClarifyFromItems(null), null);
   assert.equal(pendingClarifyFromItems([{ type: "user" }, SPEC]), null);
+});
+
+// ---------------------------------------------------------------------------
+// latestSpecItem — 視圖 SpecPanel 資料源(App 與 Conversation 指路共用)
+// ---------------------------------------------------------------------------
+
+test("latestSpecItem:取最新一張 spec(跨 user 段持續有效);無 spec/空 → null", () => {
+  const old = { id: "m1", type: "spec", chips: [{ k: "外徑", v: "20mm" }] };
+  const fresh = { id: "m3", type: "spec", chips: [{ k: "外徑", v: "25mm" }] };
+  assert.equal(latestSpecItem([old, { type: "user" }, fresh, { type: "ai" }]), fresh);
+  assert.equal(latestSpecItem([old, { type: "user" }]), old); // 上一回合的規格仍是「目前規格」
+  assert.equal(latestSpecItem([{ type: "user" }, { type: "ai" }]), null);
+  assert.equal(latestSpecItem([]), null);
+  assert.equal(latestSpecItem(null), null);
+});
+
+test("latestSpecItem:跳過 stale(CLEAR_WORKSPACE 換設計標記),退回較早的非 stale spec", () => {
+  const old = { id: "m1", type: "spec", chips: [{ k: "外徑", v: "20mm" }] };
+  const staled = { id: "m3", type: "spec", chips: [{ k: "行程", v: "100mm" }], stale: true };
+  assert.equal(latestSpecItem([old, staled]), old);
+  assert.equal(latestSpecItem([{ ...old, stale: true }, staled]), null); // 全 stale → 無作答面
+});
+
+// ---------------------------------------------------------------------------
+// pendingLessonOffer — 視圖是/否面板資料源(最舊未答;佇列語意)
+// ---------------------------------------------------------------------------
+
+test("pendingLessonOffer:最舊未答優先(佇列);pending(POST 中)仍算輪到中", () => {
+  const a = { id: "m1", type: "lesson_offer", symptom: "A" };
+  const b = { id: "m2", type: "lesson_offer", symptom: "B" };
+  assert.equal(pendingLessonOffer([a, b]), a);
+  assert.equal(pendingLessonOffer([{ ...a, answered: "skipped" }, b]), b);
+  // POST 進行中:面板留在原卡顯示「加入中…」,不可先跳下一張
+  const inflight = { ...a, answered: "pending" };
+  assert.equal(pendingLessonOffer([inflight, b]), inflight);
+});
+
+test("pendingLessonOffer:全答完/無卡/空 → null", () => {
+  assert.equal(
+    pendingLessonOffer([
+      { id: "m1", type: "lesson_offer", answered: "added" },
+      { id: "m2", type: "lesson_offer", answered: "skipped" },
+    ]),
+    null,
+  );
+  assert.equal(pendingLessonOffer([{ type: "user" }, SPEC]), null);
+  assert.equal(pendingLessonOffer([]), null);
+  assert.equal(pendingLessonOffer(null), null);
 });

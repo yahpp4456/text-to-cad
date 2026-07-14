@@ -12,6 +12,7 @@ const TOOL_LABELS = {
   cad_measure: "量測幾何",
   cad_align: "計算對齊",
   cad_export: "匯出中",
+  sketch_present: "搭建機構草模",
 };
 
 function liveText(what, chars) {
@@ -30,6 +31,11 @@ export function handleEvent(dispatch, type, data = {}) {
   switch (type) {
     case "session":
       dispatch({ type: "SET_SESSION", sessionId: data.sessionId });
+      // 伺服端 session 的 mode 是權威真相(per-session 恆定)→ 校正前端切換器
+      // (mode_mismatch 400 之外的溫和同步路;無欄位=舊 server,不動)。
+      if (data.mode === "sketch" || data.mode === "design") {
+        dispatch({ type: "SET_MODE", mode: data.mode });
+      }
       break;
     case "stage":
       dispatch({ type: "SET_STAGE", index: data.index });
@@ -111,8 +117,12 @@ export function handleEvent(dispatch, type, data = {}) {
           code: data.code,
           ghost: data.ghost,
           formats: data.formats || [],
-          fileType: data.type || "", // part | assembly(伺服端 manifest 推導)
+          fileType: data.type || "", // part | assembly | sketch(伺服端推導)
           partCount: data.partCount,
+          // 草模卡(SketchCard)摘要欄位:CAD 事件無這些欄位 → undefined 不影響
+          title: data.title,
+          dofs: Array.isArray(data.dofs) ? data.dofs : undefined,
+          joints: data.joints,
         },
       });
       break;
@@ -133,7 +143,11 @@ export function handleEvent(dispatch, type, data = {}) {
           flatGlbUrl: data.flatGlbUrl ?? null, // 鈑金件(有 gen_flat)→ 摺疊/攤平即時切換
           flatLinesUrl: data.flatLinesUrl ?? null, // 折彎線 sidecar → 攤平態虛線 overlay
           projectDir: data.projectDir ?? null, // 唯讀檢視版的升級目錄(一般產出=null)
+          sceneUrl: data.sceneUrl ?? null, // 草模場景 JSON(type:"sketch";CAD 版=null)
+          dofs: Array.isArray(data.dofs) ? data.dofs : undefined, // 草模 DOF 摘要
+          title: data.title, // 草模標題(繁中)
           // 產圖模式戳記(server versionStamp 權威發;舊事件無欄位 → undefined 三態)
+          // 注意:草模的身分走 type:"sketch",伺服端草模事件「禁帶 mode 欄位」(legacy 撞名)
           mode: data.mode === "actual" ? "actual" : data.mode === "design" ? "design" : undefined,
           verified: typeof data.verified === "boolean" ? data.verified : undefined,
         },
@@ -150,6 +164,7 @@ export function handleEvent(dispatch, type, data = {}) {
         projectDir: data.projectDir ?? null,
         flatGlbUrl: data.flatGlbUrl ?? null,
         flatLinesUrl: data.flatLinesUrl ?? null,
+        sceneUrl: data.sceneUrl ?? null, // 草模場景(type:"sketch" 的 present 帶)
       });
       break;
     case "params":

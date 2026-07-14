@@ -44,29 +44,26 @@ function AiMsg({ it }) {
   );
 }
 
-function SpecCard({ it, onChipEdit }) {
+// 左欄規格卡 = 被動紀錄(唯一修正面在視圖區 SpecPanel;live=這張就是視圖面板
+// 正在呈現的最新規格,標「請在右側操作」指路)。chips 不可點、無 ✎。
+function SpecCard({ it, live }) {
   return (
     <div className="card spec-card">
       <div className="card-head">
         <span className="bar bar-design" />
-        <span className="card-eyebrow">解析規格 · 可點擊修正</span>
+        <span className="card-eyebrow">解析規格</span>
+        {live && <span className="spec-live">可修正 · 請在右側畫布操作 ▸</span>}
       </div>
       <div className="spec-chips">
         {it.chips.map((c, i) => {
           // 「(假設)」剝字樣改 badge(assumed 旗標為主、文字慣例 fallback,視覺統一)
           const assumed = isAssumedChip(c);
           return (
-            <a
-              className="spec-chip"
-              key={i}
-              data-assumed={assumed || undefined}
-              onClick={() => onChipEdit?.(c)}
-            >
+            <span className="spec-chip static" key={i} data-assumed={assumed || undefined}>
               <span className="chip-k">{c.k}</span>
               <span className="chip-v">{stripAssumedTag(c.v)}</span>
               {assumed && <span className="chip-assumed">假設</span>}
-              <span className="chip-edit">✎</span>
-            </a>
+            </span>
           );
         })}
       </div>
@@ -185,6 +182,47 @@ function RetryCard({ it }) {
   );
 }
 
+// 草模產物卡(artifact 事件 type:"sketch"):琥珀強調、DOF 摘要 chips、
+// 「▶ 在右側播放」= 選中該版(視圖自動播放)。卡腳誠實標語常駐。
+function SketchCard({ it, onSelectVersion }) {
+  const joints = it.joints || {};
+  const jointSummary = [
+    joints.revolute ? `R×${joints.revolute}` : null,
+    joints.prismatic ? `P×${joints.prismatic}` : null,
+  ]
+    .filter(Boolean)
+    .join(",");
+  return (
+    <div className="card sketch-card" style={{ "--ac": "var(--sketch)" }}>
+      <div className="card-head">
+        <span className="bar bar-sketch" />
+        <span className="card-eyebrow grow">機構草模 · {it.ver}</span>
+        <a className="sketch-card-play" onClick={() => onSelectVersion?.(it.ver)}>
+          ▶ 在右側播放
+        </a>
+      </div>
+      <div className="sketch-card-body">
+        <span className="sketch-card-title">{it.title || it.name}</span>
+        <span className="sketch-card-sum">
+          {it.partCount} 件{jointSummary ? ` · 關節(${jointSummary})` : ""}
+          {it.dofs?.length ? ` · ${it.dofs.length} DOF` : ""}
+        </span>
+        {it.dofs?.length > 0 && (
+          <div className="sketch-card-dofs">
+            {it.dofs.map((d) => (
+              <span className="sketch-dof-chip" key={d.id}>
+                {d.label || d.id} {d.min}~{d.max}
+                {d.unit || ""}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      <span className="sketch-card-foot">示意用 · 剛體運動 · 非真實幾何</span>
+    </div>
+  );
+}
+
 function ArtifactCard({ it, onSelectVersion }) {
   return (
     <div className="card artifact-card" style={{ "--ac": "var(--emit)" }}>
@@ -241,11 +279,10 @@ function ClarifyCard({ it, pending }) {
   );
 }
 
-// 人工記教訓的「是/否卡」——對話流第一張會打 API 的互動卡(其餘卡皆被動紀錄)。
-// 「是」→ handlers.onLessonOffer 打 POST /api/lessons/record;「否」→ 純前端標記。
-// 答過(it.answered)後鎖定並顯示結果。
-function LessonOfferCard({ it, onLessonOffer }) {
-  const answered = it.answered; // "added" | "skipped" | undefined
+// 人工記教訓的「是/否卡」= 被動紀錄(唯一作答面在視圖區 LessonOfferPanel,
+// 佇列語意依序輪答)。未答顯示指路提示;答過顯示結果,隨 RESTORE items 快照存活。
+function LessonOfferCard({ it }) {
+  const answered = it.answered; // "added" | "skipped" | "pending" | undefined
   return (
     <div className="card lesson-offer-card" style={{ "--ac": "var(--emit)" }}>
       <div className="card-head">
@@ -273,37 +310,20 @@ function LessonOfferCard({ it, onLessonOffer }) {
               : "已略過"}
         </div>
       ) : (
-        <div className="lesson-offer-actions">
-          <a
-            className="fb-action primary"
-            onClick={() =>
-              onLessonOffer?.(it.id, "added", {
-                symptom: it.symptom,
-                rootCause: it.rootCause,
-                fix: it.fix,
-                tag: it.tag,
-              })
-            }
-          >
-            是,加入教訓
-          </a>
-          <a className="fb-action" onClick={() => onLessonOffer?.(it.id, "skipped")}>
-            否
-          </a>
-        </div>
+        <div className="lesson-offer-hint">請在右側畫布回答 ▸</div>
       )}
     </div>
   );
 }
 
-export default function Message({ it, handlers, pending }) {
+export default function Message({ it, handlers, pending, specLive }) {
   switch (it.type) {
     case "user":
       return <UserMsg it={it} />;
     case "ai":
       return <AiMsg it={it} />;
     case "spec":
-      return <SpecCard it={it} onChipEdit={handlers.onChipEdit} />;
+      return <SpecCard it={it} live={specLive} />;
     case "plan":
       return <PlanCard it={it} onToggle={handlers.onToggle} />;
     case "tool":
@@ -313,11 +333,15 @@ export default function Message({ it, handlers, pending }) {
     case "retry":
       return <RetryCard it={it} />;
     case "artifact":
-      return <ArtifactCard it={it} onSelectVersion={handlers.onSelectVersion} />;
+      return it.fileType === "sketch" ? (
+        <SketchCard it={it} onSelectVersion={handlers.onSelectVersion} />
+      ) : (
+        <ArtifactCard it={it} onSelectVersion={handlers.onSelectVersion} />
+      );
     case "clarify":
       return <ClarifyCard it={it} pending={pending} />;
     case "lesson_offer":
-      return <LessonOfferCard it={it} onLessonOffer={handlers.onLessonOffer} />;
+      return <LessonOfferCard it={it} />;
     default:
       return null;
   }

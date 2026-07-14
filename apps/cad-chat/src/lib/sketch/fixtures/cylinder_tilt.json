@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "name": "cylinder_tilt",
+  "title": "汽缸驅動平台前傾(滑塊曲柄→搖桿)",
+  "bodies": [
+    {
+      "id": "base",
+      "label": "機架 / 鉸鏈座",
+      "role": "frame",
+      "parts": [
+        { "type": "box", "size": [146, 54, 8], "at": [70, 25, 4] },
+        { "type": "hole", "axis": "z", "r": 2.4, "depth": 9, "at": [14, 8, 5] },
+        { "type": "hole", "axis": "z", "r": 2.4, "depth": 9, "at": [14, 42, 5] },
+        { "type": "hole", "axis": "z", "r": 2.4, "depth": 9, "at": [130, 8, 5] },
+        { "type": "hole", "axis": "z", "r": 2.4, "depth": 9, "at": [130, 42, 5] },
+        { "type": "box", "size": [14, 30, 46], "at": [6, 25, 27] },
+        { "type": "box", "size": [16, 30, 40], "at": [44, 25, 24] },
+        { "type": "cylinder", "axis": "x", "r": 15.5, "len": 9, "at": [44, 25, 54] },
+        { "type": "box", "size": [13, 5, 16], "at": [110, 2.5, 16] },
+        { "type": "box", "size": [13, 5, 16], "at": [110, 47.5, 16] },
+        { "type": "cylinder", "axis": "y", "r": 8, "len": 5, "at": [110, 2.5, 12] },
+        { "type": "cylinder", "axis": "y", "r": 8, "len": 5, "at": [110, 47.5, 12] },
+        { "type": "cylinder", "axis": "y", "r": 4, "len": 58, "at": [110, 25, 12], "role": "pin" }
+      ]
+    },
+    {
+      "id": "platform",
+      "label": "末端平台(輸出)",
+      "role": "output",
+      "origin": [110, 25, 12],
+      "joint": { "type": "revolute", "axis": [0, 1, 0], "drive": "theta", "scale": 1 },
+      "parts": [
+        { "type": "plate", "size": [42, 52], "t": 7, "r": 7, "axis": "x", "at": [3.5, 0, 27] },
+        { "type": "cylinder", "axis": "x", "r": 9, "len": 4, "at": [7.6, 0, 27], "role": "accent" },
+        { "type": "hole", "axis": "x", "r": 4.6, "depth": 15, "at": [6, 0, 27] },
+        { "type": "hole", "axis": "x", "r": 4.3, "depth": 3.2, "at": [6.6, 12, 40] },
+        { "type": "hole", "axis": "x", "r": 4.3, "depth": 3.2, "at": [6.6, -12, 40] },
+        { "type": "hole", "axis": "x", "r": 4.3, "depth": 3.2, "at": [6.6, 12, 14] },
+        { "type": "hole", "axis": "x", "r": 4.3, "depth": 3.2, "at": [6.6, -12, 14] },
+        { "type": "box", "size": [6, 4, 32], "at": [-2, 15, 24] },
+        { "type": "box", "size": [6, 4, 32], "at": [-2, -15, 24] },
+        { "type": "cylinder", "axis": "y", "r": 9, "len": 40, "at": [3.5, 0, 0] },
+        { "type": "pin_clevis", "axis": "y", "at": [0, 0, 42] }
+      ]
+    },
+    {
+      "id": "rodFork",
+      "label": "桿端叉耳 / 銷",
+      "role": "clevis",
+      "parent": { "point": "pinC" },
+      "parts": [
+        { "type": "box", "size": [9, 21, 17], "at": [-9, 0, 0] },
+        { "type": "cylinder", "axis": "x", "r": 6, "len": 6, "at": [-14, 0, 0], "role": "rod" },
+        { "type": "pin_clevis", "axis": "y", "at": [0, 0, 0] }
+      ]
+    }
+  ],
+  "drives": [
+    { "id": "theta", "label": "前傾角 θ", "unit": "°", "min": 0, "max": 30, "home": 0, "speed": 12 }
+  ],
+  "derived": [
+    {
+      "type": "pin_on_line",
+      "id": "pinC",
+      "line": { "origin": [50, 25, 54], "dir": [1, 0, 0] },
+      "link": { "to": { "body": "platform", "at": [0, 0, 42] }, "len": 35 },
+      "branch": "-"
+    },
+    {
+      "type": "actuator",
+      "id": "cyl1",
+      "from": { "body": "world", "at": [5, 25, 54] },
+      "to": { "point": "pinC" },
+      "look": { "bore": 25, "barrelLen": 45, "rodR": 5, "label": "汽缸 MAL25×25" }
+    },
+    {
+      "type": "coupler",
+      "id": "link1",
+      "from": { "point": "pinC" },
+      "to": { "body": "platform", "at": [0, 0, 42] },
+      "look": { "w": 7, "eyeR": 6, "label": "連桿 coupler" }
+    }
+  ],
+  "program": { "mode": "pingpong" },
+  "readouts": [
+    { "kind": "drive", "drive": "theta", "label": "前傾角 θ", "decimals": 1 },
+    { "kind": "stroke", "actuator": "cyl1", "label": "缸桿行程", "decimals": 2 },
+    {
+      "kind": "angle",
+      "at": { "body": "platform", "at": [0, 0, 42] },
+      "arms": [ { "body": "platform", "at": [0, 0, 0] }, { "point": "pinC" } ],
+      "label": "傳動角 μ",
+      "thresholds": [30, 45],
+      "decimals": 1
+    }
+  ],
+  "annotations": [
+    { "type": "trace", "point": { "body": "platform", "at": [0, 0, 50] }, "drive": "theta", "samples": 40 }
+  ],
+  "camera": { "target": [70, 25, 32], "distance": 280 }
+}

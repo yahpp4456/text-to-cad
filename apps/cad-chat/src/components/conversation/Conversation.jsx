@@ -9,7 +9,25 @@ const EXAMPLES = [
   { text: "行程 100mm 的電動線性滑台:底板、線軌滑塊、滾珠螺桿與步進馬達", accent: "var(--ink)" },
 ];
 
-export default function Conversation({ items, isIdle, running, live, frozen, onSubmitText, handlers }) {
+// 草模模式的閒置範例:機構構想(拓撲/DOF/動作),不是零件規格
+const EXAMPLES_SKETCH = [
+  { text: "水平汽缸經連桿推末端平台前傾 30°", accent: "var(--sketch)" },
+  { text: "旋轉臂夾爪:夾取工件、90° 翻轉後放到定位座", accent: "var(--emit)" },
+  { text: "齒輪齒條轉向機構,輸入 ±45°", accent: "var(--part)" },
+  { text: "兩軸取放:水平滑台 + 升降夾爪的動作流程", accent: "var(--ink)" },
+];
+
+export default function Conversation({
+  items,
+  isIdle,
+  running,
+  live,
+  frozen,
+  mode,
+  specLiveId,
+  onSubmitText,
+  handlers,
+}) {
   const scrollRef = useRef(null);
   // clarify 焦點模式凍結期:抑制強拉到底,讓使用者能安心上捲讀歷史(答案的重心已移到
   // 視圖聚光燈卡)。答完 frozen 轉 false → effect 重跑 → 平滑回到底。
@@ -28,6 +46,9 @@ export default function Conversation({ items, isIdle, running, live, frozen, onS
     return null;
   }, [items, frozen]);
 
+  // specLiveId 由 App 下傳(與視圖 SpecPanel 同一資料源+同一讓位規則推導),
+  // 這裡只比對 id,不自行推導——兩端永不漂移。
+
   return (
     <section className="conv">
       <div className="conv-head">
@@ -39,18 +60,29 @@ export default function Conversation({ items, isIdle, running, live, frozen, onS
           <div className="empty">
             <div className="empty-hero">
               <span className="empty-title">
-                描述零件,
-                <br />
-                看 AI 產出 CAD。
+                {mode === "sketch" ? (
+                  <>
+                    描述機構,
+                    <br />
+                    看 AI 搭出會動的草模。
+                  </>
+                ) : (
+                  <>
+                    描述零件,
+                    <br />
+                    看 AI 產出 CAD。
+                  </>
+                )}
               </span>
               <span className="empty-sub">
-                用自然語言描述你要的機構或零件。AI 會解析規格 → 規劃 → 參數化生成 →
-                自我檢查與修正 → 把 3D 模型載入右側畫布。
+                {mode === "sketch"
+                  ? "用一句話描述機構構想(拓撲、驅動方式、行程)。AI 會在幾秒內搭出可播放、可拉滑桿的剛體運動示意——快速驗證想法,要產真零件再切「設計」。"
+                  : "用自然語言描述你要的機構或零件。AI 會解析規格 → 規劃 → 參數化生成 → 自我檢查與修正 → 把 3D 模型載入右側畫布。"}
               </span>
             </div>
             <div className="empty-examples">
               <span className="empty-examples-eyebrow">範例 · 點擊開始</span>
-              {EXAMPLES.map((ex, i) => (
+              {(mode === "sketch" ? EXAMPLES_SKETCH : EXAMPLES).map((ex, i) => (
                 <a className="example" key={i} onClick={() => onSubmitText(ex.text)}>
                   <span className="example-bar" style={{ background: ex.accent }} />
                   <span className="example-text">{ex.text}</span>
@@ -63,7 +95,12 @@ export default function Conversation({ items, isIdle, running, live, frozen, onS
           <>
             {items.map((it) => (
               <div className="msg-wrap" key={it.id}>
-                <Message it={it} handlers={handlers} pending={it.id === pendingId} />
+                <Message
+                  it={it}
+                  handlers={handlers}
+                  pending={it.id === pendingId}
+                  specLive={it.id === specLiveId}
+                />
               </div>
             ))}
             {running && live && (

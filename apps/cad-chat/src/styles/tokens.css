@@ -6,6 +6,7 @@
   --emit: #18a0c4; /* EMIT accent 青 */
   --part: #34ab86; /* PART accent 薄荷綠 */
   --amber: #e8a13a; /* 自我修正/工程標註 */
+  --sketch: #e8a13a; /* 草模模式 accent(琥珀語意別名:非真實/示意,與未驗證同族) */
   --danger: #d64848; /* 失敗/中斷 */
 
   /* 中性色 */

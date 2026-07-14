@@ -56,7 +56,10 @@ if vals:
     not_skipped = [ck for ck in v.get("checks", []) if not ck.get("skipped")]
     c.check("A: 快路徑 checks 全 skipped(outputMode 欄位已死,帶了也沒用)",
             not not_skipped, str(not_skipped)[:200])
-    c.check("A: 零 spawn 驗證 <1.5s(spawn 路徑 ≥8s)", (v.get("ms") or 9e9) < 1500, f"ms={v.get('ms')}")
+    # ms=0 合法且是零 spawn 的最強證明(sidecar 路徑 <1ms 取整成 0);`or 9e9` 的
+    # falsy-0 慣用法會把 0 誤判成缺值 → 改 is not None 區分「沒帶欄位」與「真 0」。
+    _ms = v.get("ms")
+    c.check("A: 零 spawn 驗證 <1.5s(spawn 路徑 ≥8s)", _ms is not None and _ms < 1500, f"ms={_ms}")
     c.check("A: partCount>0(sidecar 帶 parts)", (v.get("partCount") or 0) > 0, str(v.get("partCount")))
 a_dofs = ([d for e, d in evs if e == "motion"][-1].get("dofs") if any(e == "motion" for e, _ in evs) else []) or []
 c.check("A: motion 事件含 revolute flip(sidecar 供源)",

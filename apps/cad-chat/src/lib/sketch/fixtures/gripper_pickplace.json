@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "name": "gripper_pickplace",
+  "title": "旋轉臂夾爪 90° 翻轉取放",
+  "bodies": [
+    {
+      "id": "frame",
+      "label": "機架立柱",
+      "role": "frame",
+      "parts": [
+        { "type": "box", "size": [40, 44, 6], "at": [-28, 25, 3] },
+        { "type": "box", "size": [12, 16, 58], "at": [-30, 25, 35] },
+        { "type": "box", "size": [30, 10, 10], "at": [-15, 25, 70] },
+        { "type": "cylinder", "axis": "y", "r": 8, "len": 18, "at": [0, 25, 70] }
+      ]
+    },
+    {
+      "id": "arm",
+      "label": "旋轉臂(輸出)",
+      "role": "output",
+      "origin": [0, 25, 70],
+      "joint": { "type": "revolute", "axis": [0, 1, 0], "drive": "theta", "scale": 1 },
+      "parts": [
+        { "type": "box", "size": [60, 10, 10], "at": [30, 0, 0] },
+        { "type": "cylinder", "axis": "y", "r": 7, "len": 16, "at": [0, 0, 0] },
+        { "type": "box", "size": [12, 14, 8], "at": [60, 0, -2] }
+      ]
+    },
+    {
+      "id": "jaw1",
+      "label": "夾指",
+      "role": "clevis",
+      "parent": "arm",
+      "origin": [60, 0, -6],
+      "joint": { "type": "prismatic", "axis": [0, 1, 0], "drive": "gap", "scale": 1 },
+      "parts": [
+        { "type": "box", "size": [8, 3, 22], "at": [0, 1.5, -11] }
+      ]
+    },
+    {
+      "id": "jaw2",
+      "role": "clevis",
+      "parent": "arm",
+      "origin": [60, 0, -6],
+      "joint": { "type": "prismatic", "axis": [0, 1, 0], "drive": "gap", "scale": -1 },
+      "partsFrom": { "body": "jaw1", "mirror": "y" }
+    },
+    {
+      "id": "seat",
+      "label": "取料座",
+      "role": "frame",
+      "parts": [
+        { "type": "box", "size": [14, 14, 44], "at": [60, 25, 22] },
+        { "type": "box", "size": [16, 16, 6], "at": [60, 25, 47] }
+      ]
+    },
+    {
+      "id": "dropoff",
+      "label": "置放座",
+      "role": "frame",
+      "parts": [
+        { "type": "box", "size": [16, 16, 4], "at": [-14, 25, 2] }
+      ]
+    }
+  ],
+  "drives": [
+    { "id": "theta", "label": "旋轉角 θ", "unit": "°", "min": 0, "max": 90, "home": 0, "speed": 45 },
+    { "id": "gap", "label": "指開半距", "unit": "mm", "min": 4, "max": 12, "home": 12, "speed": 8 }
+  ],
+  "derived": [
+    {
+      "type": "attach",
+      "id": "workpiece",
+      "label": "工件",
+      "look": {
+        "parts": [ { "type": "cylinder", "axis": "y", "r": 6, "len": 40, "at": [0, 0, 0] } ],
+        "label": "工件"
+      },
+      "states": {
+        "seated": { "body": "world", "at": [60, 25, 56] },
+        "held":   { "body": "arm", "at": [60, 0, -14] },
+        "placed": { "body": "world", "at": [-14, 25, 10] }
+      },
+      "initial": "seated"
+    }
+  ],
+  "program": {
+    "mode": "timeline",
+    "cycleS": 12,
+    "phases": [
+      { "until": 0.08, "name": "待機" },
+      { "until": 0.2,  "name": "夾取", "drives": { "gap": { "to": 6 } } },
+      { "until": 0.24, "name": "夾緊", "attach": { "workpiece": "held" } },
+      { "until": 0.55, "name": "翻轉搬運", "drives": { "theta": { "to": 90 } } },
+      { "until": 0.63, "name": "釋放", "drives": { "gap": { "to": 12 } }, "attach": { "workpiece": "placed" } },
+      { "until": 0.95, "name": "返程", "drives": { "theta": { "to": 0 } } },
+      { "until": 1,    "name": "歸位" }
+    ]
+  },
+  "readouts": [
+    { "kind": "drive", "drive": "theta", "label": "旋轉角 θ", "decimals": 1 },
+    { "kind": "drive", "drive": "gap", "factor": 2, "label": "指距開口", "unit": "mm", "decimals": 1 },
+    { "kind": "phase", "label": "流程階段" }
+  ],
+  "annotations": [
+    { "type": "trace", "point": { "body": "arm", "at": [60, 0, -14] }, "drive": "theta", "samples": 48 }
+  ],
+  "camera": { "target": [10, 25, 40], "distance": 300 }
+}

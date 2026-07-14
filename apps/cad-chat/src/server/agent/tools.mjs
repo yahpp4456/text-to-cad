@@ -21,104 +21,32 @@ import {
 import { condenseTraceback, spawnPython } from "../cad/python.mjs";
 import { lessonsEnabled } from "../config.mjs";
 import { unescapeNewlines } from "../../lib/clarifyText.js";
+import { makeClarifyGate, makeUiTools, result, toolId } from "./tools.shared.mjs";
 import {
   noteBuildSuccess,
   noteFixAttempt,
   noteValidateSuccess,
-  noteRetry,
   recordApplyFailure,
   recordBuildFailure,
   recordCheckFailure,
 } from "../lessons.mjs";
 
-const result = (obj) => ({ content: [{ type: "text", text: JSON.stringify(obj) }] });
-const toolId = () => `tool_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-
 export function buildCadchatServer({ session, emit, signal }) {
   const n = () => session.lastName || "part";
-  // emit_clarify 之後,本回合任何建模工具一律拒絕(等使用者回答;prompt 紀律的程式閘門)。
-  const clarifyGate = () =>
-    session._clarifyPending
-      ? result({
-          ok: false,
-          error: "已向使用者提問(emit_clarify),請結束本回合等待回答,不得先繼續建模。",
-        })
-      : null;
+  const clarifyGate = makeClarifyGate(session);
 
   return createSdkMcpServer({
     name: "cadchat",
     version: "1.0.0",
     tools: [
-      // ---- UI 訊號 ----
-      tool(
-        "emit_stage",
-        "推進頂部階段列。index:0=理解 1=規劃 2=生成 3=驗證 4=呈現。",
-        { index: z.number().int().min(0).max(4) },
-        async ({ index }) => {
-          emit("stage", { index });
-          return result({ ok: true });
-        },
-      ),
-      tool(
-        "emit_spec",
-        "把解析到的規格丟成可點擊修正的 chips;你自行假設(使用者未給)的值標 assumed:true,v 不要再寫「(假設)」字樣。",
-        { chips: z.array(z.object({ k: z.string(), v: z.string(), assumed: z.boolean().optional() })) },
-        async ({ chips }) => {
-          // choke point 正規化:模型可能在 tool JSON 寫字面 \n(雙重跳脫),原樣轉手會直接印在 UI。
-          emit("spec", {
-            chips: chips.map((c) => ({
-              k: unescapeNewlines(c.k),
-              v: unescapeNewlines(c.v),
-              ...(c.assumed === true ? { assumed: true } : {}),
-            })),
-          });
-          return result({ ok: true });
-        },
-      ),
+      // ---- UI 訊號(emit_stage/spec/clarify/retry 與草模工具集共用)----
+      ...makeUiTools({ session, emit }),
       tool(
         "emit_plan",
         "宣告執行步驟清單。",
         { steps: z.array(z.object({ n: z.number().int(), t: z.string() })) },
         async ({ steps }) => {
           emit("plan", { steps });
-          return result({ ok: true });
-        },
-      ),
-      tool(
-        "emit_clarify",
-        "向使用者提問(規格不足時)。呼叫後請結束本回合等待回答。",
-        {
-          question: z.string(),
-          options: z.array(z.object({ label: z.string(), value: z.string() })).optional(),
-          suggested: z.string().optional(),
-        },
-        async ({ question, options, suggested }) => {
-          // 硬閘門:提問後本回合禁止再建模(見下方各 cad_* 工具的檢查)。
-          session._clarifyPending = true;
-          // choke point 正規化字面 \n;opts 的 label/value 與 suggested 會被原樣
-          // 送回當使用者回覆,一併處理。
-          emit("clarify", {
-            q: unescapeNewlines(question),
-            opts: (options || []).map((o) => ({
-              label: unescapeNewlines(o.label),
-              value: unescapeNewlines(o.value),
-            })),
-            suggested: unescapeNewlines(suggested || ""),
-          });
-          return result({ ok: true, awaiting: true, note: "已提問,請結束本回合等待使用者回答。" });
-        },
-      ),
-      tool(
-        "emit_retry",
-        "驗證失敗自我修正時的說明橫幅。",
-        {
-          attempt: z.number().int(),
-          reason: z.string(),
-          adjustment: z.string().optional(),
-        },
-        async ({ attempt, reason, adjustment }) => {
-          noteRetry(session, { attempt, reason, adjustment }); // 教訓案例:agent 自診
-          emit("retry", { attempt, reason, adjustment: adjustment || "" });
           return result({ ok: true });
         },
       ),

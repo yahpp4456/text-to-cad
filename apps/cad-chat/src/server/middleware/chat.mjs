@@ -56,7 +56,25 @@ export function chatMiddleware() {
       return;
     }
 
-    const session = getOrCreateSession(body.sessionId);
+    const session = getOrCreateSession(body.sessionId, { mode: body.mode });
+    // mode 檢查在 busy 409「之前」:mismatch 的請求沒有排隊等鎖的意義。
+    // 正常 UI 流程走不到 mismatch(切換 toggle 即開新對話);這是防多分頁/race
+    // 的誠實護欄——不靜默改道,回 400 讓前端把 toggle 校正回 session 真相。
+    const turnMode = resolveTurnMode(body, session);
+    if (!turnMode.ok) {
+      sendJson(
+        res,
+        400,
+        turnMode.error === "mode_mismatch"
+          ? { error: "mode_mismatch", mode: turnMode.mode }
+          : { error: "bad mode" },
+      );
+      return;
+    }
+    if (turnMode.adopt) {
+      session.mode = turnMode.mode;
+      persistSession(session);
+    }
     if (session.busy) {
       sendJson(res, 409, { error: "session busy" });
       return;
@@ -78,7 +96,11 @@ export function chatMiddleware() {
     const sse = openSse(res);
     const emit = (event, data) => sse.emit(event, data);
     session.emit = emit;
-    emit("session", { sessionId: session.sessionId, sdkSessionId: session.sdkSessionId });
+    emit("session", {
+      sessionId: session.sessionId,
+      sdkSessionId: session.sdkSessionId,
+      mode: session.mode,
+    });
     // 斷線只准中止自己這個 turn:interrupt 放行後 currentAbort 可能已是新 turn 的
     sse.onClose(() => {
       if (session._busyToken === busyToken) session.currentAbort?.abort();
@@ -87,6 +109,7 @@ export function chatMiddleware() {
     try {
       const img = readImageBlocks(body, session);
       const paramsOnly =
+        session.mode !== "sketch" && // 草模無 PARAMS 產生器,永不走決定性重生路(防禦)
         body.params &&
         Object.keys(body.params).length > 0 &&
         (!body.message || !String(body.message).trim()) &&
@@ -136,6 +159,22 @@ export function chatMiddleware() {
 // body.imageRefs(輕量 rel,如 "uploads/xxx.png")→ 從 session workdir 讀檔組
 // API image content blocks。雙重沙箱:強制 uploads/ 前綴 + resolveInside;
 // media_type 重嗅探(不信副檔名,容忍手放檔案);超限/嗅探失敗丟棄、缺檔記 missing。
+// 本 turn 的模式裁定(純函式,L1 直測):
+//   body.mode 缺席 → 沿用 session 現值;相符 → 通過;非法值 → bad_mode;
+//   不符但 session 是「處女 session」(還沒跑過任何 turn、沒有產物)→ 採納並
+//   persist——必要:upload.mjs 上傳圖片會先 mint 無 mode 的 session,草模模式下
+//   「先貼圖再送第一句話」就踩到;
+//   不符且已有歷史 → mode_mismatch(400,不靜默改道)。
+export function resolveTurnMode(body, session) {
+  const req = body?.mode;
+  if (req === undefined || req === null) return { ok: true, mode: session.mode };
+  if (req !== "design" && req !== "sketch") return { ok: false, error: "bad_mode" };
+  if (req === session.mode) return { ok: true, mode: req };
+  const virgin = !session.sdkSessionId && !session.lastName && !(session.version > 0);
+  if (virgin) return { ok: true, mode: req, adopt: true };
+  return { ok: false, error: "mode_mismatch", mode: session.mode };
+}
+
 export function readImageBlocks(body, session) {
   const refs = Array.isArray(body?.imageRefs) ? body.imageRefs.slice(0, 4) : [];
   const blocks = [];
@@ -206,8 +245,9 @@ export function buildUserText(body, session, img) {
   // 「沒有 _rehydrateNote」時注入——後者是 open-project/自動帶入編輯的權威續接語境,
   // 有它就代表 session 已擁有該模型,不必再靠 canvas 提示(且避免升級瞬間的 stale
   // canvas 與新 session 語境打架)。
+  // (草模 turn 不注入:這段講 .py 產生器/檔案瀏覽器,對草模是錯誤語境)
   const cv = body?.canvas;
-  if (cv?.source === "opened" && !session?._rehydrateNote) {
+  if (cv?.source === "opened" && !session?._rehydrateNote && session?.mode !== "sketch") {
     const nm = String(cv.name || "").slice(0, 120);
     const file = String(cv.file || "").slice(0, 200);
     const pd = cv.projectDir ? String(cv.projectDir).slice(0, 200) : null;

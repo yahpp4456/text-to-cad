@@ -127,6 +127,107 @@ test("session.json 缺/壞 → 乾淨新 session 不炸", () => {
   }
 });
 
+// ── mode(草模/設計)persist/hydrate ──
+
+test("mint 帶 opts.mode=sketch → 新 session 是草模;既有 session 忽略 opts", () => {
+  const idA = freshId("modeMint");
+  const idB = freshId("modeKeep");
+  try {
+    const a = getOrCreateSession(idA, { mode: "sketch" });
+    assert.equal(a.mode, "sketch");
+    const b = getOrCreateSession(idB); // 預設 design
+    assert.equal(b.mode, "design");
+    const b2 = getOrCreateSession(idB, { mode: "sketch" }); // 既有 session:opts 無效
+    assert.equal(b2.mode, "design");
+    const c = getOrCreateSession(freshId("modeBogus"), { mode: "bogus" });
+    assert.equal(c.mode, "design"); // 非法值收斂 design
+    fs.rmSync(c.workdir, { recursive: true, force: true });
+  } finally {
+    fs.rmSync(path.join(SESSIONS_ROOT, idA), { recursive: true, force: true });
+    fs.rmSync(path.join(SESSIONS_ROOT, idB), { recursive: true, force: true });
+  }
+});
+
+test("草模 session persist→hydrate:產物守衛認 .sketch.json,全欄位還原", () => {
+  const id = freshId("modeSketch");
+  const dir = makeDir(id);
+  try {
+    fs.writeFileSync(path.join(dir, "mech.sketch.json"), '{"schemaVersion":1}');
+    persistSession({
+      workdir: dir,
+      mode: "sketch",
+      sdkSessionId: "uuid-sk",
+      version: 3,
+      lastName: "mech",
+      lastPartCount: 0,
+      rehydratedFrom: null,
+      imports: [],
+    });
+    const s = getOrCreateSession(id);
+    assert.equal(s.mode, "sketch");
+    assert.equal(s.version, 3);
+    assert.equal(s.lastName, "mech");
+    assert.equal(s.sdkSessionId, "uuid-sk");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("草模 session GC 殘缺(.sketch.json 不在)→ 不還原產物欄位,但 mode 仍是 sketch", () => {
+  const id = freshId("modeGcd");
+  const dir = makeDir(id);
+  try {
+    persistSession({
+      workdir: dir,
+      mode: "sketch",
+      sdkSessionId: "uuid-dead",
+      version: 7,
+      lastName: "mech", // 但 mech.sketch.json 不存在
+    });
+    const s = getOrCreateSession(id);
+    assert.equal(s.mode, "sketch"); // mode 是身分,在產物守衛之前還原
+    assert.equal(s.sdkSessionId, null);
+    assert.equal(s.version, 0);
+    assert.equal(s.lastName, null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("舊 session.json 無 mode 欄位(legacy)→ hydrate 收斂 design", () => {
+  const id = freshId("modeLegacy");
+  const dir = makeDir(id);
+  try {
+    fs.writeFileSync(path.join(dir, "foo.py"), "PARAMS = {}\n");
+    persistSession({ workdir: dir, lastName: "foo", version: 1 });
+    const metaPath = path.join(dir, "session.json");
+    const raw = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+    delete raw.mode; // 模擬本功能落地前寫下的 session.json
+    fs.writeFileSync(metaPath, JSON.stringify(raw));
+    const s = getOrCreateSession(id);
+    assert.equal(s.mode, "design");
+    assert.equal(s.lastName, "foo");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("probeSessionOnDisk:回 mode 與 hasSketch(草模 session 的開機還原放行訊號)", () => {
+  const id = freshId("modeProbe");
+  const dir = makeDir(id);
+  try {
+    fs.writeFileSync(path.join(dir, "mech.sketch.json"), '{"schemaVersion":1}');
+    persistSession({ workdir: dir, mode: "sketch", lastName: "mech", version: 2 });
+    const info = probeSessionOnDisk(id);
+    assert.equal(info.exists, true);
+    assert.equal(info.mode, "sketch");
+    assert.equal(info.hasSketch, true);
+    assert.equal(info.hasGenerator, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("probeSessionOnDisk:不存在 / 存在含產物 / 非法 id;絕不建目錄", () => {
   const ghost = freshId("ghost");
   assert.deepEqual(probeSessionOnDisk(ghost), { exists: false });

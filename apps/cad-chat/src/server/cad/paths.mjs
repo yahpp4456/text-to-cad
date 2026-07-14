@@ -1,5 +1,8 @@
 // 路徑沙箱 helper:確保所有檔案存取/寫入都限制在指定根目錄內。
+import fs from "node:fs";
 import path from "node:path";
+
+import { MODELS_FIXTURES_ROOT, MODELS_ROOT } from "../config.mjs";
 
 // child 是否在 parent 內(含 parent 本身)。跨平台、防 .. 逃逸。
 export function pathIsInside(child, parent) {
@@ -17,4 +20,29 @@ export function resolveInside(root, relOrAbs) {
     throw new Error(`path escapes sandbox: ${relOrAbs}`);
   }
   return resolved;
+}
+
+// ── 雙根 models「讀取」解析(packaged:可寫層 DATA_ROOT/models 優先、唯讀
+// fixtures 層 RUNTIME_ROOT/models fallback)──
+// dev 兩層同根 → 直接走單根 resolveInside,行為與舊版完全一致(零回歸)。
+// 兩層都沒有該檔 → 回可寫層候選路徑(呼叫端自行 stat 報「不存在」,錯誤語意與
+// 單根一致);兩層都越界才丟錯。**寫入**目的地不得用本函式(只准可寫層,直接
+// resolveInside(MODELS_ROOT, …))。
+export function resolveModelRead(relOrAbs) {
+  if (MODELS_FIXTURES_ROOT === MODELS_ROOT) return resolveInside(MODELS_ROOT, relOrAbs);
+  let primary = null;
+  try {
+    primary = resolveInside(MODELS_ROOT, relOrAbs);
+  } catch {
+    /* 可寫層越界(如 fixtures 層的絕對路徑):還有 fixtures 層可試 */
+  }
+  if (primary && fs.existsSync(primary)) return primary;
+  try {
+    const fallback = resolveInside(MODELS_FIXTURES_ROOT, relOrAbs);
+    if (fs.existsSync(fallback)) return fallback;
+  } catch {
+    /* fixtures 層也越界 */
+  }
+  if (primary) return primary;
+  throw new Error(`path escapes sandbox: ${relOrAbs}`);
 }

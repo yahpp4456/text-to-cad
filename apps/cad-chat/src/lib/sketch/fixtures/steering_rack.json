@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "name": "steering_rack",
+  "title": "齒輪齒條轉向(rack & pinion)",
+  "bodies": [
+    {
+      "id": "housing",
+      "label": "殼座 / 導缸",
+      "role": "frame",
+      "parts": [
+        { "type": "box", "size": [70, 130, 6], "at": [8, 0, 3] },
+        { "type": "cylinder", "axis": "z", "r": 9, "len": 22, "at": [0, 0, 13] },
+        { "type": "cylinder", "axis": "y", "r": 11, "len": 26, "at": [22.5, -53, 30] },
+        { "type": "cylinder", "axis": "y", "r": 11, "len": 26, "at": [22.5, 53, 30] },
+        { "type": "box", "size": [16, 12, 22], "at": [22.5, -53, 15] },
+        { "type": "box", "size": [16, 12, 22], "at": [22.5, 53, 15] }
+      ]
+    },
+    {
+      "id": "pinion",
+      "label": "小齒輪(輸入)",
+      "role": "output",
+      "origin": [0, 0, 30],
+      "joint": { "type": "revolute", "axis": [0, 0, 1], "drive": "theta", "scale": 1 },
+      "parts": [
+        { "type": "gear", "teeth": 14, "module": 2.5, "width": 12, "axis": "z", "at": [0, 0, 0] },
+        { "type": "cylinder", "axis": "z", "r": 5, "len": 34, "at": [0, 0, 11], "role": "pin" }
+      ]
+    },
+    {
+      "id": "rack",
+      "label": "齒條(輸出)",
+      "role": "rod",
+      "origin": [17.5, 0, 30],
+      "joint": { "type": "prismatic", "axis": [0, 1, 0], "drive": "theta", "scale": -0.3054326 },
+      "parts": [
+        { "type": "box", "size": [10, 110, 10], "at": [5, 0, 0] },
+        { "type": "rack", "module": 2.5, "count": 9, "width": 12, "dir": "y", "face": "-x", "at": [0, 0, 0] },
+        { "type": "cylinder", "axis": "y", "r": 9, "len": 8, "at": [5, -52, 0], "role": "pin" },
+        { "type": "cylinder", "axis": "y", "r": 9, "len": 8, "at": [5, 52, 0], "role": "pin" }
+      ]
+    }
+  ],
+  "drives": [
+    { "id": "theta", "label": "轉向角 θ", "unit": "°", "min": -45, "max": 45, "home": 0, "speed": 30 }
+  ],
+  "derived": [],
+  "program": { "mode": "pingpong" },
+  "readouts": [
+    { "kind": "drive", "drive": "theta", "label": "轉向角 θ", "decimals": 1 },
+    { "kind": "joint", "body": "rack", "label": "齒條位移", "unit": "mm", "decimals": 1 }
+  ],
+  "annotations": [],
+  "camera": { "target": [10, 0, 28], "distance": 260 }
+}

@@ -6,9 +6,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { MODELS_ROOT, REPO_ROOT } from "../config.mjs";
+import { DATA_ROOT, MODELS_FIXTURES_ROOT, MODELS_ROOT } from "../config.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
-import { resolveInside } from "../cad/paths.mjs";
+import { pathIsInside, resolveInside, resolveModelRead } from "../cad/paths.mjs";
 import { scrubPaths, spawnPython } from "../cad/python.mjs";
 
 const STEP_DIR = "skills/cad/scripts/step";
@@ -49,42 +49,65 @@ function typeFromManifest(absDir, stem) {
 }
 
 function listDir(relDir) {
-  const abs = resolveInside(MODELS_ROOT, relDir || ".");
+  // 雙層 merge:可寫層(DATA_ROOT/models)優先、唯讀 fixtures 層補集(同名以可寫層
+  // 為準);dev 兩層同根 → 單層,行為與舊版完全一致。兩層都開不了才拋(403/404
+  // 分流由呼叫端依 escape 訊息判斷,語意不變)。
+  const roots = [MODELS_ROOT];
+  if (MODELS_FIXTURES_ROOT !== MODELS_ROOT) roots.push(MODELS_FIXTURES_ROOT);
   const out = [];
-  for (const ent of fs.readdirSync(abs, { withFileTypes: true })) {
-    const name = ent.name;
-    // 藏 dotfile(含隱藏 topology GLB)與快取;.cadchat 例外——先前 session 產物是匯入來源
-    if (name.startsWith(".") && name !== ".cadchat") continue;
-    if (name === "__pycache__") continue;
-    const rel = relDir ? `${relDir}/${name}` : name;
-    if (ent.isDirectory()) {
-      out.push({ name, kind: "dir", rel, project: dirHasGenerator(path.join(abs, name)) });
-      continue;
-    }
-    const ext = path.extname(name).toLowerCase();
-    if (ext !== ".step" && ext !== ".stp" && ext !== ".glb") continue;
-    let st;
+  const seen = new Set();
+  let opened = 0;
+  let lastErr = null;
+  for (const root of roots) {
+    let abs;
+    let ents;
     try {
-      st = fs.statSync(path.join(abs, name));
-    } catch {
+      abs = resolveInside(root, relDir || ".");
+      ents = fs.readdirSync(abs, { withFileTypes: true });
+    } catch (err) {
+      lastErr = err;
       continue;
     }
-    const entry = {
-      name,
-      kind: ext === ".glb" ? "glb" : "step",
-      rel,
-      size: st.size,
-      mtime: Math.round(st.mtimeMs),
-    };
-    if (entry.kind === "step") {
-      const stem = name.replace(/\.(step|stp)$/i, "");
-      // 隱藏 topology GLB 約定:.<檔名>.glb(與 pipeline/scripts/step 一致)
-      entry.hasGlb = fs.existsSync(path.join(abs, `.${name}.glb`));
-      const t = typeFromManifest(abs, stem);
-      if (t) entry.type = t;
+    opened += 1;
+    for (const ent of ents) {
+      const name = ent.name;
+      if (seen.has(name)) continue;
+      // 藏 dotfile(含隱藏 topology GLB)與快取;.cadchat 例外——先前 session 產物是匯入來源
+      if (name.startsWith(".") && name !== ".cadchat") continue;
+      if (name === "__pycache__") continue;
+      const rel = relDir ? `${relDir}/${name}` : name;
+      if (ent.isDirectory()) {
+        seen.add(name);
+        out.push({ name, kind: "dir", rel, project: dirHasGenerator(path.join(abs, name)) });
+        continue;
+      }
+      const ext = path.extname(name).toLowerCase();
+      if (ext !== ".step" && ext !== ".stp" && ext !== ".glb") continue;
+      let st;
+      try {
+        st = fs.statSync(path.join(abs, name));
+      } catch {
+        continue;
+      }
+      const entry = {
+        name,
+        kind: ext === ".glb" ? "glb" : "step",
+        rel,
+        size: st.size,
+        mtime: Math.round(st.mtimeMs),
+      };
+      if (entry.kind === "step") {
+        const stem = name.replace(/\.(step|stp)$/i, "");
+        // 隱藏 topology GLB 約定:.<檔名>.glb(與 pipeline/scripts/step 一致)
+        entry.hasGlb = fs.existsSync(path.join(abs, `.${name}.glb`));
+        const t = typeFromManifest(abs, stem);
+        if (t) entry.type = t;
+      }
+      seen.add(name);
+      out.push(entry);
     }
-    out.push(entry);
   }
+  if (!opened) throw lastErr || new Error("目錄不存在");
   // 目錄在前,同類按名稱
   out.sort((a, b) =>
     (a.kind === "dir") === (b.kind === "dir")
@@ -104,7 +127,7 @@ async function handleOpen(body, res) {
   }
   let abs;
   try {
-    abs = resolveInside(MODELS_ROOT, fileParam);
+    abs = resolveModelRead(fileParam); // 讀取:雙根(可寫層優先、fixtures fallback)
   } catch {
     sendJson(res, 403, { ok: false, error: "路徑超出 models/" });
     return;
@@ -117,7 +140,9 @@ async function handleOpen(body, res) {
   const ext = path.extname(abs).toLowerCase();
   const dir = path.dirname(abs);
   const base = path.basename(abs);
-  const relDir = path.relative(MODELS_ROOT, dir).split(path.sep).join("/");
+  // rel 基準取檔案實際所在層的 models 根(dev 同根 = MODELS_ROOT,行為不變)
+  const rootOf = pathIsInside(abs, MODELS_ROOT) ? MODELS_ROOT : MODELS_FIXTURES_ROOT;
+  const relDir = path.relative(rootOf, dir).split(path.sep).join("/");
   // projectDir:此檔所屬目錄是否為可編輯專案(有 gen_step)。非 null = 前端可把這個
   // 唯讀檢視「帶入可編輯工作區」(open-project 目標);裸檔(匯入/獨立)→ null。
   const projectDir = dirHasGenerator(dir) ? (relDir && relDir !== "." ? relDir : "") : null;
@@ -178,10 +203,15 @@ async function handleOpen(body, res) {
       sendJson(res, 200, { ok: false, error: "kind_required" });
       return;
     }
-    const repoRel = path.relative(REPO_ROOT, abs).split(path.sep).join("/");
+    // 目標在可寫資料根內 → cwd(DATA_ROOT)相對;唯讀 fixtures 層(packaged 跨根)
+    // → 絕對路徑輸入(cadpy CLI 只拒絕對「輸出」option,輸入目標可絕對)。dev 同根
+    // 恆走相對(= 舊 repoRel 行為)。
+    const target = pathIsInside(abs, DATA_ROOT)
+      ? path.relative(DATA_ROOT, abs).split(path.sep).join("/")
+      : abs;
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), OPEN_TIMEOUT_MS);
-    const { code, stderr } = await spawnPython(STEP_DIR, [repoRel, "--kind", kind, "--force"], {
+    const { code, stderr } = await spawnPython(STEP_DIR, [target, "--kind", kind, "--force"], {
       signal: ac.signal,
     });
     clearTimeout(timer);
