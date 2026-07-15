@@ -1408,10 +1408,30 @@
 /* ===================== Composer ===================== */
 .composer {
   flex: none;
-  padding: 14px 18px 16px;
+  padding: 0 18px 16px; /* 上緣 padding 讓給 resize 把手 */
   border-top: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.8);
   transition: opacity 0.25s ease; /* clarify 凍結進/退場平滑;:focus-within 恢復全亮 */
+}
+/* 輸入框拖曳把手:抓住往上拖=變高;雙擊還原自動長高(Composer.jsx) */
+.composer-resize {
+  height: 14px;
+  margin: 0 -18px 2px; /* 滿寬好抓 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  touch-action: none; /* pointer 拖曳不被瀏覽器手勢吃掉 */
+}
+.composer-resize-grip {
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: #d8deea;
+  transition: background 0.15s ease;
+}
+.composer-resize:hover .composer-resize-grip {
+  background: #9fb0cc;
 }
 .pick-chips {
   display: flex;
@@ -1506,8 +1526,9 @@
 .composer-input {
   flex: 1;
   resize: none;
-  min-height: 46px;
-  max-height: 120px;
+  /* 高度由 Composer.jsx 控:自動長高(64~240px)或使用者拖曳的固定值(64px~60vh);
+     這裡只留 min-height 當 JS 尚未套用前的初始值,勿加 max-height(會蓋掉 inline 高度) */
+  min-height: 64px;
   font-family: var(--font-body);
   font-size: 13.5px;
   line-height: 1.5;

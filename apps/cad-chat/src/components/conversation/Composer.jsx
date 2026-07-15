@@ -1,5 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 
+// 輸入框高度:未手動調整時隨內容自動長高(上限 AUTO_MAX);使用者抓上緣拖曳後
+// 記住固定高度(localStorage 跨重整),雙擊把手還原自動模式。
+const H_KEY = "cadchat.composer.h";
+const H_MIN = 64;
+const AUTO_MAX = 240;
+const hMax = () => Math.min(Math.round(window.innerHeight * 0.6), 480);
+const clampH = (h) => Math.max(H_MIN, Math.min(hMax(), h));
+
 export default function Composer({
   running,
   mode, // "design" | "sketch":placeholder 換文案(「我這句會產出什麼」的提示)
@@ -15,6 +23,11 @@ export default function Composer({
   onInterrupt,
 }) {
   const [draft, setDraft] = useState("");
+  // null = 自動長高;數字 = 使用者拖出的固定高度
+  const [boxH, setBoxH] = useState(() => {
+    const v = Number.parseInt(localStorage.getItem(H_KEY) || "", 10);
+    return Number.isFinite(v) ? clampH(v) : null;
+  });
   const inputRef = useRef(null);
   const fileRef = useRef(null);
   const uploading = pendingImages.some((p) => p.status === "uploading");
@@ -33,6 +46,43 @@ export default function Composer({
       requestAnimationFrame(() => el.setSelectionRange(el.value.length, el.value.length));
     }
   }, [prefill]);
+
+  // 高度套用:固定模式直接設;自動模式量 scrollHeight(先歸零再量,縮短也會跟著縮)
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    if (boxH != null) {
+      el.style.height = `${boxH}px`;
+    } else {
+      el.style.height = "auto";
+      el.style.height = `${Math.max(H_MIN, Math.min(el.scrollHeight, AUTO_MAX))}px`;
+    }
+  }, [draft, boxH]);
+
+  // 抓上緣拖曳調高(pointer capture:拖出把手範圍也不掉);放開才落盤
+  const onResizeDown = (e) => {
+    e.preventDefault();
+    const el = inputRef.current;
+    if (!el) return;
+    const startY = e.clientY;
+    const startH = el.getBoundingClientRect().height;
+    const handle = e.currentTarget;
+    handle.setPointerCapture?.(e.pointerId);
+    const move = (ev) => setBoxH(clampH(startH + (startY - ev.clientY)));
+    const up = (ev) => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      const h = clampH(startH + (startY - ev.clientY));
+      setBoxH(h);
+      localStorage.setItem(H_KEY, String(h));
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+  };
+  const resetResize = () => {
+    setBoxH(null);
+    localStorage.removeItem(H_KEY);
+  };
 
   const submit = () => {
     const text = draft.trim();
@@ -77,6 +127,14 @@ export default function Composer({
           : undefined
       }
     >
+      <div
+        className="composer-resize"
+        title="拖曳調整輸入框高度(雙擊還原自動)"
+        onPointerDown={onResizeDown}
+        onDoubleClick={resetResize}
+      >
+        <span className="composer-resize-grip" />
+      </div>
       {pickRefs.length > 0 && (
         <div className="pick-chips">
           {pickRefs.map((r) => (
