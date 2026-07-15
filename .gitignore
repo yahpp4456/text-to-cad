@@ -45,3 +45,4 @@ tmp/
 # cad-chat 對話 session scratch(本機自用,不提交)
 models/.cadchat/
 apps/cad-chat/.env.local
+ref/mechanism_engineering_suite/

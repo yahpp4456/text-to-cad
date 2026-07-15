@@ -24,6 +24,7 @@ ORDER = [
     "smoke_asm_ui.py",
     "smoke_occ_tree.py",
     "smoke_click_select.py",
+    "smoke_measure.py",
     "smoke_part_visibility.py",
     # smoke_open_dedupe 退場:option C(專案目錄整列一鍵開)移除了它測的「唯讀瀏覽專案
     # 檔去重」工作流;同 glbUrl 保留 status 由 chatStore.test.js 單元測覆蓋。

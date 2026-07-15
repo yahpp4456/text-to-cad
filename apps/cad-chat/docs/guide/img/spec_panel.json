@@ -1,0 +1,50 @@
+{
+  "id": "spec_panel",
+  "chapter": 5,
+  "title": "規格修正面板",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "視圖右上「解析規格」面板 = 事後改規格的作答面",
+      "rect": [
+        472,
+        209,
+        380,
+        187
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "任何 chip 都可點開改值(這裡把導軌改成 HGR20)",
+      "rect": [
+        587.9,
+        281,
+        154.5,
+        29
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 3,
+      "label": "「套用修正」送出;走「規格修正:」契約,精準只改這項",
+      "rect": [
+        485,
+        356,
+        96.5,
+        29
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

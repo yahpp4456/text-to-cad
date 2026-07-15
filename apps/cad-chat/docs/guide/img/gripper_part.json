@@ -1,0 +1,24 @@
+{
+  "id": "gripper_part",
+  "chapter": 7,
+  "title": "標準件選型範例",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "講規格,代理自動選型並建進模型(此為平行氣爪族)",
+      "rect": [
+        452,
+        117,
+        1028,
+        683
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

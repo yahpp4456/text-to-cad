@@ -1,0 +1,63 @@
+{
+  "id": "versions",
+  "chapter": 8,
+  "title": "版本時間軸與匯出閘",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "綠:已精算(完整幾何驗證通過)",
+      "rect": [
+        606.7,
+        881,
+        57.0,
+        20
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "琥珀:尚未精算(平常迭代很快,不等驗證)",
+      "rect": [
+        737.8,
+        881,
+        46,
+        20
+      ],
+      "tone": "warn",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 3,
+      "label": "「✓ 精算此版」對此版跑完整驗證",
+      "rect": [
+        810.4,
+        859,
+        83.3,
+        31
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 4,
+      "label": "匯出 STEP/STL/3MF;未驗證版按下會自動補跑驗證(匯出閘)",
+      "rect": [
+        903.7,
+        859,
+        60.4,
+        31
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

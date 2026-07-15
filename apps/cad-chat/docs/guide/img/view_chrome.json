@@ -1,0 +1,50 @@
+{
+  "id": "view_chrome",
+  "chapter": 4,
+  "title": "視圖工具列",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "視圖工具:網格 / 座標軸 / 環繞 / 面標記 / 運動示意",
+      "rect": [
+        1368.1,
+        195,
+        93.9,
+        140
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "拖曳旋轉、滾輪縮放、雙擊推近",
+      "rect": [
+        1400.8,
+        169,
+        61.2,
+        15
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 3,
+      "label": "模型名稱 / 版號 / 類型",
+      "rect": [
+        472,
+        714,
+        261.5,
+        68
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

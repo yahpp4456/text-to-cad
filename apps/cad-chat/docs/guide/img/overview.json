@@ -1,0 +1,89 @@
+{
+  "id": "overview",
+  "chapter": 0,
+  "title": "六大介面區",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "頂部列:品牌、模式切換、功能鈕、狀態",
+      "rect": [
+        0,
+        0,
+        1480,
+        60
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "階段列:看代理正在理解/規劃/生成/驗證/呈現",
+      "rect": [
+        0,
+        60,
+        1480,
+        57
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 3,
+      "label": "對話欄:用工程語言描述與追加需求",
+      "rect": [
+        0,
+        117,
+        452,
+        803
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 4,
+      "label": "3D 視圖:即時長出真實可製造模型",
+      "rect": [
+        452,
+        117,
+        1028,
+        642
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 5,
+      "label": "參數列:拉滑桿改尺寸即時重生",
+      "rect": [
+        452,
+        759,
+        1028,
+        69
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 6,
+      "label": "版本時間軸:回退與匯出",
+      "rect": [
+        452,
+        828,
+        1028,
+        92
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

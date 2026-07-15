@@ -1,0 +1,50 @@
+{
+  "id": "generating_s",
+  "chapter": 3,
+  "title": "產圖中的進度面板",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "五階段直列:理解→規劃→生成→驗證→呈現",
+      "rect": [
+        851,
+        382.5,
+        230,
+        20.0
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "即時活動:看代理正在做什麼",
+      "rect": [
+        859.0,
+        536.5,
+        214.1,
+        19
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 3,
+      "label": "當前工具卡(可展開原始碼)",
+      "rect": [
+        836,
+        573.5,
+        260,
+        26
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

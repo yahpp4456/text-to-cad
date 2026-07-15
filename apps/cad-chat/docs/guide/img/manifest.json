@@ -1,0 +1,15 @@
+{
+  "base": "http://127.0.0.1:8788",
+  "authMode": "oauth",
+  "results": [
+    {
+      "id": "first_model",
+      "status": "ok",
+      "captured": [
+        "first_model"
+      ],
+      "errors": [],
+      "missing_callouts": []
+    }
+  ]
+}

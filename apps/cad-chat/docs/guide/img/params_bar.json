@@ -1,0 +1,50 @@
+{
+  "id": "params_bar",
+  "chapter": 5,
+  "title": "參數滑桿",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "底部參數列:對應產生器的可調尺寸",
+      "rect": [
+        452,
+        780,
+        1028,
+        69
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "拖滑桿走決定性路徑即時重生(免 LLM),每次一個新版本",
+      "rect": [
+        548.5,
+        781,
+        274.0,
+        68
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 3,
+      "label": "有改動 → 出現「套用 · 重生」;非法組合會顯示繁中錯誤並自動回滾",
+      "rect": [
+        1370.6,
+        781,
+        109.4,
+        68
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "id": "mode_sketch_view",
+  "chapter": 2,
+  "title": "草模模式視圖",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "草模模式:剛體運動示意,驗證機構動得動",
+      "rect": [
+        452,
+        117,
+        1028,
+        640
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "播放/速度/回原位控制",
+      "rect": [
+        472,
+        165,
+        284.3,
+        40
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 3,
+      "label": "拖驅動滑桿即時擺姿態",
+      "rect": [
+        452,
+        757,
+        1028,
+        69
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

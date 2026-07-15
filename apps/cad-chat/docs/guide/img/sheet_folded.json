@@ -1,0 +1,37 @@
+{
+  "id": "sheet_folded",
+  "chapter": 7,
+  "title": "鈑金 · 摺疊態",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "鈑金件左上出現「摺疊 / 攤平」切換",
+      "rect": [
+        472,
+        165,
+        155.2,
+        40
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "點一下瞬間換視角、零重算(build 時已併行產雙 GLB)",
+      "rect": [
+        551.1,
+        169,
+        72.1,
+        32
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

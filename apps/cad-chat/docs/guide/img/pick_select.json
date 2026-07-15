@@ -1,0 +1,37 @@
+{
+  "id": "pick_select",
+  "chapter": 4,
+  "title": "圈選零件與面菱形",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "單擊圈選零件 → 出現名牌(可帶入對話,多選上限 4)",
+      "rect": [
+        860.8,
+        747,
+        210.3,
+        35
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "面菱形◇:點它把面/邊帶入對話,供代理做量測、對齊",
+      "rect": [
+        952.0,
+        429.8,
+        30.0,
+        30.0
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

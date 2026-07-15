@@ -13,11 +13,16 @@ import { niceGridStep, updateGridHelper } from "cadjs/lib/viewer/stageGrid";
 import { syncDisplayMeshFaceIds } from "cadjs/lib/viewer/selectorPickGroups";
 import {
   buildFaceFillGeometryFromDisplayMeshes,
+  createReferenceEdgeGeometryFromPoints,
   REFERENCE_SELECTED_COLOR,
   REFERENCE_SELECTED_FILL_OPACITY,
 } from "cadjs/lib/viewer/referenceGeometry";
 
-export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFrame, onPickPart, bendLines } = {}) {
+export function useCadViewport(
+  mountRef,
+  glbUrl,
+  { name, onStatus, onReady, onFrame, onPickPart, bendLines, measureModeRef, onMeasurePick } = {},
+) {
   const liveRef = useRef({});
 
   useEffect(() => {
@@ -214,6 +219,11 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
         const moved = Math.hypot(ev.clientX - downPos.x, ev.clientY - downPos.y);
         downPos = null;
         if (moved > 5) return; // 旋轉拖曳,不是點擊
+        // 量測模式:分流到面級 pick(唯讀查詢),不走零件圈選命令流。
+        if (measureModeRef?.current) {
+          onMeasurePick?.(pickFaceAt(ev.clientX, ev.clientY));
+          return;
+        }
         const partId = raycastPartId(ev);
         if (clickTimer) clearTimeout(clickTimer);
         clickTimer = setTimeout(() => {
@@ -226,6 +236,7 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
           clearTimeout(clickTimer);
           clickTimer = null;
         }
+        if (measureModeRef?.current) return; // 量測模式不推近(單擊已被面 pick 佔用)
         const partId = raycastPartId(ev);
         onPickPart?.(partId ? { partId, mode: "focus" } : null);
       };
@@ -363,6 +374,88 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
         records: (model.displayRecords || []).length,
       });
 
+      // 量測模式的面級 pick:raycast → hit.faceIndex → mesh.userData.faceIds(逐三角形 →
+      // faceRow)→ faceReference(帶已 transform 的世界座標 center)。回 null(無 runtime/
+      // faceIds、未命中面、舊 bundle 無面拓撲)= 點到空白,呼叫端忽略。定義在 runtime 賦值
+      // 之後——onClick 是事件時才執行,那時閉包解析得到本函式。
+      const pickFaceAt = (clientX, clientY) => {
+        if (!runtime?.faceReferenceByRowIndex) return null;
+        const rect = canvasEl.getBoundingClientRect();
+        if (!rect.width || !rect.height) return null;
+        pointerV.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+        pointerV.y = -(((clientY - rect.top) / rect.height) * 2 - 1);
+        raycaster.setFromCamera(pointerV, camera);
+        const meshes = (model.displayRecords || [])
+          .map((r) => r.mesh)
+          .filter(
+            (m) =>
+              m &&
+              m.visible !== false &&
+              !idInSet(String(m.userData?.partId || ""), displayState.ghost),
+          );
+        const hit = raycaster.intersectObjects(meshes, false)[0];
+        if (!hit || hit.faceIndex == null) return null;
+        const faceIds = hit.object?.userData?.faceIds;
+        if (!faceIds) return null;
+        const rowIndex = faceIds[hit.faceIndex];
+        if (rowIndex == null || rowIndex === 0xffffffff) return null;
+        const reference = runtime.faceReferenceByRowIndex.get(Number(rowIndex));
+        const center = reference?.pickData?.center;
+        if (!reference || !Array.isArray(center)) return null;
+        return {
+          token: reference.copyText,
+          label: reference.pickData?.surfaceType || reference.copyText,
+          center,
+          rowIndex: Number(rowIndex),
+          pick: reference.pickData, // 完整 facts 給前端 measureBetween 即時算
+        };
+      };
+
+      // 量測尺寸線 overlay(仿 bendGroup:輔助幾何直接 scene.add;數值標籤走 Canvas3D 的
+      // HTML 投影,不畫在 3D)。端點球 + 連線,depthTest:false 讓尺寸線恆可見(穿透實體)。
+      const measureGroup = new THREE.Group();
+      measureGroup.renderOrder = 28;
+      viewport.scene.add(measureGroup);
+      const clearMeasureChildren = () => {
+        for (const child of [...measureGroup.children]) {
+          measureGroup.remove(child);
+          child.geometry?.dispose?.();
+          child.material?.dispose?.();
+        }
+      };
+      const setMeasure = ({ a, b } = {}) => {
+        clearMeasureChildren();
+        if (!Array.isArray(a) || !Array.isArray(b)) return;
+        const dotGeo = new THREE.SphereGeometry(Math.max(radius * 0.012, 0.4), 16, 12);
+        const mkDot = (p) => {
+          const dot = new THREE.Mesh(
+            dotGeo,
+            new THREE.MeshBasicMaterial({ color: 0x1f9d55, depthTest: false, toneMapped: false }),
+          );
+          dot.position.set(p[0], p[1], p[2]);
+          dot.renderOrder = 30;
+          return dot;
+        };
+        measureGroup.add(mkDot(a), mkDot(b));
+        const lineGeo = createReferenceEdgeGeometryFromPoints(THREE, [a, b]);
+        if (lineGeo) {
+          const line = new THREE.Line(
+            lineGeo,
+            new THREE.LineBasicMaterial({
+              color: 0x1f9d55,
+              transparent: true,
+              opacity: 0.95,
+              depthTest: false,
+              toneMapped: false,
+            }),
+          );
+          line.frustumCulled = false;
+          line.renderOrder = 29;
+          measureGroup.add(line);
+        }
+      };
+      const clearMeasure = () => clearMeasureChildren();
+
       liveRef.current = {
         model,
         viewport,
@@ -373,6 +466,7 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
         gridMesh,
         axes,
         bendGroup,
+        measureGroup,
         faceFill,
         onPointerDown,
         onClick,
@@ -397,9 +491,11 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
           setAxes,
           setBendLines,
           setFaceHighlights,
+          setMeasure,
+          clearMeasure,
           faceFillCount,
           faceFillDebug,
-          chrome: { grid: gridMesh, axes, bendLines: bendGroup }, // dev/測試檢視用(visible/children 斷言)
+          chrome: { grid: gridMesh, axes, bendLines: bendGroup, measure: measureGroup }, // dev/測試檢視用(visible/children 斷言)
         });
       }
     }
@@ -440,6 +536,13 @@ export function useCadViewport(mountRef, glbUrl, { name, onStatus, onReady, onFr
             child.material?.dispose?.();
           }
           s.bendGroup.parent?.remove(s.bendGroup);
+        }
+        if (s.measureGroup) {
+          for (const child of [...s.measureGroup.children]) {
+            child.geometry?.dispose?.();
+            child.material?.dispose?.();
+          }
+          s.measureGroup.parent?.remove(s.measureGroup);
         }
         s.viewport?.dispose?.();
         s.model?.dispose?.();

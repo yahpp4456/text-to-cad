@@ -1,0 +1,50 @@
+{
+  "id": "startup_empty",
+  "chapter": 1,
+  "title": "剛啟動的空白畫面",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "在這裡用一句話描述你要的零件或機構",
+      "rect": [
+        73,
+        855.8,
+        305,
+        48.2
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "或點範例卡快速開始",
+      "rect": [
+        20,
+        460.8,
+        411,
+        56.0
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 3,
+      "label": "上方切換「草模 / 設計」兩種模式",
+      "rect": [
+        651.3,
+        4.9,
+        177.4,
+        49.2
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

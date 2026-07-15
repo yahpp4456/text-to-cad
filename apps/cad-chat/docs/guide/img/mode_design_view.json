@@ -1,0 +1,24 @@
+{
+  "id": "mode_design_view",
+  "chapter": 2,
+  "title": "設計模式視圖",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "設計模式:真實 STEP/GLB 幾何,可下載送製造",
+      "rect": [
+        452,
+        117,
+        1028,
+        683
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}
