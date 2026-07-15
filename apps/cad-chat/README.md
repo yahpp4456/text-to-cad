@@ -143,6 +143,33 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
   超過 `CADCHAT_GC_DAYS`(預設 7)天沒動過的 session 目錄;設 0 停用。中斷留下的
   半成品在期限內保留 —— rehydrate 與 edits 修復靠它們。
 
+## per-user 資料隔離(2026-07-15;VM 部署啟用,dev 零回歸)
+
+反代(BasicAuth)驗過後注入 **`X-Remote-User`** header(先刪 client 自帶值=防偽),
+後端據此把每個帳號的資料切到獨立命名空間;**dev / 直連(無 header)= legacy 全域根,
+行為與舊版完全一致**——所有既有測試與本機開發流程不受影響。
+
+- **推導**:`users.mjs` 的 `rootsFor(user)` → `DATA_ROOT/users/<u>/models(/.cadchat)`;
+  `USER_RE = /^[a-z0-9_-]{1,32}$/i` 白名單(webauth 帳號必須符合)。header 有值但不合法
+  → 全域 403(`middleware/userContext.mjs`,middleware 鏈**首位**,掛 `req.cadchat`)。
+- **session 家族自動跟隨**:`getOrCreateSession(id, {user})` 把 workdir 切到 user 根;
+  registry key 含 user(**同 id 跨 user 不碰撞**=反劫持);`getSession`/`probeSessionOnDisk`
+  同帶 user。`workdirRel` 仍是 DATA_ROOT 相對正斜線(`users/<u>/models/.cadchat/<id>`)
+  → **spawnPython(cwd=DATA_ROOT)與 python.mjs/tools.mjs/runner.mjs 零改動**。
+- **models 直接取用者帶 ctx**:`resolveModelRead(rel, {modelsRoot})` 參數化;
+  `/api/asset` 是租戶邊界——`users/<u>/models/<rest>` 形只准本人(否則 403),
+  legacy 形走「user 層優先、共用 fixtures 兜底」雙根。files/project/pipeline 的
+  handler 都收 `req.cadchat` 第三參數。
+- **刻意共享**:lessons.json(legacy `models/.cadchat/`)、`CLAUDE_CONFIG_DIR`、
+  fixtures 層(`RUNTIME_ROOT/models` 唯讀)。GC 改 `gcAllSessions`(legacy+全 user 掃)。
+- **定位**:同一擁有者多帳號的「資料整理+防誤用」邊界,**不是**對抗惡意 LLM 輸出的
+  安全邊界(agent 沙箱/生成的 Python 同 uid,可讀整個 DATA_ROOT——見 DEPLOY.md §11)。
+- **測試**:L1 `users.test.js` / `sessions.user.test.js` / `asset.user.test.js` /
+  `sessions.gc.test.js`(gcAllSessions 段);L2 `tests/smoke/smoke_users.py`(已進
+  run_all ORDER;直打 :8788 用 header 模擬反代)。本機開發注意:**client 側零改動**,
+  但 server 發的 asset URL 在有 header 時會帶 `users/<u>/…` 前綴——寫新煙測若自帶
+  `X-Remote-User`,磁碟斷言要對到 `DATA_ROOT/users/<u>/` 下。
+
 ## 草模模式(MOTION SKETCH,2026-07-14)
 
 「**草模**」是與現行「**設計**」並列的第二種聊天模式(Header 正中央切換器):

@@ -12,6 +12,7 @@ import SketchCanvas3D from "./components/canvas/SketchCanvas3D.jsx";
 import VersionTimeline from "./components/versions/VersionTimeline.jsx";
 import { useChatStream } from "./hooks/useChatStream.js";
 import { latestSpecItem, pendingLessonOffer } from "./lib/clarifyText.js";
+import { apiUrl } from "@/lib/apiBase";
 import { initialState, reducer } from "./state/chatStore.js";
 
 // 跨重整續聊的 localStorage key(bump 版號即讓舊快照自然失效)
@@ -170,7 +171,7 @@ export default function App() {
   const imgSeqRef = useRef(0);
 
   useEffect(() => {
-    fetch("/api/health")
+    fetch(apiUrl("/api/health"))
       .then((r) => r.json())
       .then(setHealth)
       .catch(() => setHealth({ agentReady: false, warnings: ["無法連線到本機伺服器。"] }));
@@ -302,7 +303,7 @@ export default function App() {
       // items,開機還原的探測若在匯入往返中回來,guard 才擋得住 RESTORE 蓋狀態。
       notify(`匯入 models/${rel},讀取尺寸中…`);
       try {
-        const r = await fetch("/api/import", {
+        const r = await fetch(apiUrl("/api/import"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ sessionId: state.sessionId, file: rel }),
@@ -344,7 +345,9 @@ export default function App() {
         ]);
         try {
           const r = await fetch(
-            `/api/upload-image?sessionId=${encodeURIComponent(state.sessionId || "")}&name=${encodeURIComponent(f.name || "image")}`,
+            apiUrl(
+              `/api/upload-image?sessionId=${encodeURIComponent(state.sessionId || "")}&name=${encodeURIComponent(f.name || "image")}`,
+            ),
             {
               method: "POST",
               headers: { "content-type": f.type || "application/octet-stream" },
@@ -384,7 +387,7 @@ export default function App() {
           : `開啟專案 models/${dirRel},重建中…`,
       );
       try {
-        const r = await fetch("/api/open-project", {
+        const r = await fetch(apiUrl("/api/open-project"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ dir: dirRel }),
@@ -503,7 +506,7 @@ export default function App() {
         lessonOfferBusyRef.current.add(id);
         dispatch({ type: "ANSWER_LESSON_OFFER", id, outcome: "pending" }); // 樂觀:立即收鈕
         try {
-          const r = await fetch("/api/lessons/record", {
+          const r = await fetch(apiUrl("/api/lessons/record"), {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ sessionId: stateRef.current.sessionId, ...payload }),
@@ -533,7 +536,7 @@ export default function App() {
       if (state.running) return;
       notify(`回退到 ${ver},還原並重建中…`);
       try {
-        const r = await fetch("/api/revert-version", {
+        const r = await fetch(apiUrl("/api/revert-version"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ sessionId: state.sessionId, ver }),
@@ -597,7 +600,7 @@ export default function App() {
       }
       setExporting(`${ver}:${format}`);
       try {
-        const r = await fetch("/api/export", {
+        const r = await fetch(apiUrl("/api/export"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ sessionId: startSession, ver, format }),
@@ -610,7 +613,7 @@ export default function App() {
           return;
         }
         const a = document.createElement("a");
-        a.href = `/api/asset?file=${encodeURIComponent(j.file)}&download=${encodeURIComponent(`${j.name}_${ver}.${format}`)}`;
+        a.href = apiUrl(`/api/asset?file=${encodeURIComponent(j.file)}&download=${encodeURIComponent(`${j.name}_${ver}.${format}`)}`);
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -639,7 +642,7 @@ export default function App() {
     setExporting("validate");
     notify("精算此版:完整幾何驗證中(含運動掃掠,約數秒~分鐘)…");
     try {
-      const r = await fetch("/api/validate", {
+      const r = await fetch(apiUrl("/api/validate"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sessionId: startSession }),
@@ -703,7 +706,7 @@ export default function App() {
           .map((s) => String(s.token || "").replace(/^#/, ""))
           .filter((t) => /^o\d+(\.\d+)*$/.test(t));
         const ver = /^v\d+$/.test(state.canvas.ver || "") ? state.canvas.ver : undefined;
-        const r = await fetch("/api/export-parts", {
+        const r = await fetch(apiUrl("/api/export-parts"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ sessionId: startSession, ver, format, occs }),
@@ -718,9 +721,9 @@ export default function App() {
         const ext = j.file.endsWith(".zip") ? "zip" : format;
         const tag = ext === "zip" ? "parts" : (j.parts?.[0]?.label || "part");
         const a = document.createElement("a");
-        a.href = `/api/asset?file=${encodeURIComponent(j.file)}&download=${encodeURIComponent(
+        a.href = apiUrl(`/api/asset?file=${encodeURIComponent(j.file)}&download=${encodeURIComponent(
           `${j.name}_${ver || "cur"}_${tag}.${ext}`,
-        )}`;
+        )}`);
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -743,7 +746,7 @@ export default function App() {
       setExporting("stepdl");
       notify("此版尚未驗證:下載前自動精算中(含運動掃掠,約數秒~分鐘)…");
       try {
-        const r = await fetch("/api/validate-ver", {
+        const r = await fetch(apiUrl("/api/validate-ver"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ sessionId: startSession, ver: v.id }),
@@ -760,7 +763,7 @@ export default function App() {
           return;
         }
         const a = document.createElement("a");
-        a.href = `/api/asset?file=${encodeURIComponent(rel)}&download=${encodeURIComponent(`${v.name}_${v.id}.step`)}`;
+        a.href = apiUrl(`/api/asset?file=${encodeURIComponent(rel)}&download=${encodeURIComponent(`${v.name}_${v.id}.step`)}`);
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -777,7 +780,7 @@ export default function App() {
   const saveProject = useCallback(
     async (name, overwrite = false) => {
       try {
-        const r = await fetch("/api/save-project", {
+        const r = await fetch(apiUrl("/api/save-project"), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ sessionId: state.sessionId, name, overwrite }),
@@ -962,7 +965,7 @@ export default function App() {
     }
     (async () => {
       try {
-        const r = await fetch(`/api/session-info?id=${encodeURIComponent(snap.sessionId)}`);
+        const r = await fetch(apiUrl(`/api/session-info?id=${encodeURIComponent(snap.sessionId)}`));
         const info = await r.json();
         // 探測往返期間使用者已開始互動(送訊息/匯入/開檔/開專案):不回灌舊快照——
         // 無條件 RESTORE 會把進行中的對話整個蓋掉,還把串流中的 sessionId 換走,

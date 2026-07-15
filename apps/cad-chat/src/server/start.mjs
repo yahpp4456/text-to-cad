@@ -18,7 +18,8 @@ import {
   resolvePort,
 } from "./config.mjs";
 import { sendText } from "./httpUtil.mjs";
-import { gcSessions } from "./sessions.mjs";
+import { gcAllSessions } from "./sessions.mjs";
+import { userContextMiddleware } from "./middleware/userContext.mjs";
 import { healthMiddleware } from "./middleware/health.mjs";
 import { assetMiddleware } from "./middleware/asset.mjs";
 import { filesMiddleware } from "./middleware/files.mjs";
@@ -51,9 +52,10 @@ export async function startServer({ dev = false, port } = {}) {
 
   const wantPort = Number.isFinite(port) ? port : resolvePort();
   const gcDays = resolveGcDays();
-  const gcRemoved = gcSessions({ maxAgeDays: gcDays });
+  const gcRemoved = gcAllSessions({ maxAgeDays: gcDays });
 
   const middlewares = [
+    userContextMiddleware(), // 首位:所有 API 依賴 req.cadchat(user 資料根)
     healthMiddleware(),
     assetMiddleware(),
     filesMiddleware(),

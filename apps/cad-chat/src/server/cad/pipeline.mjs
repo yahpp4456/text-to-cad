@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { resolveMaxSnapshots } from "../config.mjs";
+import { BASE_PATH, resolveMaxSnapshots } from "../config.mjs";
 import { persistSession } from "../sessions.mjs";
 import { resolveModelRead } from "./paths.mjs";
 import { scrubPaths, spawnPython } from "./python.mjs";
@@ -33,7 +33,7 @@ function flatGlbRel(session, name) {
   return `${session.workdirRel}/.${sanitizeName(name)}.flat.step.glb`;
 }
 export function glbUrlFor(session, name) {
-  return `/api/asset?file=${encodeURIComponent(glbRel(session, name))}`;
+  return `${BASE_PATH}/api/asset?file=${encodeURIComponent(glbRel(session, name))}`;
 }
 
 // 寫產生器原始碼到 session 工作區。
@@ -135,13 +135,13 @@ export function applyEdits(session, name, edits) {
 // ---------------------------------------------------------------------------
 // 匯入來源驗證(不碰 session):handleImport 先驗 file 再 getOrCreateSession,
 // 否則 ghost sessionId + 壞檔的失敗請求會在磁碟留下剛 mint 的空 session 目錄。
-export function resolveImportSource(modelsRelFile) {
+export function resolveImportSource(modelsRelFile, { modelsRoot } = {}) {
   const clean = String(modelsRelFile || "")
     .replace(/\\/g, "/")
     .replace(/^models\//, "");
   let srcAbs;
   try {
-    srcAbs = resolveModelRead(clean); // 讀取:雙根(可寫層優先、fixtures fallback)
+    srcAbs = resolveModelRead(clean, { modelsRoot }); // 讀取:雙根(user 層優先、fixtures fallback)
   } catch {
     return { ok: false, error: "路徑超出 models/" };
   }
@@ -157,7 +157,9 @@ export function resolveImportSource(modelsRelFile) {
 }
 
 export function importStepIntoSession(session, modelsRelFile) {
-  const src0 = resolveImportSource(modelsRelFile);
+  // 來源解析以 session 擁有者的 models 根為準(agent 的 cad_import 工具也經此,
+  // user session 只能匯本人層 + 共用 fixtures)。
+  const src0 = resolveImportSource(modelsRelFile, { modelsRoot: session.modelsRoot });
   if (!src0.ok) return src0;
   const srcAbs = src0.srcAbs;
 
@@ -687,7 +689,7 @@ export function emitPresent(session, name, emit) {
   // 成敗都剪(pruneSnapshots 內部全 try/catch,不會拋):持續失敗 regime(磁碟滿)
   // 下半成品 v* 目錄也要有界,而且剪掉舊快照釋放的空間可能就是下一版自癒的空間。
   pruneSnapshots(session, resolveMaxSnapshots());
-  const gUrl = `/api/asset?file=${encodeURIComponent(fileRel)}&v=${session.version}`;
+  const gUrl = `${BASE_PATH}/api/asset?file=${encodeURIComponent(fileRel)}&v=${session.version}`;
   const ghost =
     (name || "PART").replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase() || "PART";
   const hasDxf = generatorHasDxf(session, name);
@@ -700,7 +702,7 @@ export function emitPresent(session, name, emit) {
     const nn = sanitizeName(name);
     const snapPre = snapshotOk ? `versions/v${session.version}/` : "";
     const assetUrl = (rel) =>
-      `/api/asset?file=${encodeURIComponent(`${session.workdirRel}/${rel}`)}&v=${session.version}`;
+      `${BASE_PATH}/api/asset?file=${encodeURIComponent(`${session.workdirRel}/${rel}`)}&v=${session.version}`;
     const glbRelP = `${snapPre}.${nn}.flat.step.glb`;
     const linesRelP = `${snapPre}.${nn}.flat.lines.json`;
     if (fs.existsSync(path.join(session.workdir, glbRelP))) flatGlbUrl = assetUrl(glbRelP);

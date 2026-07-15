@@ -19,7 +19,7 @@ export function interruptMiddleware() {
       /* ignore */
     }
     if (!body || typeof body !== "object") body = {}; // JSON "null"/純量 → 當空 body
-    const session = getSession(body.sessionId);
+    const session = getSession(body.sessionId, req.cadchat?.user);
     if (session) {
       try {
         await session._query?.interrupt?.();

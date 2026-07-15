@@ -312,8 +312,12 @@ hardening(repo 唯讀、僅 data 可寫)/ 專屬 key + Console 花費上限(**�
 1. **同 uid /proc 洩漏**:LLM 生成的 Python 與 server 同 uid,理論上可讀
    `/proc/<server-pid>/environ` 拿到 key。真隔離要第二 uid 或容器(見 §12)。
    後盾=花費上限+可撤銷;對象是可信同事,接受。
-2. **無應用層使用者隔離**:所有登入者共用同一 models 目錄與 session 池,A 的專案
-   B 看得到。定位=內部共用工作台;要私有隔離是另案。
+2. ~~無應用層使用者隔離~~ **已解(2026-07-15,per-user 隔離)**:反代 `onProxyReq`
+   注入 `X-Remote-User`(先 removeHeader 防偽),後端 `userContext` middleware 據此
+   切 `DATA_ROOT/users/<u>/models(/.cadchat)`;session registry key 含 user(反劫持)、
+   `/api/asset` 做租戶檢查(跨 user 403)。無 header=legacy 全域根(dev 零回歸)。
+   機制詳見 README「per-user 資料隔離」;既有資料已遷移歸 `test`。
+   ⚠ 這是資料整理+防誤用邊界,**不改變 §11-1**(同 uid 的 Python 仍可讀全 DATA_ROOT)。
 3. **BasicAuth 憑密外流**=有人能燒額度:一人一組+個別停用+Console 上限圍堵。
 4. **CPU 競爭**:OCP 幾何+claude 併發會互搶;人多變慢是容量問題不是故障(升級機型)。
 
@@ -326,6 +330,8 @@ hardening(repo 唯讀、僅 data 可寫)/ 專屬 key + Console 花費上限(**�
 | AI 回合 spawn 失敗 | SDK linux 二進位缺(§4b 驗證行)或 hardening 擋 exec(journal 對症) |
 | 幾何全失敗 | §4c 煙測重跑;LFS pointer 沒實體化(§4a 驗證行) |
 | 專案消失 | GC 到期(`CADCHAT_GC_DAYS`)——調大或教同事匯出 |
+| 登入後看不到舊專案/對話 | per-user 隔離:資料跟「帳號」走——確認登的是同一個 BasicAuth 帳號(舊資料 2026-07-15 全歸 `test`);直連 :8788(無 header)= legacy 空間,遷移後近乎全空屬預期 |
+| 全部請求 403 bad user | webauth 帳號含白名單外字元(`[A-Za-z0-9_-]{1,32}`)——改帳號名 |
 
 ## 12. 之後可選的強化(都不是本輪範圍)
 

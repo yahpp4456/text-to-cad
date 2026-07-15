@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 
+import { apiUrl } from "@/lib/apiBase";
+
 // 教訓面板 overlay(pull-only,不碰 chatStore):列已蒸餾教訓與待蒸餾統計,
 // 可停用/啟用/刪除/重新蒸餾單條、手動觸發整體蒸餾。
 // 畢業候選(★)= 蒸餾器判定夠通用穩定,值得人工升級進 skills/cad/references/lessons.md
@@ -15,7 +17,7 @@ export default function LessonsPanel({ open, onClose }) {
   const refresh = useCallback(async () => {
     setError("");
     try {
-      const r = await fetch("/api/lessons");
+      const r = await fetch(apiUrl("/api/lessons"));
       const j = await r.json();
       if (j.ok) setData(j);
       else setError(j.error || "讀取失敗");
@@ -44,7 +46,7 @@ export default function LessonsPanel({ open, onClose }) {
     setError("");
     setToast("");
     try {
-      const r = await fetch(path, {
+      const r = await fetch(apiUrl(path), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body || {}),

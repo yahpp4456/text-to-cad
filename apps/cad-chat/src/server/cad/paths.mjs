@@ -27,12 +27,14 @@ export function resolveInside(root, relOrAbs) {
 // dev 兩層同根 → 直接走單根 resolveInside,行為與舊版完全一致(零回歸)。
 // 兩層都沒有該檔 → 回可寫層候選路徑(呼叫端自行 stat 報「不存在」,錯誤語意與
 // 單根一致);兩層都越界才丟錯。**寫入**目的地不得用本函式(只准可寫層,直接
-// resolveInside(MODELS_ROOT, …))。
-export function resolveModelRead(relOrAbs) {
-  if (MODELS_FIXTURES_ROOT === MODELS_ROOT) return resolveInside(MODELS_ROOT, relOrAbs);
+// resolveInside(modelsRoot, …))。
+// modelsRoot 可注入(per-user 根;預設 legacy 全域根 = 零回歸)。per-user 根
+// 恆 ≠ fixtures 根 → 自然得到「user 層優先、共用 fixtures 兜底」。
+export function resolveModelRead(relOrAbs, { modelsRoot = MODELS_ROOT } = {}) {
+  if (MODELS_FIXTURES_ROOT === modelsRoot) return resolveInside(modelsRoot, relOrAbs);
   let primary = null;
   try {
-    primary = resolveInside(MODELS_ROOT, relOrAbs);
+    primary = resolveInside(modelsRoot, relOrAbs);
   } catch {
     /* 可寫層越界(如 fixtures 層的絕對路徑):還有 fixtures 層可試 */
   }

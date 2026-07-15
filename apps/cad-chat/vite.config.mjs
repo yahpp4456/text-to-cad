@@ -10,9 +10,16 @@ const clientRoot = path.join(appRoot, "src");
 const nodeModules = path.join(appRoot, "node_modules");
 const cadJsPackageRoot = path.join(repoRoot, "packages", "cadjs", "src");
 
+function normalizeBase(raw) {
+  const s = String(raw || "").trim();
+  if (!s || s === "/") return "/";
+  return "/" + s.replace(/^\/+|\/+$/g, "") + "/"; // "cad" or "/cad" -> "/cad/"
+}
+
 // Single shared three.js copy (app + cadjs) — a duplicate breaks instanceof / OrbitControls.
 export default defineConfig({
   root: appRoot,
+  base: normalizeBase(process.env.CADCHAT_BASE_PATH),
   plugins: [react()],
   resolve: {
     alias: {

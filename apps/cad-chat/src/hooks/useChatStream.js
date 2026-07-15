@@ -5,6 +5,7 @@
 import { useCallback, useRef } from "react";
 
 import { handleEvent } from "../state/events.js";
+import { apiUrl } from "@/lib/apiBase";
 
 // modeRef(可選):App 端的 { current: "design"|"sketch" }——每次 POST 帶上當前
 // 模式(per-session 恆定;新 session 據此 mint,既有 session 相符通過/不符 400)。
@@ -41,7 +42,7 @@ export function useChatStream(dispatch, modeRef) {
       ctrlRef.current = ctrl;
       dispatch({ type: "START_RUN" });
       try {
-        const res = await fetch("/api/chat", {
+        const res = await fetch(apiUrl("/api/chat"), {
           method: "POST",
           signal: ctrl.signal,
           headers: { "content-type": "application/json" },
@@ -131,7 +132,7 @@ export function useChatStream(dispatch, modeRef) {
   const interrupt = useCallback(() => {
     clearPendingSends(); // 使用者要停 → 排隊中的訊息與排程中的 busy 重送一併作廢
     ctrlRef.current?.abort();
-    fetch("/api/interrupt", {
+    fetch(apiUrl("/api/interrupt"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ sessionId: sessionIdRef.current }),

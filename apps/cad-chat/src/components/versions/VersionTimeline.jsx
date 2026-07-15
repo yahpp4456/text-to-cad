@@ -1,6 +1,7 @@
 import React from "react";
 
 import TypeBadge from "../TypeBadge.jsx";
+import { apiUrl } from "@/lib/apiBase";
 
 // version.file → 可下載的 STEP 相對路徑:
 // generated 版 file 是快照隱藏 GLB(…/versions/vN/.name.step.glb)→ 去掉前導點與 .glb;
@@ -127,7 +128,7 @@ export default function VersionTimeline({
               <a
                 className="version-dl"
                 title={`下載 ${active.id} 的 STEP`}
-                href={`/api/asset?file=${encodeURIComponent(stepRelFor(active))}&download=${encodeURIComponent(`${active.name}_${active.id}.step`)}`}
+                href={apiUrl(`/api/asset?file=${encodeURIComponent(stepRelFor(active))}&download=${encodeURIComponent(`${active.name}_${active.id}.step`)}`)}
               >
                 ⤓ STEP
               </a>

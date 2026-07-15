@@ -3,8 +3,15 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { DATA_ROOT, SESSIONS_ROOT } from "./config.mjs";
+import { USER_RE, rootsFor } from "./users.mjs";
 
+// registry key 含使用者維度:同 id 不同 user = 不同 session(B 送 A 的 id 只會在
+// B 的空間 mint 全新 session,拿不到 A 的物件或目錄)。\n 不可能出現在兩段中。
 const sessions = new Map();
+
+function mapKey(user, id) {
+  return `${user || ""}\n${id}`;
+}
 
 export function createSessionId() {
   const ts = Date.now().toString(36);
@@ -16,19 +23,23 @@ export function createSessionId() {
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 export function getOrCreateSession(sessionId, opts = {}) {
+  const user = opts.user || null; // 由 userContext middleware 提供;null = legacy 全域根
   let id = SAFE_ID.test(String(sessionId || "")) ? sessionId : null;
-  if (!id || !sessions.has(id)) {
+  if (!id || !sessions.has(mapKey(user, id))) {
     if (!id) id = createSessionId();
-    const workdir = path.join(SESSIONS_ROOT, id);
+    const { sessionsRoot, modelsRoot } = rootsFor(user);
+    const workdir = path.join(sessionsRoot, id);
     fs.mkdirSync(workdir, { recursive: true });
     // 給 Python CLI 用的 cwd 相對(正斜線)路徑(spawnPython cwd=DATA_ROOT;
-    // SESSIONS_ROOT 在 DATA_ROOT 之下,dev 下即 repo 相對,與舊版一致)。
+    // per-user 根仍在 DATA_ROOT 之下 → users/<u>/models/.cadchat/<id>,不變量保持)。
     const workdirRel = path
       .relative(DATA_ROOT, workdir)
       .split(path.sep)
       .join("/");
     const session = {
       sessionId: id,
+      user, // 擁有者(null = legacy);asset/專案解析以 modelsRoot 為準
+      modelsRoot,
       sdkSessionId: null, // 由 SDK init 訊息填入,之後 resume
       workdir,
       workdirRel,
@@ -50,13 +61,13 @@ export function getOrCreateSession(sessionId, opts = {}) {
       emit: null, // 當前 turn 的 SSE emit(由 chat handler 注入)
     };
     hydrateSession(session); // 同 id 重掛(重整/重啟):從 session.json 還原中繼資料
-    sessions.set(id, session);
+    sessions.set(mapKey(user, id), session);
   }
-  return sessions.get(id);
+  return sessions.get(mapKey(user, id));
 }
 
-export function getSession(id) {
-  return sessions.get(id) || null;
+export function getSession(id, user = null) {
+  return sessions.get(mapKey(user, id)) || null;
 }
 
 // ── busy 鎖持有權 ──
@@ -144,10 +155,11 @@ function hydrateSession(session) {
 }
 
 // 唯讀探測(絕不建目錄):/api/session-info 用,前端開機還原前驗證 session 還救得回來。
-export function probeSessionOnDisk(id) {
+// user 維度:live-Map 與磁碟路徑都要 user-scope,否則 B 探 A 的 live id 會回 exists:true。
+export function probeSessionOnDisk(id, user = null) {
   if (!SAFE_ID.test(String(id || ""))) return { exists: false };
-  const live = sessions.get(id);
-  const workdir = path.join(SESSIONS_ROOT, id);
+  const live = sessions.get(mapKey(user, id));
+  const workdir = path.join(rootsFor(user).sessionsRoot, id);
   let meta = null;
   try {
     meta = JSON.parse(fs.readFileSync(path.join(workdir, SESSION_META), "utf8"));
@@ -206,6 +218,30 @@ export function gcSessions({ root = SESSIONS_ROOT, maxAgeDays, now = Date.now() 
     } catch {
       /* 單一目錄失敗不擋其他 */
     }
+  }
+  return removed;
+}
+
+// 全空間 GC:legacy 全域根 + 每個 users/<u>/models/.cadchat。
+// lessons.json 等平面檔天然存活(gcSessions 只刪目錄)。USER_RE 過濾:
+// users/ 下雜檔或怪名目錄不掃、不炸啟動。回傳名單以 <user>/<id> 前綴區分。
+export function gcAllSessions({
+  maxAgeDays,
+  now = Date.now(),
+  dataRoot = DATA_ROOT,
+  legacyRoot = SESSIONS_ROOT,
+} = {}) {
+  const removed = gcSessions({ root: legacyRoot, maxAgeDays, now });
+  let ents = [];
+  try {
+    ents = fs.readdirSync(path.join(dataRoot, "users"), { withFileTypes: true });
+  } catch {
+    /* 尚無 users/ 目錄 */
+  }
+  for (const ent of ents) {
+    if (!ent.isDirectory() || !USER_RE.test(ent.name)) continue;
+    const root = path.join(dataRoot, "users", ent.name, "models", ".cadchat");
+    removed.push(...gcSessions({ root, maxAgeDays, now }).map((n) => `${ent.name}/${n}`));
   }
   return removed;
 }

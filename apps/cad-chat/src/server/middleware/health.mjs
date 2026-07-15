@@ -8,7 +8,7 @@ export function healthMiddleware() {
   return function health(req, res, next) {
     const url = parseUrl(req);
     if (url.pathname === "/api/session-info") {
-      sendJson(res, 200, probeSessionOnDisk(url.searchParams.get("id")));
+      sendJson(res, 200, probeSessionOnDisk(url.searchParams.get("id"), req.cadchat?.user));
       return;
     }
     if (url.pathname !== "/api/health") return next();

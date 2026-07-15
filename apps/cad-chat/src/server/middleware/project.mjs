@@ -40,15 +40,15 @@ const REBUILD_TIMEOUT_MS = 300_000; // 開專案同步重建上限(大組合件 
 const FACTS_TIMEOUT_MS = 30_000;
 const VALIDATE_TIMEOUT_MS = 120_000; // 「精算此版」完整驗證含運動掃掠(75s 閘)+ 餘裕
 
-async function handleImport(body, res) {
+async function handleImport(body, res, ctx = {}) {
   // 先驗來源檔再取 session:getOrCreateSession 會 mint 目錄,壞檔的失敗請求
   // 不該留下空 session(還會讓 session-info 對死 id 誤回 exists:true)。
-  const src = resolveImportSource(body?.file);
+  const src = resolveImportSource(body?.file, { modelsRoot: ctx.modelsRoot });
   if (!src.ok) {
     sendJson(res, 200, { ok: false, error: src.error });
     return;
   }
-  const session = getOrCreateSession(body?.sessionId); // 無 sessionId 就開新的(回給前端採用)
+  const session = getOrCreateSession(body?.sessionId, { user: ctx.user }); // 無 sessionId 就開新的(回給前端採用)
   // 刻意的單向互斥:匯入會被進行中的 turn 擋(409),但不 acquireBusy——
   // inspectFacts 最長 30s,持鎖會讓聊天訊息在匯入期間 409。代價:turn 在 facts
   // 窗口內開始且被 interrupt 時,killTree 會連匯入的 inspect 子程序一起殺,
@@ -125,13 +125,13 @@ function pickGenerator(dir, requested) {
   return largest.f.slice(0, -3);
 }
 
-async function handleOpenProject(body, res) {
+async function handleOpenProject(body, res, ctx = {}) {
   const clean = String(body?.dir || "")
     .replace(/\\/g, "/")
     .replace(/^models\//, "");
   let srcAbs;
   try {
-    srcAbs = resolveModelRead(clean); // 讀取:雙根(可寫層優先、fixtures fallback)
+    srcAbs = resolveModelRead(clean, { modelsRoot: ctx.modelsRoot }); // 讀取:雙根(user 層優先、fixtures fallback)
   } catch {
     sendJson(res, 403, { ok: false, error: "路徑超出 models/" });
     return;
@@ -142,7 +142,7 @@ async function handleOpenProject(body, res) {
   }
 
   // 開新 session(不原地續用:舊 workdir 是歷史快照,兩個 session 同目錄會互踩)
-  const session = getOrCreateSession(null);
+  const session = getOrCreateSession(null, { user: ctx.user });
   copyProjectTree(srcAbs, session.workdir);
 
   const name = pickGenerator(session.workdir, body?.generator);
@@ -208,8 +208,8 @@ async function handleOpenProject(body, res) {
 
 // 回退:把 versions/vK 快照複回 workdir 頂層(消除「看的版 vs 改的基準」分歧),
 // 重建+驗證後 emitPresent 產生「新版 v{N+1} = vK 複本」——歷史線性,不竄改既有版號。
-async function handleRevertVersion(body, res) {
-  const session = requireExistingSession(body, res);
+async function handleRevertVersion(body, res, ctx = {}) {
+  const session = requireExistingSession(body, res, ctx);
   if (!session) return;
   if (session.busy) {
     sendJson(res, 409, { ok: false, error: "session 忙碌中(等目前回合結束)" });
@@ -371,16 +371,18 @@ function rejectSketchSession(session, res, what) {
   return true;
 }
 
-function requireExistingSession(body, res) {
+function requireExistingSession(body, res, ctx = {}) {
   if (!body?.sessionId) {
     sendJson(res, 400, { ok: false, error: "缺 sessionId" });
     return null;
   }
-  if (!probeSessionOnDisk(body.sessionId).exists) {
+  // probe 與 getOrCreate 必須同一 user:跨 user 的 id 在本人空間 probe-miss → 404,
+  // 絕不落到 mint(否則 B 送 A 的 id 會在 B 空間長出空目錄)。
+  if (!probeSessionOnDisk(body.sessionId, ctx.user).exists) {
     sendJson(res, 404, { ok: false, error: "session 不存在(可能已被清理),請重新產生模型" });
     return null;
   }
-  return getOrCreateSession(body.sessionId);
+  return getOrCreateSession(body.sessionId, { user: ctx.user });
 }
 
 // 匯出端點共用:基準解析(ver 給定 → versions/<ver>/ 快照,name/kind 讀 meta.json;
@@ -485,7 +487,7 @@ async function ensureVerifiedForExport(session, base, rawVer) {
   };
 }
 
-async function handleExport(body, res) {
+async function handleExport(body, res, ctx = {}) {
   if (!body?.sessionId) {
     sendJson(res, 400, { ok: false, error: "缺 sessionId" });
     return;
@@ -499,7 +501,7 @@ async function handleExport(body, res) {
     sendJson(res, 400, { ok: false, error: "format 僅支援 stl / 3mf / dxf" });
     return;
   }
-  const session = requireExistingSession(body, res);
+  const session = requireExistingSession(body, res, ctx);
   if (!session) return;
   if (rejectSketchSession(session, res, "匯出")) return;
   if (session.busy) {
@@ -601,7 +603,7 @@ const OCC_ID_RE = /^o\d+(\.\d+)*$/;
 const PARTS_FORMATS = new Set(["step", "stl"]);
 const PARTS_MAX = 8;
 
-async function handleExportParts(body, res) {
+async function handleExportParts(body, res, ctx = {}) {
   if (!body?.sessionId) {
     sendJson(res, 400, { ok: false, error: "缺 sessionId" });
     return;
@@ -620,7 +622,7 @@ async function handleExportParts(body, res) {
     sendJson(res, 400, { ok: false, error: "occurrence id 格式不對(應為 o1.2 形式)" });
     return;
   }
-  const session = requireExistingSession(body, res);
+  const session = requireExistingSession(body, res, ctx);
   if (!session) return;
   if (rejectSketchSession(session, res, "拆件匯出")) return;
   if (session.busy) {
@@ -701,16 +703,16 @@ async function handleExportParts(body, res) {
 
 // session 產物 → models/<name>/(另存專案)。目標已存在時要求 overwrite 確認,
 // 覆蓋前先清掉舊樹(避免舊產生器殘檔干擾之後 open-project 的 pickGenerator)。
-function handleSaveProject(body, res) {
+function handleSaveProject(body, res, ctx = {}) {
   // 先驗證再取 session:getOrCreateSession 對缺席/不安全/GC 掉的 id 會 mint 一個
   // 全新空 session 目錄——壞請求不該在 models/.cadchat/ 留下垃圾(其他 handler
   // 都先驗 sessionId,這裡比照)。probeSessionOnDisk 唯讀,絕不建目錄。
   const sid = String(body?.sessionId || "");
-  if (!sid || !probeSessionOnDisk(sid).exists) {
+  if (!sid || !probeSessionOnDisk(sid, ctx.user).exists) {
     sendJson(res, 400, { ok: false, error: "目前沒有可保存的產物(先讓 AI 產出模型)" });
     return;
   }
-  const session = getOrCreateSession(sid);
+  const session = getOrCreateSession(sid, { user: ctx.user });
   if (rejectSketchSession(session, res, "另存專案")) return;
   if (!session.lastName) {
     sendJson(res, 400, { ok: false, error: "目前沒有可保存的產物(先讓 AI 產出模型)" });
@@ -729,7 +731,8 @@ function handleSaveProject(body, res) {
   const name = sanitizeName(body?.name || session.lastName);
   let dstAbs;
   try {
-    dstAbs = resolveInside(MODELS_ROOT, name);
+    // 寫入只准本人可寫層(session.modelsRoot;legacy session = 全域 MODELS_ROOT)
+    dstAbs = resolveInside(session.modelsRoot || MODELS_ROOT, name);
   } catch {
     sendJson(res, 400, { ok: false, error: "名稱無效" });
     return;
@@ -748,8 +751,8 @@ function handleSaveProject(body, res) {
 // POST /api/validate {sessionId} — 對 session 當前頂層產物跑「完整」幾何驗證(含運動掃掠),
 // 不重新產生(快路徑產物已寫精確 STEP)。給版本上的「精算此版」用:快速迭代後一鍵
 // 補做真驗證;通過後匯出/下載免等閘(memo 由 emitPresent/匯出閘管理)。
-async function handleValidate(body, res) {
-  const session = requireExistingSession(body, res);
+async function handleValidate(body, res, ctx = {}) {
+  const session = requireExistingSession(body, res, ctx);
   if (!session) return;
   if (rejectSketchSession(session, res, "精算")) return;
   if (!session.lastName) {
@@ -810,8 +813,8 @@ async function handleValidate(body, res) {
 // 完整驗證並登記 memo。給前端 STEP 直下載把關:/api/asset 是裸 GET 沒有閘,前端
 // 下載未驗證版的 STEP 前先打這裡,verified=true 才觸發下載(單人本機 app,閘是
 // UX 契約,不是安全邊界——直接敲 asset URL 仍可繞過,README 有記)。
-async function handleValidateVer(body, res) {
-  const session = requireExistingSession(body, res);
+async function handleValidateVer(body, res, ctx = {}) {
+  const session = requireExistingSession(body, res, ctx);
   if (!session) return;
   if (rejectSketchSession(session, res, "匯出前驗證")) return;
   if (session.busy) {
@@ -851,7 +854,7 @@ export function projectMiddleware() {
       return;
     }
     readJsonBody(req)
-      .then((body) => handler(body, res))
+      .then((body) => handler(body, res, req.cadchat))
       .catch((err) => sendJson(res, 400, { ok: false, error: scrubPaths(String(err?.message || err)) }));
   };
 }

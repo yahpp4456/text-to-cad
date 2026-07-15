@@ -46,6 +46,13 @@ export const SESSIONS_ROOT = path.join(MODELS_ROOT, ".cadchat");
 
 export const HOST = "127.0.0.1";
 
+// 子路徑部署:瀏覽器可見的絕對 URL(/api/asset 等)前綴。未設 = "" = root(零回歸)。
+export const BASE_PATH = (() => {
+  const raw = String(process.env.CADCHAT_BASE_PATH || "").trim();
+  if (!raw || raw === "/") return "";
+  return "/" + raw.replace(/^\/+|\/+$/g, ""); // "/cad"
+})();
+
 // 讀 KEY=value env 檔,把鍵注入 env(不覆寫已存在者)。檔案缺席 = no-op。
 export function loadEnvFile(file, env = process.env) {
   let text;

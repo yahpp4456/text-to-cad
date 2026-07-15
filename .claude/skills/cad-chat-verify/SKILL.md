@@ -184,6 +184,30 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   (輪心距恆定,不做每幀變形),別把它改成 derived;耦合一律「同 drive+scale」
   (皮帶同號 rA/rB、外嚙合齒輪對 −z1/z2),fixture `belt_drive.json` 有閉式測試釘住。
 
+- **per-user 資料隔離(2026-07-15,VM 部署啟用)**:反代注入 `X-Remote-User` →
+  `req.cadchat={user,modelsRoot,sessionsRoot}`(`middleware/userContext.mjs`,鏈首位);
+  資料根切 `DATA_ROOT/users/<u>/models(/.cadchat)`。**dev/無 header = legacy 全域根,
+  既有測試零改動**。動 server 資料路徑時的規矩:(a) session 相關函式
+  (`getOrCreateSession/getSession/probeSessionOnDisk`)一律把 user 穿到底——probe 的
+  live-Map 查詢漏帶 user 會讓 B 探 A 的活 session 誤回 exists:true;(b) models 直接
+  取用(`resolveModelRead/resolveInside`)要吃 `{modelsRoot}` 參數,寫入端只准
+  `session.modelsRoot`;(c) `/api/asset` 的 `users/<u>/models/…` 形只准本人(403 非
+  404,不洩存在性);(d) 新煙測若自帶 `X-Remote-User` header,磁碟斷言對到
+  `DATA_ROOT/users/<u>/` 下,且 finally 要 rmtree 該 user 目錄。隔離迴歸:L1
+  `users.test.js`/`sessions.user.test.js`/`asset.user.test.js` + L2 `smoke_users.py`
+  (已進 ORDER)。**環境分界:日常開發=Windows fork(本 skill 的指令基準,
+  `.venv/Scripts/python.exe`、正常 npm run dev),部署=Linux VM(Debian,
+  `/opt/cadchat/*`,node22)——下面這行只適用 VM**:VM 上跑 L1 的沙盒要設
+  `CADCHAT_DATA_ROOT`;起沙盒 server 跑 smoke_users 還要
+  `CADCHAT_MODELS_FIXTURES_ROOT=$SANDBOX/models`(否則雙根語意下 seed 進可寫層的
+  fixture 對 user 請求解析不到)。跨平台不變量(改 code 別打破):`workdirRel`
+  恆為**正斜線**(`split(path.sep).join("/")`,Windows 也是),asset/files 的
+  路徑參數先 `replace(/\\/g,"/")` 再比對——per-user 的 `users/<u>/models/…` 形
+  比對與測試斷言都依賴這個。
+- **prompt 語言契約(2026-07-15)**:design/sketch 兩份 prompt 的「# 語氣與語言」段
+  規定「英文思考、使用者輸出一律繁中」——改 prompt 措辭別動掉這段(design 模式曾因
+  無語言指示被英文工具輸出帶跑);驗證=真生成一回合目測回覆語言(L4 輕量)。
+
 ## 新需求 → 驗證擴充決策樹
 
 新功能落地時,照改動的「形狀」決定加什麼測試(可複選;由上而下問):

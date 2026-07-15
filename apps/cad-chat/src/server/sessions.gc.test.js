@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { gcSessions } from "./sessions.mjs";
+import { gcAllSessions, gcSessions } from "./sessions.mjs";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -73,4 +73,56 @@ test("非目錄項目略過", () => {
   assert.deepEqual(removed, []);
   assert.equal(fs.existsSync(stray), true);
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+// ── gcAllSessions:legacy 根 + users/*/models/.cadchat 全掃(注入 dataRoot/legacyRoot)──
+
+test("gcAllSessions:掃 legacy 與各 user 空間,回傳名帶 user 前綴", () => {
+  const dataRoot = makeRoot();
+  const legacyRoot = path.join(dataRoot, "models", ".cadchat");
+  fs.mkdirSync(legacyRoot, { recursive: true });
+  const now = Date.now();
+  makeSession(legacyRoot, "s_legacy_old", 10 * DAY, now);
+  const uRoot = path.join(dataRoot, "users", "test", "models", ".cadchat");
+  fs.mkdirSync(uRoot, { recursive: true });
+  makeSession(uRoot, "s_user_old", 10 * DAY, now);
+  makeSession(uRoot, "s_user_new", 2 * DAY, now);
+  const removed = gcAllSessions({ maxAgeDays: 7, now, dataRoot, legacyRoot });
+  assert.deepEqual(removed.sort(), ["s_legacy_old", "test/s_user_old"]);
+  assert.equal(fs.existsSync(path.join(uRoot, "s_user_new")), true);
+  fs.rmSync(dataRoot, { recursive: true, force: true });
+});
+
+test("gcAllSessions:users/ 下非 USER_RE 目錄與雜檔略過、users/ 缺席安全", () => {
+  const dataRoot = makeRoot();
+  const legacyRoot = path.join(dataRoot, "models", ".cadchat");
+  fs.mkdirSync(legacyRoot, { recursive: true });
+  const now = Date.now();
+  // users/ 缺席:不炸、回空
+  assert.deepEqual(gcAllSessions({ maxAgeDays: 7, now, dataRoot, legacyRoot }), []);
+  // 怪名目錄(帶點)與雜檔:不進掃描
+  const weird = path.join(dataRoot, "users", "we.ird", "models", ".cadchat");
+  fs.mkdirSync(weird, { recursive: true });
+  makeSession(weird, "s_old", 30 * DAY, now);
+  fs.writeFileSync(path.join(dataRoot, "users", "stray.txt"), "x");
+  const removed = gcAllSessions({ maxAgeDays: 7, now, dataRoot, legacyRoot });
+  assert.deepEqual(removed, []);
+  assert.equal(fs.existsSync(path.join(weird, "s_old")), true);
+  fs.rmSync(dataRoot, { recursive: true, force: true });
+});
+
+test("gcAllSessions:lessons.json 等平面檔存活(只刪目錄)", () => {
+  const dataRoot = makeRoot();
+  const legacyRoot = path.join(dataRoot, "models", ".cadchat");
+  fs.mkdirSync(legacyRoot, { recursive: true });
+  const now = Date.now();
+  const lessons = path.join(legacyRoot, "lessons.json");
+  fs.writeFileSync(lessons, "{}");
+  const old = new Date(now - 60 * DAY);
+  fs.utimesSync(lessons, old, old);
+  makeSession(legacyRoot, "s_old", 30 * DAY, now);
+  const removed = gcAllSessions({ maxAgeDays: 7, now, dataRoot, legacyRoot });
+  assert.deepEqual(removed, ["s_old"]);
+  assert.equal(fs.existsSync(lessons), true);
+  fs.rmSync(dataRoot, { recursive: true, force: true });
 });

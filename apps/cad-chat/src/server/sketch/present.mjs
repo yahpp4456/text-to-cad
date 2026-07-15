@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { resolveMaxSnapshots } from "../config.mjs";
+import { BASE_PATH, resolveMaxSnapshots } from "../config.mjs";
 import { persistSession } from "../sessions.mjs";
 import { pruneSnapshots, sanitizeName, snapshotDir } from "../cad/pipeline.mjs";
 import { scrubPaths } from "../cad/python.mjs";
@@ -104,7 +104,7 @@ export function emitSketchPresent(session, part, emit) {
   }
   pruneSnapshots(session, resolveMaxSnapshots());
 
-  const sceneUrl = `/api/asset?file=${encodeURIComponent(fileRel)}&v=${session.version}`;
+  const sceneUrl = `${BASE_PATH}/api/asset?file=${encodeURIComponent(fileRel)}&v=${session.version}`;
   const ghost = (part || "SKCH").replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase() || "SKCH";
   // 三事件契約:type:"sketch" + sceneUrl 承載;不帶 glbUrl、不帶 verified
   //(undefined 三態 → 前端驗證 badge 自動不渲染)、禁帶 mode 欄位(events.js

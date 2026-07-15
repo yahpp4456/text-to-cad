@@ -34,6 +34,7 @@ ORDER = [
     "smoke_restore.py",
     "smoke_lessons.py",
     "smoke_lesson_offer.py",
+    "smoke_users.py",
 ]
 # 消耗訂閱/API 回合
 LLM_GATED = [

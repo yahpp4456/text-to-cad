@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 
 import TypeBadge from "./TypeBadge.jsx";
+import { apiUrl } from "@/lib/apiBase";
 
 // models/ 檔案瀏覽器 overlay:開檔看圖(免 LLM)。
 // onOpenFile(res):/api/open 成功回應 → App dispatch ADD_VERSION+PRESENT。
@@ -16,7 +17,7 @@ export default function FileBrowser({ open, onClose, onOpenFile, onImportFile, o
     if (!open) return;
     setError("");
     setKindPick(null);
-    fetch(`/api/files?dir=${encodeURIComponent(dir)}`)
+    fetch(apiUrl(`/api/files?dir=${encodeURIComponent(dir)}`))
       .then((r) => r.json())
       .then((j) => {
         if (j.ok) setEntries(j.entries || []);
@@ -31,7 +32,7 @@ export default function FileBrowser({ open, onClose, onOpenFile, onImportFile, o
     setBusy(rel);
     setError("");
     try {
-      const r = await fetch("/api/open", {
+      const r = await fetch(apiUrl("/api/open"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ file: rel, kind }),

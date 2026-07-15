@@ -56,7 +56,7 @@ export function chatMiddleware() {
       return;
     }
 
-    const session = getOrCreateSession(body.sessionId, { mode: body.mode });
+    const session = getOrCreateSession(body.sessionId, { mode: body.mode, user: req.cadchat?.user });
     // mode 檢查在 busy 409「之前」:mismatch 的請求沒有排隊等鎖的意義。
     // 正常 UI 流程走不到 mismatch(切換 toggle 即開新對話);這是防多分頁/race
     // 的誠實護欄——不靜默改道,回 400 讓前端把 toggle 校正回 session 真相。

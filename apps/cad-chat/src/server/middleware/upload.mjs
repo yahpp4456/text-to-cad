@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { BASE_PATH } from "../config.mjs";
 import { parseUrl, readRawBody, sendJson } from "../httpUtil.mjs";
 import { getOrCreateSession } from "../sessions.mjs";
 import { MAX_IMAGE_BYTES, sniffImageType } from "../images.mjs";
@@ -41,7 +42,7 @@ export function uploadMiddleware() {
       sendJson(res, 415, { ok: false, error: "不支援的圖片格式(png / jpeg / webp / gif)" });
       return;
     }
-    const session = getOrCreateSession(url.searchParams.get("sessionId"));
+    const session = getOrCreateSession(url.searchParams.get("sessionId"), { user: req.cadchat?.user });
     const dir = path.join(session.workdir, "uploads");
     fs.mkdirSync(dir, { recursive: true });
     // 檔名:ts36 前綴防重名;原名 stem 清洗後保留可讀性(路徑分隔/.. 全被字元白名單擋掉)
@@ -58,7 +59,7 @@ export function uploadMiddleware() {
       ok: true,
       sessionId: session.sessionId,
       rel,
-      url: `/api/asset?file=${encodeURIComponent(`${session.workdirRel}/${rel}`)}`,
+      url: `${BASE_PATH}/api/asset?file=${encodeURIComponent(`${session.workdirRel}/${rel}`)}`,
       bytes: buf.length,
       mediaType: sniffed.mediaType,
     });

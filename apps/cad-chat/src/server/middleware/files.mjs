@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { DATA_ROOT, MODELS_FIXTURES_ROOT, MODELS_ROOT } from "../config.mjs";
+import { BASE_PATH, DATA_ROOT, MODELS_FIXTURES_ROOT, MODELS_ROOT } from "../config.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
 import { pathIsInside, resolveInside, resolveModelRead } from "../cad/paths.mjs";
 import { scrubPaths, spawnPython } from "../cad/python.mjs";
@@ -48,12 +48,13 @@ function typeFromManifest(absDir, stem) {
   }
 }
 
-function listDir(relDir) {
-  // 雙層 merge:可寫層(DATA_ROOT/models)優先、唯讀 fixtures 層補集(同名以可寫層
-  // 為準);dev 兩層同根 → 單層,行為與舊版完全一致。兩層都開不了才拋(403/404
-  // 分流由呼叫端依 escape 訊息判斷,語意不變)。
-  const roots = [MODELS_ROOT];
-  if (MODELS_FIXTURES_ROOT !== MODELS_ROOT) roots.push(MODELS_FIXTURES_ROOT);
+function listDir(relDir, ctx = {}) {
+  // 雙層 merge:可寫層(per-user 根;無 user = legacy DATA_ROOT/models)優先、
+  // 唯讀 fixtures 層補集(同名以可寫層為準);dev 兩層同根 → 單層,行為與舊版
+  // 完全一致。兩層都開不了才拋(403/404 分流由呼叫端依 escape 訊息判斷,語意不變)。
+  const modelsRoot = ctx.modelsRoot || MODELS_ROOT;
+  const roots = [modelsRoot];
+  if (MODELS_FIXTURES_ROOT !== modelsRoot) roots.push(MODELS_FIXTURES_ROOT);
   const out = [];
   const seen = new Set();
   let opened = 0;
@@ -119,7 +120,8 @@ function listDir(relDir) {
   return out;
 }
 
-async function handleOpen(body, res) {
+async function handleOpen(body, res, ctx = {}) {
+  const modelsRoot = ctx.modelsRoot || MODELS_ROOT;
   const fileParam = normalizeRel(body?.file);
   if (!fileParam) {
     sendJson(res, 400, { ok: false, error: "missing file" });
@@ -127,7 +129,7 @@ async function handleOpen(body, res) {
   }
   let abs;
   try {
-    abs = resolveModelRead(fileParam); // 讀取:雙根(可寫層優先、fixtures fallback)
+    abs = resolveModelRead(fileParam, { modelsRoot }); // 讀取:雙根(user 層優先、fixtures fallback)
   } catch {
     sendJson(res, 403, { ok: false, error: "路徑超出 models/" });
     return;
@@ -140,8 +142,8 @@ async function handleOpen(body, res) {
   const ext = path.extname(abs).toLowerCase();
   const dir = path.dirname(abs);
   const base = path.basename(abs);
-  // rel 基準取檔案實際所在層的 models 根(dev 同根 = MODELS_ROOT,行為不變)
-  const rootOf = pathIsInside(abs, MODELS_ROOT) ? MODELS_ROOT : MODELS_FIXTURES_ROOT;
+  // rel 基準取檔案實際所在層的 models 根(dev 同根 = modelsRoot,行為不變)
+  const rootOf = pathIsInside(abs, modelsRoot) ? modelsRoot : MODELS_FIXTURES_ROOT;
   const relDir = path.relative(rootOf, dir).split(path.sep).join("/");
   // projectDir:此檔所屬目錄是否為可編輯專案(有 gen_step)。非 null = 前端可把這個
   // 唯讀檢視「帶入可編輯工作區」(open-project 目標);裸檔(匯入/獨立)→ null。
@@ -155,7 +157,7 @@ async function handleOpen(body, res) {
     } catch {
       /* stat 失敗保守降級成無 buster,開檔仍可用 */
     }
-    return `/api/asset?file=${encodeURIComponent(rel)}${v}`;
+    return `${BASE_PATH}/api/asset?file=${encodeURIComponent(rel)}${v}`;
   };
 
   if (ext === ".glb") {
@@ -243,7 +245,7 @@ export function filesMiddleware() {
       const relDir = normalizeRel(url.searchParams.get("dir"));
       let entries;
       try {
-        entries = listDir(relDir);
+        entries = listDir(relDir, req.cadchat);
       } catch (err) {
         const escaped = String(err?.message || "").includes("escapes");
         sendJson(res, escaped ? 403 : 404, {
@@ -260,7 +262,7 @@ export function filesMiddleware() {
 
     if (url.pathname === "/api/open" && req.method === "POST") {
       readJsonBody(req)
-        .then((body) => handleOpen(body, res))
+        .then((body) => handleOpen(body, res, req.cadchat))
         .catch((err) => sendJson(res, 400, { ok: false, error: scrubPaths(String(err?.message || err)) }));
       return;
     }

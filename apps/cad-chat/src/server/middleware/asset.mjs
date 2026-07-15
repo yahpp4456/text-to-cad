@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { parseUrl, sendText } from "../httpUtil.mjs";
-import { resolveModelRead } from "../cad/paths.mjs";
+import { resolveInside, resolveModelRead } from "../cad/paths.mjs";
 
 const CONTENT_TYPES = {
   ".glb": "model/gltf-binary",
@@ -36,12 +36,24 @@ export function assetMiddleware() {
       sendText(res, 400, "missing file");
       return;
     }
-    // file 是「models/ 前綴」或「models 內相對」路徑。雙根讀取解析(可寫層優先、
-    // 唯讀 fixtures 層 fallback;dev 同根 = 舊單根行為),越界 403。
-    const normalized = fileParam.replace(/^models[\\/]/, "");
+    // file 兩形(租戶邊界在此):
+    // 1. "users/<u>/models/<rest>"(per-user session 的 emit/upload URL 帶 workdirRel)
+    //    → 只准本人:<u> 必須等於 req.cadchat.user,再 resolveInside 本人 modelsRoot
+    //    (同時擋 users/A/../../B 穿越);無 header(legacy)一律 403。
+    // 2. legacy 形("models/ 前綴"或 models 內相對)→ 雙根讀取解析
+    //    (user 層優先、唯讀 fixtures 層 fallback;dev 同根 = 舊單根行為),越界 403。
+    const norm = fileParam.replace(/\\/g, "/");
     let resolved;
     try {
-      resolved = resolveModelRead(normalized);
+      const m = norm.match(/^users\/([^/]+)\/models\/(.+)$/);
+      if (m) {
+        if (!req.cadchat?.user || m[1] !== req.cadchat.user) throw new Error("forbidden");
+        resolved = resolveInside(req.cadchat.modelsRoot, m[2]);
+      } else {
+        resolved = resolveModelRead(norm.replace(/^models\//, ""), {
+          modelsRoot: req.cadchat?.modelsRoot,
+        });
+      }
     } catch {
       sendText(res, 403, "forbidden");
       return;
