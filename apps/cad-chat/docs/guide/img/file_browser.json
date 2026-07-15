@@ -1,0 +1,50 @@
+{
+  "id": "file_browser",
+  "chapter": 9,
+  "title": "開啟檔案",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "從 models/ 開啟既有檔案",
+      "rect": [
+        400,
+        73.6,
+        680,
+        655
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "可編輯專案:整列點開 = 複製成 session、帶滑桿可續改",
+      "rect": [
+        417,
+        213.6,
+        247.6,
+        17
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 3,
+      "label": "裸 STEP:僅檢視(不出驗證卡)",
+      "rect": [
+        401,
+        174.6,
+        678,
+        32.0
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

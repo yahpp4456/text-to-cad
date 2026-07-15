@@ -1,0 +1,24 @@
+{
+  "id": "lessons_panel",
+  "chapter": 10,
+  "title": "教訓管理面板",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "Header「📚 教訓」開管理面板:看/停用/重新蒸餾/刪除累積教訓",
+      "rect": [
+        380,
+        73.6,
+        720,
+        699.2
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

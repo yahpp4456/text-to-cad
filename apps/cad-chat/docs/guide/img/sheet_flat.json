@@ -1,0 +1,37 @@
+{
+  "id": "sheet_flat",
+  "chapter": 7,
+  "title": "鈑金 · 攤平態 + 折彎虛線",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "攤平展開圖:板面疊折彎中心線 藍=上折 / 紅=下折",
+      "rect": [
+        452,
+        117,
+        1028,
+        662
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "「⤓ DXF 展開圖」雷切下料用,CUT/BEND 分層",
+      "rect": [
+        788.4,
+        859,
+        92.0,
+        31
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

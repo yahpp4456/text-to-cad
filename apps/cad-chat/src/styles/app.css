@@ -2829,6 +2829,110 @@
 .sel-export {
   color: var(--emit);
 }
+
+/* ===================== 量測(唯讀查詢:選兩面 → 尺寸線 + 數值) =====================
+   量測用綠色系(#1f9d55,同 three.js 端點球/尺寸線),與 emit 青「帶入對話」、amber
+   「已帶入」在語意上區隔開。 */
+/* 3D 中點浮動數值 pill(transform 由 Canvas3D 的投影每 frame 設,同 .pick-marker 機制) */
+.measure-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  z-index: 5;
+  font-family: var(--font-eyebrow);
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  color: #fff;
+  background: #1f9d55;
+  border: 1px solid color-mix(in oklab, #1f9d55 55%, #063);
+  padding: 3px 8px;
+  border-radius: 7px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(20, 60, 35, 0.3);
+}
+/* 量測 HUD 卡(仿 sel-nameplate,置中下方;量測模式互斥圈選 → 不與名牌撞位) */
+.measure-hud {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 18px;
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: #fff;
+  border: 1px solid color-mix(in oklab, #1f9d55 35%, #dde2ec);
+  padding: 7px 14px;
+  clip-path: var(--chamfer-pill);
+  box-shadow: 0 4px 16px rgba(20, 60, 35, 0.14);
+}
+.measure-kicker {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: #1f9d55;
+  white-space: nowrap;
+}
+.measure-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.measure-value {
+  font-weight: 800;
+  font-size: 15px;
+  color: var(--text);
+}
+.measure-sub {
+  font-family: var(--font-eyebrow);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+.measure-err {
+  font-size: 11px;
+  color: var(--amber);
+  max-width: 240px;
+}
+.measure-axes {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-eyebrow);
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+}
+.measure-axis-chip {
+  cursor: pointer;
+  padding: 3px 8px;
+  font-weight: 700;
+  color: #5b6577;
+  background: #fff;
+  border: 1px solid #dde2ec;
+  border-radius: 6px;
+}
+.measure-axis-chip:hover {
+  border-color: #1f9d55;
+  color: #1f9d55;
+}
+.measure-axis-chip[data-on="true"] {
+  color: #fff;
+  background: #1f9d55;
+  border-color: #1f9d55;
+}
+.measure-clear {
+  cursor: pointer;
+  font-family: var(--font-eyebrow);
+  font-size: 10px;
+  letter-spacing: 1px;
+  color: #9aa3b0;
+}
+.measure-clear:hover {
+  color: var(--ink);
+}
 .sel-export[data-busy="true"] {
   opacity: 0.55;
   cursor: progress;

@@ -3,6 +3,7 @@ import * as THREE from "three";
 
 import { useCadViewport } from "../../hooks/useCadViewport.js";
 import { createMotionPlayer } from "../../lib/cadMotion.js";
+import { measureBetween } from "../../lib/measureFacts.js";
 import { buildTopologyModel } from "../../lib/cadTopology.js";
 import { STAGES } from "../StageStepper.jsx";
 import ClarifyWizard from "./ClarifyWizard.jsx";
@@ -14,6 +15,14 @@ import SpecPanel from "./SpecPanel.jsx";
 // 候選面不設限,使用者可從「◇ 面標記」面板切全部/隱藏/逐面勾選。
 const MARKERS_PER_PART = 6;
 const MARKERS_TOTAL = 12;
+// 面法向相對關係(measure vectorRelationship.relation)→ 中文
+const REL_ZH = {
+  opposed: "面相對",
+  parallel: "面平行",
+  perpendicular: "面垂直",
+  coincident: "面重合",
+  aligned: "面同向",
+};
 
 // 預設那 6 個面用最遠點取樣挑「空間上散得開」的:同軸疊在一起的外圓柱/頂底面
 // 只會入選一兩個,名額讓給孔壁這類散佈的特徵(否則法蘭 7 面取前 6,第 4 個孔沒標記)。
@@ -97,6 +106,18 @@ export default function Canvas3D({
   const [markerMode, setMarkerMode] = useState("default");
   const [markerPick, setMarkerPick] = useState(() => new Set()); // custom 模式的 node.id 集合
   const [pickerOpen, setPickerOpen] = useState(false); // ◇ 面標記面板開闔
+  // 量測模式(唯讀查詢,獨立於零件圈選命令流):選兩面 → /api/measure → 3D 尺寸線 + 數值。
+  const [measureMode, setMeasureMode] = useState(false);
+  const [measurePicks, setMeasurePicks] = useState([]); // [{token,center,rowIndex,label}] ≤2
+  const [measureResult, setMeasureResult] = useState(null); // {value,axis,rel} | {error,axisFail}
+  const [measureAxis, setMeasureAxis] = useState(null); // 軸 fallback:ok:false 時使用者指定
+  const measureModeRef = useRef(false);
+  measureModeRef.current = measureMode; // 給 viewport onClick 讀最新模式(不進 hook deps)
+  const measurePicksRef = useRef([]);
+  measurePicksRef.current = measurePicks; // dev 鉤讀最新值(繞開 [playing] deps 的 stale closure)
+  const measureResultRef = useRef(null);
+  measureResultRef.current = measureResult;
+  const measureLabelRef = useRef({ el: null, center: null }); // 3D 中點數值標籤投影
   const previewGroupRef = useRef(null); // GROUP 節點預覽高亮中的群組 id(dev 鉤用)
   const markerProbeRef = useRef({}); // 標記顯示狀態探針(dev 鉤用,渲染期賦值)
   const empty = !canvas.glbUrl;
@@ -183,6 +204,23 @@ export default function Canvas3D({
     [dispatch],
   );
 
+  // 量測 callbacks:必須定義在 useCadViewport 呼叫「之前」——onMeasurePick 被同步傳入
+  // hook,若定義在後會 TDZ「Cannot access before initialization」整個 Canvas3D 白屏。
+  const fmtMeasure = (v) => String(Math.round(Math.abs(v) * 100) / 100);
+  // 面 pick 進來(viewport 量測分流,或 dev 鉤注入):累積至 2,第 3 面清空重來。每次新
+  // pick 清掉上一組的軸指定;face 為 null(點空白)忽略。
+  const onMeasurePick = useCallback((face) => {
+    if (!face) return;
+    setMeasureAxis(null);
+    setMeasurePicks((prev) => (prev.length >= 2 ? [face] : [...prev, face]));
+  }, []);
+  const clearMeasureSel = useCallback(() => {
+    setMeasurePicks([]);
+    setMeasureResult(null);
+    setMeasureAxis(null);
+    apiRef.current.clearMeasure?.();
+  }, []);
+
   useCadViewport(mountRef, activeGlbUrl, {
     name: canvas.name,
     // 攤平態才疊折彎虛線(摺疊態傳 null → 不建 overlay)
@@ -198,6 +236,8 @@ export default function Canvas3D({
       setAxes,
       setBendLines,
       setFaceHighlights,
+      setMeasure,
+      clearMeasure,
       faceFillCount,
       faceFillDebug,
       chrome,
@@ -215,6 +255,8 @@ export default function Canvas3D({
         setAxes,
         setBendLines,
         setFaceHighlights,
+        setMeasure,
+        clearMeasure,
         faceFillCount,
         faceFillDebug,
         chrome,
@@ -232,14 +274,21 @@ export default function Canvas3D({
       setPickerOpen(false);
       setHoverFaceRow(null); // 舊模型的 rowIndex 在新拓撲上是隨機別的面,不得殘留
       setPartDisplayState({}); // 眼睛三態隨新模型重置(新版本全件回到可見)
+      setMeasureMode(false); // 量測隨新模型重置(舊面 token 對新模型無效)
+      setMeasurePicks([]);
+      setMeasureResult(null);
+      setMeasureAxis(null);
     },
     onFrame: ({ camera, host }) => {
       updateMarkers(camera, host);
+      updateMeasureLabel(camera, host);
       if (playingRef.current && playerRef.current && motionRef.current) {
         playerRef.current.apply(motionRef.current, performance.now() / 1000);
       }
     },
     onPickPart: (hit) => selectPart(hit?.partId || null, hit?.mode || "toggle"),
+    measureModeRef,
+    onMeasurePick,
   });
 
   // 版本切換/重生把 motion 清掉時,停播並還原姿態
@@ -282,6 +331,31 @@ export default function Canvas3D({
         count: () => apiRef.current.faceFillCount?.() ?? 0,
         debug: () => apiRef.current.faceFillDebug?.() ?? null,
       };
+      // 量測探針:mode/選面數/結果 + 尺寸線 group children 數;pickFace(rowIndex) 繞過
+      // raycast 注入面 pick(smoke 用,免在畫布特定像素命中面)。全讀 ref/穩定 callback,
+      // 不受 [playing] deps 的 stale closure 影響。
+      window.__cadMeasure = {
+        mode: () => measureModeRef.current,
+        picks: () => measurePicksRef.current.length,
+        result: () => measureResultRef.current,
+        groupCount: () => apiRef.current.chrome?.measure?.children.length ?? 0,
+        faceRows: () => [...(apiRef.current.runtime?.faceReferenceByRowIndex?.keys() || [])],
+        faceFactsOf: (rowIndex) => {
+          const ref = apiRef.current.runtime?.faceReferenceByRowIndex?.get(Number(rowIndex));
+          const pd = ref?.pickData;
+          return pd
+            ? { token: ref.copyText, center: pd.center, normal: pd.normal, surfaceType: pd.surfaceType, params: pd.params }
+            : null;
+        },
+        setMode: (on) => setMeasureMode(!!on),
+        pickFace: (rowIndex) => {
+          const ref = apiRef.current.runtime?.faceReferenceByRowIndex?.get(Number(rowIndex));
+          const center = ref?.pickData?.center;
+          if (!ref || !Array.isArray(center)) return false;
+          onMeasurePick({ token: ref.copyText, center, rowIndex: Number(rowIndex), label: ref.copyText, pick: ref.pickData });
+          return true;
+        },
+      };
       window.__cadPreview = { group: () => previewGroupRef.current };
       window.__cadMarkers = { state: () => markerProbeRef.current };
       // 眼睛三態探針:display()=目前 map;stateFor(labelOrOccId)=該件第一筆
@@ -316,6 +390,22 @@ export default function Canvas3D({
     }
   }
 
+  // 量測數值標籤:把兩面中點投影成畫面像素(仿 updateMarkers)。center 由量測 effect 設,
+  // el 由 JSX ref 回呼設(measureResult.value 存在才渲染)。
+  function updateMeasureLabel(camera, host) {
+    const ref = measureLabelRef.current;
+    if (!ref?.el) return;
+    if (!ref.center) {
+      ref.el.style.opacity = "0";
+      return;
+    }
+    const w = host.clientWidth;
+    const h = host.clientHeight;
+    const v = new THREE.Vector3(ref.center[0], ref.center[1], ref.center[2]).project(camera);
+    ref.el.style.opacity = v.z > 1 ? "0" : "1";
+    ref.el.style.transform = `translate(${(v.x * 0.5 + 0.5) * w}px, ${(-v.y * 0.5 + 0.5) * h}px) translate(-50%,-50%)`;
+  }
+
   const togglePlay = () => {
     const next = !playing;
     playingRef.current = next;
@@ -336,6 +426,12 @@ export default function Canvas3D({
     const next = !axesOn;
     setAxesOn(next);
     apiRef.current.setAxes?.(next);
+  };
+  const toggleMeasure = () => {
+    const next = !measureMode;
+    setMeasureMode(next);
+    if (next) setPickerOpen(false); // 進量測關面標記面板(避免菱形干擾點選)
+    else clearMeasureSel();
   };
 
   // 「已帶入對話」= pickRefs 現存的 token(chips 移除/送出即熄滅,生命週期跟著 composer)。
@@ -360,8 +456,41 @@ export default function Canvas3D({
     if (hoverFaceRow != null && !entries.some((e) => e.rowIndex === hoverFaceRow)) {
       entries.push({ rowIndex: hoverFaceRow, color: "#18a0c4", opacity: 0.3 }); // --emit
     }
+    // 量測選中面亮綠(與端點球/尺寸線同色)。與 cited/hover 併入同一批——setFaceHighlights
+    // 是整批替換,不可另開 effect 呼叫它,否則互相覆蓋(見 cad-chat-verify skill)。
+    for (const p of measurePicks) {
+      if (Number.isInteger(p.rowIndex) && !entries.some((e) => e.rowIndex === p.rowIndex)) {
+        entries.push({ rowIndex: p.rowIndex, color: "#1f9d55", opacity: 0.34 });
+      }
+    }
     apiRef.current.setFaceHighlights?.(entries);
-  }, [citedTokens, topo, hoverFaceRow]);
+  }, [citedTokens, topo, hoverFaceRow, measurePicks]);
+
+  // 量測:滿兩面 → 畫 3D 尺寸線(setMeasure,measureGroup)+ 前端 facts 即時算距離
+  // (measureBetween,微秒,免 /api/measure round-trip、免「量測中」)。精度=後端 measure_targets
+  // (兩者都是 facts 數學),座標系一致,防漂移靠 measureFacts.test.js 的後端 golden。measureAxis
+  // 變(點軸 chip)對同兩面重算。面填色由上一個 effect 統一管(含量測面),此處只碰 measureGroup。
+  useEffect(() => {
+    if (measurePicks.length < 2) {
+      apiRef.current.clearMeasure?.();
+      measureLabelRef.current.center = null;
+      setMeasureResult(null);
+      return;
+    }
+    const [p, q] = measurePicks;
+    apiRef.current.setMeasure?.({ a: p.center, b: q.center });
+    measureLabelRef.current.center = [
+      (p.center[0] + q.center[0]) / 2,
+      (p.center[1] + q.center[1]) / 2,
+      (p.center[2] + q.center[2]) / 2,
+    ];
+    const r = measureBetween(p.pick, q.pick, measureAxis);
+    if (r.ok) {
+      setMeasureResult({ value: r.signedDistance, axis: r.axis, rel: r.vectorRelationship });
+    } else {
+      setMeasureResult({ error: r.error || "無法量測這兩個面", axisFail: !!r.needAxis });
+    }
+  }, [measurePicks, measureAxis]);
 
   // GROUP 中繼節點(屬性樹點子組件)→ 3D 預覽高亮其所有後代:
   // occurrenceId 是點分前綴,applyPartVisualState 的比對前綴感知,直接把群組 id
@@ -538,6 +667,16 @@ export default function Canvas3D({
               );
             })}
           </div>
+          {measureResult?.value != null && (
+            <div
+              className="measure-label"
+              ref={(el) => {
+                measureLabelRef.current.el = el;
+              }}
+            >
+              {fmtMeasure(measureResult.value)} mm
+            </div>
+          )}
           {running && (
             <div className="canvas-progress-strip">
               <span className="live-dot" />
@@ -580,6 +719,9 @@ export default function Canvas3D({
             </a>
             <a className="tool-chip" data-on={orbit} onClick={toggleOrbit}>
               ⟳ 環繞
+            </a>
+            <a className="tool-chip" data-on={measureMode} onClick={toggleMeasure}>
+              📏 量測
             </a>
             <a
               className="tool-chip marker-toggle"
@@ -701,6 +843,51 @@ export default function Canvas3D({
               <a className="sel-action sel-clear" onClick={() => selectPart(null)}>
                 ✕
               </a>
+            </div>
+          )}
+
+          {measureMode && (
+            <div className="measure-hud">
+              <span className="measure-kicker">
+                📏 量測{measureAxis ? ` · ${measureAxis.toUpperCase()} 軸` : ""}
+              </span>
+              {measurePicks.length < 2 ? (
+                <span className="measure-hint">點選第 {measurePicks.length + 1} / 2 個面</span>
+              ) : measureResult?.value != null ? (
+                <>
+                  <span className="measure-value">{fmtMeasure(measureResult.value)} mm</span>
+                  <span className="measure-sub">
+                    {measureResult.axis ? `沿 ${measureResult.axis.toUpperCase()} 軸` : ""}
+                    {measureResult.rel?.relation
+                      ? ` · ${REL_ZH[measureResult.rel.relation] || measureResult.rel.relation}`
+                      : ""}
+                  </span>
+                </>
+              ) : measureResult?.error ? (
+                <>
+                  <span className="measure-err">{measureResult.error}</span>
+                  {measureResult.axisFail && (
+                    <span className="measure-axes">
+                      指定軸
+                      {["x", "y", "z"].map((ax) => (
+                        <a
+                          key={ax}
+                          className="measure-axis-chip"
+                          data-on={measureAxis === ax}
+                          onClick={() => setMeasureAxis(ax)}
+                        >
+                          {ax.toUpperCase()}
+                        </a>
+                      ))}
+                    </span>
+                  )}
+                </>
+              ) : null}
+              {(measurePicks.length > 0 || measureResult) && (
+                <a className="measure-clear" onClick={clearMeasureSel}>
+                  ✕ 清除
+                </a>
+              )}
             </div>
           )}
 

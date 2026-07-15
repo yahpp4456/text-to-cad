@@ -1,0 +1,50 @@
+{
+  "id": "sketch_dof",
+  "chapter": 6,
+  "title": "草模驅動與讀數",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "拖驅動(DOF)滑桿 scrub,即時看姿態",
+      "rect": [
+        452,
+        757,
+        1028,
+        69
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "傳動角讀數:綠(順)/黃(臨界)/紅(干涉或超程)",
+      "rect": [
+        1351.9,
+        627,
+        110.1,
+        25
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 3,
+      "label": "圖例:各構件對應色",
+      "rect": [
+        472,
+        462,
+        130.2,
+        139
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "id": "first_model",
+  "chapter": 3,
+  "title": "第一個模型出爐",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "你打的需求(左欄對話串)",
+      "rect": [
+        61.1,
+        180,
+        369.9,
+        86.8
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "產出的真實 3D 模型:可拖曳旋轉、圈選、匯出",
+      "rect": [
+        452,
+        117,
+        1028,
+        642
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 3,
+      "label": "可調參數自動出現在底部",
+      "rect": [
+        452,
+        759,
+        1028,
+        69
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 4,
+      "label": "成果存成版本 v1,之後每次修改都新增一版",
+      "rect": [
+        452,
+        828,
+        1028,
+        92
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

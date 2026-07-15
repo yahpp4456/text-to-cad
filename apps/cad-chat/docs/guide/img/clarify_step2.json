@@ -1,0 +1,50 @@
+{
+  "id": "clarify_step2",
+  "chapter": 3,
+  "title": "釐清精靈 · 步驟 2 選配置",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "驅動/傳動屬拓撲級決定,猜錯整台重做故先問",
+      "rect": [
+        755,
+        430.0,
+        424,
+        20.9
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "選一個整機配置組合",
+      "rect": [
+        755,
+        460.0,
+        74,
+        31.0
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 3,
+      "label": "或直接採用建議組合",
+      "rect": [
+        755,
+        500.0,
+        424,
+        17
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

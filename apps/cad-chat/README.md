@@ -395,6 +395,37 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
   都重付**(單張上限 ~1.6k tokens;CLI prompt cache 5 分內命中約一折)。緩解:上限
   4 張/訊息、建議先裁切到需要的區域;不做自動壓縮。
 
+## 量測尺寸(前端 facts 即時,2026-07-15)
+
+3D 檢視器「📏 量測」工具 chip:進量測模式 → 點兩個面 → **即時**顯示有號距離 + 3D 尺寸線(微秒,
+免 round-trip、免「量測中」)。與既有「幾何點選 → 帶入對話 → agent 改模型」的**命令流**乾淨分離
+——量測是**唯讀查詢流**,不進聊天、不觸發 agent(設計模式:State/Mode + Query/Command 分離)。
+
+- **計算在前端**(`src/lib/measureFacts.js`,純函數,零 three/cadjs 依賴):把後端 `cadpy.analysis` +
+  `inspect.measure_targets` 的數學(沿軸座標差 + 歐氏 + 向量關係 + 軸推斷)搬到前端,用 runtime 已載的
+  `pickData` facts(center/normal/surfaceType/params,世界座標)即時算。**精度=後端 measure_targets**:
+  後端本來就是「讀 manifest facts 算」(非 OCP),那 ~11s 花在 inspect 載入 selector bundle,而前端渲染
+  時早已載入 → 前端算距離是微秒級。**座標系一致已驗證**(前端 `pickData.center` 與後端 manifest row
+  逐位相同)。限「面對面」(檢視器量測範圍)。
+- **防漂移(第二計算源紀律)**:`src/lib/measureFacts.test.js` 對真 pickData 斷結果逐位等於後端
+  `inspect measure` CLI 的 golden(f1→f2=320/x/opposed、圓柱→平面=-63、垂直面=0/perpendicular)。
+  **動 `cadpy.analysis` 的 positioning 數學時,這裡的 golden 要一起更新**。
+- **前端接線**:`useCadViewport` 的 `onClick` 在量測模式分流到面級 pick(`hit.faceIndex →
+  mesh.userData.faceIds → runtime.faceReferenceByRowIndex → pickData`),`measureGroup`(仿 `bendGroup`)
+  畫端點球 + 連線;measure effect **同步**呼叫 `measureBetween(p.pick, q.pick, axis)` → HUD 顯示距離/軸/
+  面法向關係 + 3D 中點浮動數值標籤(`.project(camera)` 投影,仿 `updateMarkers`)。無共同軸 → 露出
+  x/y/z 軸 fallback chip(重算)。量測用綠色系(`#1f9d55`)區別 emit 青「帶入對話」/amber「已帶入」。
+- **gotcha**:①`onMeasurePick` 被同步傳入 `useCadViewport`,必須定義在 hook 呼叫「之前」否則 TDZ
+  白屏;②`setMeasure`/`clearMeasure` 由 hook `onReady` 導出後,Canvas3D 的 `onReady` 解構要接住並存進
+  `apiRef.current`,漏接則靜默 no-op(3D 線不畫)。
+- **無後端端點**:量測純前端不打 HTTP;agent 的 `cad_measure` 工具(直接 spawn inspect,建模時用)獨立
+  不受影響。**未來若要 OCP 曲面對曲面真實最短距離**(`BRepExtrema`,前端 facts 做不到)——那是另一種
+  計算,屆時新加後端端點,不是復用 facts。
+- **dev 鉤** `window.__cadMeasure`:`mode()/picks()/result()/groupCount()/setMode/pickFace(row)/
+  faceRows()/faceFactsOf(row)`(全讀 ref,不受 `[playing]` deps stale 影響)。
+- **驗證**:`measureFacts.test.js`(L1,8 項對後端 golden 逐位)+ `smoke_measure.py`(L3,?glb= 直開免
+  session → pickFace×2 → 即時 result==320 + 尺寸線 + HUD 無「量測中」)。
+
 ## 視圖作答面(2026-07-14):需要使用者回答的一律在視圖操作
 
 原則收斂(兩模式通用):**凡需要使用者作答的「選項類/規格類」互動,唯一作答面在

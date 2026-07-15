@@ -1,0 +1,50 @@
+{
+  "id": "props_tree",
+  "chapter": 4,
+  "title": "物件屬性與拓撲樹",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "開啟物件屬性抽屜",
+      "rect": [
+        1362.3,
+        131,
+        99.7,
+        29
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "拓撲樹:GROUP / PART / FACE 逐層展開",
+      "rect": [
+        1163,
+        209,
+        305,
+        29
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 3,
+      "label": "眼睛三態:實體 → 半透 → 隱藏(把外殼轉半透看內部)",
+      "rect": [
+        1449,
+        249,
+        11,
+        11
+      ],
+      "tone": "good",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}

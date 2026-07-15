@@ -1,0 +1,63 @@
+{
+  "id": "clarify_step1",
+  "chapter": 3,
+  "title": "釐清精靈 · 步驟 1 確認規格",
+  "viewport": {
+    "width": 1480,
+    "height": 920
+  },
+  "callouts": [
+    {
+      "n": 1,
+      "label": "代理先問再做:視圖中央聚光燈精靈",
+      "rect": [
+        736,
+        397,
+        460,
+        155
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 2,
+      "label": "「假設」值(琥珀)可點開改",
+      "rect": [
+        755,
+        434,
+        145.0,
+        29
+      ],
+      "tone": "warn",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 3,
+      "label": "兩步閘門:先確認規格,再選配置",
+      "rect": [
+        837.1,
+        411,
+        115.4,
+        14
+      ],
+      "tone": "accent",
+      "pad": 6,
+      "note": null
+    },
+    {
+      "n": 4,
+      "label": "左欄反灰:作答重心讓給視圖",
+      "rect": [
+        0,
+        117,
+        452,
+        803
+      ],
+      "tone": "primary",
+      "pad": 6,
+      "note": null
+    }
+  ]
+}
