@@ -125,9 +125,37 @@ class CylinderSelectTests(unittest.TestCase):
             select_cylinder(load_N=100, stroke_mm=5)  # below stroke_min for all
 
     def test_no_fit_when_stroke_above_every_offered_range(self) -> None:
-        # locks the upper `stroke_mm <= stroke_max` clause (max offered is 800)
+        # locks the upper `stroke_mm <= stroke_max` clause (max round offered is
+        # the SMC CG1 long-stroke 1200 mm; 1300 is past every round series)
         with self.assertRaises(NoFittingPart):
-            select_cylinder(load_N=100, stroke_mm=900)
+            select_cylinder(load_N=100, stroke_mm=1300)
+
+    def test_default_selection_is_round_only(self) -> None:
+        # an unqualified request must never return a square compact cylinder
+        pick = select_cylinder(load_N=150, stroke_mm=18.85)
+        self.assertEqual(pick.get("body_shape", "round"), "round")
+
+    def test_body_shape_square_picks_a_compact_cylinder(self) -> None:
+        # asking for square narrows to the CQ2 catalog; smallest adequate bore
+        pick = select_cylinder(load_N=150, stroke_mm=30, body_shape="square")
+        self.assertEqual(pick["body_shape"], "square")
+        self.assertTrue(pick["model"].startswith("CQ2"))
+
+    def test_body_shape_none_lets_a_square_win_on_bore(self) -> None:
+        # CQ2B20 (bore 20) beats the smallest adequate round bore when shape is
+        # unconstrained -- proves None widens the pool across both shapes.
+        pick = select_cylinder(load_N=100, stroke_mm=20, body_shape=None)
+        self.assertEqual(pick["model"], "CQ2B20")
+        self.assertEqual(pick["bore"], 20)
+
+    def test_no_square_fit_when_stroke_exceeds_compact_range(self) -> None:
+        # compact cylinders top out at 100 mm; a 200 mm stroke has no square fit
+        with self.assertRaises(NoFittingPart):
+            select_cylinder(load_N=100, stroke_mm=200, body_shape="square")
+
+    def test_bad_body_shape_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            select_cylinder(load_N=100, stroke_mm=30, body_shape="triangle")
 
     def test_force_N_is_reported_and_consistent_with_margin(self) -> None:
         pick = select_cylinder(load_N=150, stroke_mm=18.85)

@@ -93,6 +93,62 @@ class CylinderGeometryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pneumatic_cylinder(bore=32, stroke=20, extension=25)
 
+    def _square(self, **kw):
+        # SMC CQ2 40: square block 52 with 5.5 corner holes, datasheet base_len
+        kw.setdefault("bore", 40)
+        kw.setdefault("stroke", 30.0)
+        kw.setdefault("rod_dia", 16)
+        kw.setdefault("body_shape", "square")
+        kw.setdefault("body_w", 52)
+        kw.setdefault("corner_hole", 5.5)
+        kw.setdefault("base_len", 46.5)
+        return pneumatic_cylinder(**kw)
+
+    def test_square_body_produces_two_valid_solids_with_only_bore_contact(self) -> None:
+        cyl = self._square()
+        self.assertEqual([c.label for c in cyl.children], ["cyl_body", "cyl_rod"])
+        assert_all_valid(cyl, label="square cylinder part")
+        # four corner holes leave the block a single solid; body~rod is the only overlap
+        self.assertEqual(len(enumerate_interferences(cyl).overlaps), 1)
+        with self.assertRaises(AssertionError):
+            assert_no_interference(cyl)
+        check_cylinder(cyl)  # declared -> pass
+
+    def test_square_base_len_sets_body_length(self) -> None:
+        # body length is base_len + stroke; the rod exits the +Z end above it
+        cyl = self._square(base_len=46.5, stroke=30.0, rod_protrusion=0.0, extension=0.0)
+        body = next(c for c in cyl.children if c.label == "cyl_body")
+        self.assertAlmostEqual(body.bounding_box().max.Z, 46.5 + 30.0, places=3)
+
+    def test_known_bad_square_body_w_not_larger_than_bore_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            pneumatic_cylinder(bore=40, stroke=30, body_shape="square", body_w=40)
+
+    def test_known_bad_corner_hole_reaching_the_rod_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            # a hole so large its bore-side edge eats the rod must raise
+            pneumatic_cylinder(
+                bore=40, stroke=30, rod_dia=16,
+                body_shape="square", body_w=52, corner_hole=24,
+            )
+
+    def test_all_catalog_cylinders_pass(self) -> None:
+        from cadpy.parts.specs_io import load_specs
+
+        for row in load_specs("cylinders"):
+            stroke = (row["stroke_min"] + row["stroke_max"]) / 2.0
+            kw = dict(bore=row["bore"], stroke=stroke, rod_dia=row["rod_dia"])
+            if row.get("body_shape", "round") == "square":
+                kw.update(
+                    body_shape="square",
+                    body_w=row["body_w"],
+                    corner_hole=row.get("corner_hole"),
+                    base_len=row.get("base_len"),
+                )
+            else:
+                kw["body_dia"] = row.get("body_dia")
+            check_cylinder(pneumatic_cylinder(**kw))
+
 
 class BearingGeometryTests(unittest.TestCase):
     def test_rings_are_valid_and_separated_by_the_raceway(self) -> None:

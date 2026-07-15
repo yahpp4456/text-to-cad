@@ -75,6 +75,7 @@ def select_cylinder(
     stroke_mm: float,
     load_ratio: float = 0.7,
     action: str = "push",
+    body_shape: str | None = "round",
 ) -> dict[str, Any]:
     """Smallest-bore cylinder whose output force covers ``load_N`` at the given
     stroke and supply pressure.
@@ -87,6 +88,12 @@ def select_cylinder(
     ``action`` is ``push`` / ``pull`` / ``double``; ``double`` (double-acting) is
     sized by its weaker pull stroke so the pick covers the load both ways. Common
     phrasings (``double-acting``, ``Double``, ``extend`` / ``retract``) normalize.
+
+    ``body_shape`` filters the catalog: ``"round"`` (default) picks a standard
+    round-body cylinder, ``"square"`` a compact square-body cylinder, and ``None``
+    lets any shape win on bore. A row's shape is its ``body_shape`` field
+    (rows without one are round). The force model is shape-independent, so this
+    only narrows the pool -- it never changes how a given bore is sized.
     """
     if load_N <= 0:
         raise ValueError("load_N must be positive")
@@ -96,6 +103,8 @@ def select_cylinder(
         raise ValueError("pressure_bar must be positive")
     if stroke_mm <= 0:
         raise ValueError("stroke_mm must be positive")
+    if body_shape is not None and body_shape not in ("round", "square"):
+        raise ValueError("body_shape must be 'round', 'square' or None")
     action = _normalize_action(action)  # 'double-acting', 'Double', 'retract' ... → canonical
     f_req = load_N / load_ratio
     rows = [
@@ -103,11 +112,13 @@ def select_cylinder(
         for r in load_specs("cylinders")
         if _force(r, pressure_bar, action) >= f_req
         and r["stroke_min"] <= stroke_mm <= r["stroke_max"]
+        and (body_shape is None or r.get("body_shape", "round") == body_shape)
     ]
     if not rows:
         raise NoFittingPart(
             f"no cylinder: need >= {f_req:.0f} N ({action}) at {pressure_bar} bar "
             f"with stroke {stroke_mm} mm inside an offered range"
+            + (f", body_shape {body_shape!r}" if body_shape is not None else "")
         )
     pick = min(rows, key=lambda r: r["bore"])
     pick_force = _force(pick, pressure_bar, action)
