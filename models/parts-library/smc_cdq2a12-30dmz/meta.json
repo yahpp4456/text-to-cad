@@ -1,0 +1,14 @@
+{
+ "schemaVersion": 1,
+ "label": "SMC CDQ2A12-30DMZ",
+ "family": "cylinder",
+ "source": "library-add from models/ref-cdq2/cdq2a12_30dmz.stp",
+ "notes": "CDQ2 薄型氣缸 標準型 單桿雙作用 帶磁性開關 φ12 行程30(型錄 ref/cdq2.pdf)",
+ "bboxMm": [
+  72,
+  25,
+  25
+ ],
+ "faceCount": 90,
+ "addedAt": "2026-07-16T09:17:11.853Z"
+}
