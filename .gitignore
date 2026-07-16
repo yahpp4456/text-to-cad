@@ -46,3 +46,6 @@ tmp/
 models/.cadchat/
 apps/cad-chat/.env.local
 ref/mechanism_engineering_suite/
+# 手冊建置的機器狀態(base/authMode)與一次性人工複核輸出,不進版控
+apps/cad-chat/docs/guide/img/manifest.json
+apps/cad-chat/docs/guide/img/.verify/
