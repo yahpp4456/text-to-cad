@@ -10,12 +10,18 @@ shots.py   ── 截圖規格清單:每張圖如何佈置畫面 + 要框哪些�
 capture.py ── Playwright 擷取器:逐張截圖 → ../img/<id>.png + <id>.json(框選矩形)
 content.py ── 手冊文案(10 章繁中);圖只引用 shot id,框選編號說明由 json 自帶
 assemble.py── 讀 content + img/*.json → ../index.html(+ 自包含版 + Artifact 版)
-verify.py  ── 開 file://index.html 自我驗證:斷言章節/圖/框數、零 JS 錯誤、截圖複核
+verify.py  ── 開 file://index.html 自我驗證:章/圖/框數對 content+img/*.json 現算的
+             期望值做**精確等式**斷言(任何 rect=None 即 FAIL)、零 JS 錯誤、截圖複核
 guidelib.py── 共用常數與 helper(glb_page_url / asset_url / seed_file …)
 ```
 
 框選**不烙圖**:capture 記錄元件的 bounding box,assemble 換成百分比疊上 CSS 框
 + 編號圖例。改文案不必重截圖;UI 位移了才要重跑 capture。
+
+**防漂移是硬閘,不是警告**:capture 對「框選選擇器解析不到(rect=None)」與
+「page JS 例外(pageerror)」都以非零 exit 失敗(console.error 僅記錄不擋);
+verify 對框數做精確等式(期望值現算,不設寬鬆下限)。verify 驗的是「組裝完整
+性 + 框完整性」——「截圖是否過期(UI 已改版沒重擷)」的防線在重跑 capture。
 
 ## 怎麼重新生成
 
@@ -53,7 +59,7 @@ guidelib.py── 共用常數與 helper(glb_page_url / asset_url / seed_file �
 | `../index.selfcontained.html` | 單一檔:圖內嵌 **WebP**(1600px 高解析,~2.5MB,一檔可傳) |
 | `../artifact.html` | body-only + WebP(1400px,~2MB),發佈 claude.ai Artifact 用 |
 | `../img/<id>.png` / `.json` | 乾淨截圖(2×)+ 框選中繼 |
-| `../img/manifest.json` | 每次 capture 的 ok/error/缺框摘要 |
+| `../img/manifest.json` | 每次 capture 的 ok/error/缺框摘要(含本機 base/authMode,**不進版控**) |
 
 單檔版用 WebP 把 16MB PNG 壓到 ~2.5MB、文字仍清晰;要無損可在 `assemble.py`
 的 `main()` 把該行 `fmt="webp"` 改回 `"png"`。

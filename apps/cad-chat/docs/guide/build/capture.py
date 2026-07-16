@@ -169,12 +169,15 @@ def resolve_callouts(page, callouts):
 def run_shot(browser, shot, live_ok):
     is_live = shot.get("live", False)
     if is_live and not live_ok:
-        return {"id": shot["id"], "status": "skipped-live", "callouts": [], "errors": []}
+        return {"id": shot["id"], "status": "skipped-live", "callouts": [], "errors": [], "warnings": []}
 
     page = browser.new_page(viewport=VIEWPORT, device_scale_factor=2)
+    # pageerror(未捕捉 JS 例外)= 畫面可能半掛 → 硬閘,計入失敗;
+    # console.error 可能只是 React dev 警告 → 軟記錄(warnings),不擋 exit code。
     errors = []
+    warnings = []
     page.on("pageerror", lambda e: errors.append(str(e)))
-    page.on("console", lambda m: errors.append("console.error: " + m.text) if m.type == "error" else None)
+    page.on("console", lambda m: warnings.append("console.error: " + m.text) if m.type == "error" else None)
     sink = []
     cad = Cad(page, sink)
     status = "ok"
@@ -192,11 +195,18 @@ def run_shot(browser, shot, live_ok):
         page.close()
 
     missing = sorted({n for s in sink for n in s.get("missing_callouts", [])})
+    # 硬閘:框選缺失(UI class 改名 → rect=None)與 JS 例外都算失敗。這條管線存在的
+    # 目的就是抓「手冊 vs 實際 UI」漂移,軟警告會假綠——半渲染畫面或缺框的圖
+    # 不得靜默入手冊(review 2026-07-16)。
+    status = status if sink or status == "error" else "empty"
+    if status == "ok" and (missing or errors):
+        status = "error"
     return {
         "id": shot["id"],
-        "status": status if sink or status == "error" else "empty",
+        "status": status,
         "captured": [s["id"] for s in sink],
         "errors": errors,
+        "warnings": warnings,
         "missing_callouts": missing,
     }
 
@@ -243,9 +253,11 @@ def main():
                 extra_cap = ""
             extra = extra_cap
             if r.get("missing_callouts"):
-                extra += f"  ⚠ 框選缺失:{r['missing_callouts']}"
+                extra += f"  ✗ 框選缺失:{r['missing_callouts']}"
             if r.get("errors"):
-                extra += f"  ⚠ {r['errors'][0][:80]}"
+                extra += f"  ✗ JS 例外:{r['errors'][0][:80]}"
+            if r.get("warnings"):
+                extra += f"  ⚠ console.error×{len(r['warnings'])}(僅記錄)"
             print(f"     {flag} {r['status']}{extra}")
         browser.close()
 
