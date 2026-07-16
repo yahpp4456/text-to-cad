@@ -102,7 +102,7 @@ curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-ge
 cd /opt/cadchat/repo/apps/cad-chat
 sudo npm ci || sudo npm install               # linux 上會自動抓 @anthropic-ai/claude-agent-sdk-linux-x64
 ls node_modules/@anthropic-ai/ | grep linux   # 驗證:SDK linux 原生二進位在
-sudo npm run build                            # vite build → dist/(serve 模式的靜態檔)
+sudo env CADCHAT_BASE_PATH=/cad npm run build # vite build → dist/(⚠ 必帶 base path,sudo 會清環境變數)
 test -f dist/index.html && echo BUILD-OK
 ```
 
@@ -291,7 +291,7 @@ curl -s -u sam:<密碼> 'https://<DOMAIN>/api/files?dir=' | head -c 400         
 ```bash
 cd /opt/cadchat/repo && sudo git pull               # 情況 A 記得先更新來源 checkout
 cd apps/cad-chat
-sudo npm ci && sudo npm run build                   # package.json 沒動可跳過 npm ci
+sudo npm ci && sudo env CADCHAT_BASE_PATH=/cad npm run build  # 必帶 base path;package.json 沒動可跳過 npm ci
 sudo systemctl restart cadchat
 curl -s http://127.0.0.1:8788/api/health            # authMode:"apikey" = 完成
 ```
