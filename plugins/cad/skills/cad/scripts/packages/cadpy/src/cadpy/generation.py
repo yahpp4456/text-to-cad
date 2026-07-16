@@ -1109,6 +1109,121 @@ def _run_geometry_acceptance_check(
 
 BUILD_META_SCHEMA_VERSION = 1
 
+# SWEEP_PATHS 收割上限:防禦性截斷,不讓失控的 generator 灌爆 sidecar/前端。
+_SWEEP_PATHS_MAX = 8
+_SWEEP_POINTS_MAX = 512
+# SWEEP_VIEW(掃出工作窗)收割上限與白名單。
+_SWEEP_VIEW_LOOPS_MAX = 12
+_SWEEP_VIEW_LOOP_POINTS_MAX = 512
+_SWEEP_VIEW_PARAMS_MAX = 16
+_SWEEP_VIEW_PATH_KINDS = ("line", "waypoints", "drag_chain")
+
+
+def _harvest_sweep_paths(module: object) -> list[dict[str, object]]:
+    """模組層 ``SWEEP_PATHS``(掃出路徑預覽折線)防禦性收割。
+
+    期望形狀 ``[{"label": str, "points": [[x, y, z], ...]}, ...]``(generator 用
+    ``cadpy.parts.path_polyline`` 取樣)。壞掉的路徑整條丟棄(單點壞 = 整條棄,
+    不送半條線給 overlay);超限截斷(8 條 x 512 點)。純資料,不做幾何運算。
+    """
+    raw = getattr(module, "SWEEP_PATHS", None)
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: list[dict[str, object]] = []
+    for item in raw[: _SWEEP_PATHS_MAX]:
+        if not isinstance(item, dict):
+            continue
+        pts_raw = item.get("points")
+        if not isinstance(pts_raw, (list, tuple)) or len(pts_raw) < 2:
+            continue
+        pts: list[list[float]] = []
+        broken = False
+        for p in pts_raw[: _SWEEP_POINTS_MAX]:
+            if not isinstance(p, (list, tuple)) or len(p) != 3:
+                broken = True
+                break
+            try:
+                v = [float(p[0]), float(p[1]), float(p[2])]
+            except (TypeError, ValueError):
+                broken = True
+                break
+            if not all(math.isfinite(x) for x in v):
+                broken = True
+                break
+            pts.append(v)
+        if broken or len(pts) < 2:
+            continue
+        out.append({"label": str(item.get("label", f"path_{len(out)}")), "points": pts})
+    return out
+
+
+def _harvest_sweep_view(module: object) -> dict[str, object] | None:
+    """模組層 ``SWEEP_VIEW``(掃出工作窗:路徑參數鍵/輪廓唯讀值/輪廓 2D loops)
+    防禦性收割。**任一欄壞 → 整份回 None**(與 _harvest_sweep_paths「單點壞=
+    整條棄」同紀律,絕不送半份 view 給前端渲染)。純資料,不做幾何運算。
+
+    期望形狀::
+
+        SWEEP_VIEW = {
+            "pathKind": "drag_chain",                 # 白名單
+            "pathParams": ["straight_a", ...],        # PARAMS 鍵名(可即時編輯)
+            "profileParams": [{"key","value","unit"?}, ...],  # 唯讀 chips(值物件)
+            "profileLoops": [[[x, y], ...], ...],     # 第 0 圈外輪廓,其餘內腔
+        }
+    """
+    raw = getattr(module, "SWEEP_VIEW", None)
+    if not isinstance(raw, dict):
+        return None
+    kind = raw.get("pathKind")
+    if kind not in _SWEEP_VIEW_PATH_KINDS:
+        return None
+    path_params_raw = raw.get("pathParams")
+    if not isinstance(path_params_raw, (list, tuple)) or len(path_params_raw) > _SWEEP_VIEW_PARAMS_MAX:
+        return None
+    path_params = [str(k) for k in path_params_raw]
+    prof_raw = raw.get("profileParams", [])
+    if not isinstance(prof_raw, (list, tuple)) or len(prof_raw) > _SWEEP_VIEW_PARAMS_MAX:
+        return None
+    profile_params: list[dict[str, object]] = []
+    for item in prof_raw:
+        if not isinstance(item, dict) or "key" not in item:
+            return None
+        try:
+            v = float(item.get("value"))
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(v):
+            return None
+        entry: dict[str, object] = {"key": str(item["key"]), "value": v}
+        if item.get("unit"):
+            entry["unit"] = str(item["unit"])
+        profile_params.append(entry)
+    loops_raw = raw.get("profileLoops")
+    if not isinstance(loops_raw, (list, tuple)) or not loops_raw or len(loops_raw) > _SWEEP_VIEW_LOOPS_MAX:
+        return None
+    loops: list[list[list[float]]] = []
+    for loop_raw in loops_raw:
+        if not isinstance(loop_raw, (list, tuple)) or len(loop_raw) < 3 or len(loop_raw) > _SWEEP_VIEW_LOOP_POINTS_MAX:
+            return None
+        loop: list[list[float]] = []
+        for p in loop_raw:
+            if not isinstance(p, (list, tuple)) or len(p) != 2:
+                return None
+            try:
+                x, y = float(p[0]), float(p[1])
+            except (TypeError, ValueError):
+                return None
+            if not (math.isfinite(x) and math.isfinite(y)):
+                return None
+            loop.append([x, y])
+        loops.append(loop)
+    return {
+        "pathKind": kind,
+        "pathParams": path_params,
+        "profileParams": profile_params,
+        "profileLoops": loops,
+    }
+
 
 def _harvest_build_meta(module: object, raw_payload: object) -> dict[str, object]:
     """從已執行過的 gen_step 收割模組層 MOTION + parts labels(cad-chat sidecar)。
@@ -1131,6 +1246,8 @@ def _harvest_build_meta(module: object, raw_payload: object) -> dict[str, object
         "partCount": len(labels),
         "motion": playback_motion(motion),
         "motionErrs": errs,
+        "sweepPaths": _harvest_sweep_paths(module),
+        "sweepView": _harvest_sweep_view(module),
     }
 
 

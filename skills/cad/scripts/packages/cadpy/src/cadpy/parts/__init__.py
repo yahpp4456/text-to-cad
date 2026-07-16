@@ -43,11 +43,25 @@ from cadpy.parts.select import (
     select_cylinder,
     select_gear,
     select_gripper,
+    select_kcl_clamp,
     select_linear_guide,
+    select_sleeve,
     select_stepper,
 )
 from cadpy.parts.specs_io import load_specs
 from cadpy.parts.stepper_motor import stepper_motor
+from cadpy.parts.sweep import (
+    cleanroom_sleeve,
+    clamp_location,
+    default_bend_r,
+    kcl_clamp,
+    path_polyline,
+    profile_loops,
+    sleeve_dims,
+    sleeve_profile,
+    sleeve_profile_loops,
+    swept_solid,
+)
 
 __all__ = [
     "NoFittingPart",
@@ -73,4 +87,16 @@ __all__ = [
     "bend_allowance",
     "jog_web",
     "DEFAULT_K_FACTOR",
+    "swept_solid",
+    "path_polyline",
+    "cleanroom_sleeve",
+    "sleeve_profile",
+    "sleeve_dims",
+    "sleeve_profile_loops",
+    "profile_loops",
+    "default_bend_r",
+    "kcl_clamp",
+    "clamp_location",
+    "select_sleeve",
+    "select_kcl_clamp",
 ]

@@ -97,5 +97,95 @@ class WriteBuildMetaSidecarTests(unittest.TestCase):
         self.assertIn("non-fatal", logger.warnings[0])
 
 
+_VIEW_OK = {
+    "pathKind": "drag_chain",
+    "pathParams": ["straight_a", "bend_r", "straight_b"],
+    "profileParams": [{"key": "pockets", "value": 6}, {"key": "pocket_w", "value": 16.0, "unit": "mm"}],
+    "profileLoops": [[[0.0, 0.0], [10.0, 0.0], [10.0, 5.0]]],
+}
+
+
+class HarvestSweepViewTests(unittest.TestCase):
+    """SWEEP_VIEW(掃出工作窗)收割:任一欄壞 → 整份 None(絕不送半份)。"""
+
+    def _view(self, **attrs: object):
+        return _harvest_build_meta(_module(**attrs), _PAYLOAD)["sweepView"]
+
+    def test_valid_view_round_trips(self) -> None:
+        v = self._view(SWEEP_VIEW=_VIEW_OK)
+        self.assertEqual(v["pathKind"], "drag_chain")
+        self.assertEqual(v["pathParams"], ["straight_a", "bend_r", "straight_b"])
+        self.assertEqual(v["profileParams"][0], {"key": "pockets", "value": 6.0})
+        self.assertEqual(v["profileParams"][1]["unit"], "mm")
+        self.assertEqual(len(v["profileLoops"]), 1)
+
+    def test_absent_or_bad_shape_is_none(self) -> None:
+        self.assertIsNone(self._view())
+        self.assertIsNone(self._view(SWEEP_VIEW="not-a-dict"))
+
+    def test_any_bad_field_drops_whole_view(self) -> None:
+        cases = [
+            {**_VIEW_OK, "pathKind": "spiral"},  # 白名單外
+            {**_VIEW_OK, "pathParams": "not-a-list"},
+            {**_VIEW_OK, "profileParams": [{"value": 1}]},  # 缺 key
+            {**_VIEW_OK, "profileParams": [{"key": "a", "value": float("nan")}]},
+            {**_VIEW_OK, "profileLoops": []},  # 空
+            {**_VIEW_OK, "profileLoops": [[[0, 0], [1, 1]]]},  # 圈點數 <3
+            {**_VIEW_OK, "profileLoops": [[[0, 0], [1, 1], [1, "x"]]]},  # 壞點
+        ]
+        for bad in cases:
+            with self.subTest(bad=str(bad)[:60]):
+                self.assertIsNone(self._view(SWEEP_VIEW=bad))
+
+    def test_caps(self) -> None:
+        too_many_loops = {**_VIEW_OK, "profileLoops": [[[0, 0], [1, 0], [1, 1]]] * 13}
+        self.assertIsNone(self._view(SWEEP_VIEW=too_many_loops))
+        long_loop = {**_VIEW_OK, "profileLoops": [[[float(i), 0.0] for i in range(513)]]}
+        self.assertIsNone(self._view(SWEEP_VIEW=long_loop))
+
+
+class HarvestSweepPathsTests(unittest.TestCase):
+    """模組層 SWEEP_PATHS(掃出路徑預覽)的防禦性收割:壞路徑整條丟棄、
+    超限截斷、缺席 = 空清單(前端 overlay 的 sidecar 資料源)。"""
+
+    def _harvest(self, **attrs: object) -> list:
+        return _harvest_build_meta(_module(**attrs), _PAYLOAD)["sweepPaths"]
+
+    def test_valid_paths_round_trip(self) -> None:
+        paths = [{"label": "sleeve_path", "points": [[0.0, 0.0, 0.0], [0.0, 1.5, 2.5]]}]
+        self.assertEqual(self._harvest(SWEEP_PATHS=paths), paths)
+
+    def test_absent_is_empty(self) -> None:
+        self.assertEqual(self._harvest(), [])
+        self.assertEqual(self._harvest(SWEEP_PATHS=None), [])
+        self.assertEqual(self._harvest(SWEEP_PATHS="not-a-list"), [])
+
+    def test_malformed_path_dropped_whole(self) -> None:
+        good = {"label": "ok", "points": [[0, 0, 0], [0, 0, 1]]}
+        for bad in (
+            "not-a-dict",
+            {"label": "no-points"},
+            {"label": "one-point", "points": [[0, 0, 0]]},
+            {"label": "2d-point", "points": [[0, 0, 0], [1, 2]]},
+            {"label": "nan", "points": [[0, 0, 0], [0, 0, float("nan")]]},
+            {"label": "non-num", "points": [[0, 0, 0], [0, 0, "x"]]},
+        ):
+            with self.subTest(bad=bad):
+                out = self._harvest(SWEEP_PATHS=[bad, good])
+                self.assertEqual(len(out), 1)
+                self.assertEqual(out[0]["label"], "ok")
+
+    def test_label_defaults_and_coerces(self) -> None:
+        out = self._harvest(SWEEP_PATHS=[{"points": [[0, 0, 0], [0, 0, 1]]}, {"label": 7, "points": [[0, 0, 0], [0, 0, 2]]}])
+        self.assertEqual([p["label"] for p in out], ["path_0", "7"])
+
+    def test_caps_truncate(self) -> None:
+        many = [{"label": f"p{i}", "points": [[0, 0, 0], [0, 0, 1]]} for i in range(12)]
+        self.assertEqual(len(self._harvest(SWEEP_PATHS=many)), 8)
+        long = [{"label": "long", "points": [[0.0, 0.0, float(i)] for i in range(600)]}]
+        out = self._harvest(SWEEP_PATHS=long)
+        self.assertEqual(len(out[0]["points"]), 512)
+
+
 if __name__ == "__main__":
     unittest.main()

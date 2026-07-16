@@ -1,0 +1,16 @@
+[
+  {"size": "2A", "A": 29.6, "B": 38.1, "C": 48.6, "D": 25.0, "plate_t": 5.75, "depth": 32.4, "hole_d": 5.0,
+   "source": "Elocab 無塵拖鏈固定頭尺寸表 (ref/原廠CAD/無塵電纜資料.pdf p.8, 2026-07): C=plate width, B=2-phi5 hole c-c, plate 5.75 thick x 32.4 deep (TOP+BOTTOM pair); slot D omitted in the simplified generator",
+   "confidence": "high"},
+  {"size": "3A", "A": 43.5, "B": 52.1, "C": 62.5, "D": 38.9, "plate_t": 5.75, "depth": 32.4, "hole_d": 5.0,
+   "source": "Elocab KCL table (pdf p.8)", "confidence": "high"},
+  {"size": "4A", "A": 57.2, "B": 66.0, "C": 76.2, "D": 52.6, "plate_t": 5.75, "depth": 32.4, "hole_d": 5.0,
+   "source": "Elocab KCL table (pdf p.8)", "confidence": "high"},
+  {"size": "5A", "A": 71.4, "B": 80.0, "C": 90.4, "D": 66.8, "plate_t": 5.75, "depth": 32.4, "hole_d": 5.0,
+   "source": "Elocab KCL table (pdf p.8)", "confidence": "high"},
+  {"size": "6A", "A": 85.2, "B": 94.0, "C": 104.2, "D": 80.6, "plate_t": 5.75, "depth": 32.4, "hole_d": 5.0,
+   "source": "Elocab KCL table (pdf p.8)", "confidence": "high"},
+  {"size": "7A", "A": 99.2, "B": 108.0, "C": 118.2, "D": 94.6, "plate_t": 5.75, "depth": 32.4, "hole_d": 5.0,
+   "source": "Elocab KCL table (pdf p.8); matches the clamp plates measured in OEM Cable X.stp (118.2 x 32.4)",
+   "confidence": "high"}
+]

@@ -416,3 +416,76 @@ def select_gripper(
             "opening_margin": pick["stroke"] / opening_mm,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Cleanroom cable sleeve (Elocab EHSL) + KCL end clamp
+# ---------------------------------------------------------------------------
+def select_sleeve(
+    cable_ods: list[float],
+    *,
+    pack_two: bool = False,
+    bend_factor: float = 10.0,
+) -> dict[str, Any]:
+    """Smallest EHSL sleeve that fits the given cable outside diameters.
+
+    Catalog rules (pdf p.7): a pocket holds one cable up to ``pocket_w / 2``
+    OD (up to two per pocket when ``pack_two`` -- the catalog's suggested
+    maximum). The default is conservative: one pocket per cable. The reported
+    ``bend_r`` follows the p.6 rule (7.5x..10x the max cable OD's pocket,
+    here ``bend_factor * pocket_w / 2``).
+    """
+    if not isinstance(cable_ods, (list, tuple)) or not cable_ods:
+        raise ValueError("cable_ods 必須是非空的外徑清單")
+    ods = [float(v) for v in cable_ods]
+    if any(v <= 0 for v in ods):
+        raise ValueError("cable_ods 每個外徑必須為正")
+    if not 7.5 <= bend_factor <= 10.0:
+        raise ValueError("bend_factor 必須在 [7.5, 10](型錄彎徑規則)")
+    max_od = max(ods)
+    pockets_needed = -(-len(ods) // 2) if pack_two else len(ods)
+    rows = [
+        r
+        for r in load_specs("ehsl_sleeves")
+        if r["max_cable_od"] >= max_od and r["pockets"] >= pockets_needed
+    ]
+    if not rows:
+        raise NoFittingPart(
+            f"no EHSL sleeve: need pocket for OD <= {max_od} mm x "
+            f"{pockets_needed} pockets (pack_two={pack_two})"
+        )
+    pick = min(rows, key=lambda r: (r["pocket_w"], r["pockets"], r["total_w"]))
+    return {
+        **pick,
+        "selected_for": {
+            "cable_ods": ods,
+            "max_cable_od": max_od,
+            "pockets_needed": pockets_needed,
+            "pack_two": pack_two,
+            "bend_r": bend_factor * pick["pocket_w"] / 2.0,
+            "od_margin": pick["max_cable_od"] / max_od,
+        },
+    }
+
+
+def select_kcl_clamp(pockets: int | None, sleeve_total_w: float) -> dict[str, Any]:
+    """KCL clamp row for a sleeve: start at ``<pockets>A`` and size up while
+    the plate width C cannot cover the sleeve (6x16 -> 105 > 6A's 104.2 ->
+    7A, exactly the pairing measured in OEM Cable X.stp). ``pockets=None``
+    starts from the smallest. Raises :class:`NoFittingPart` past 7A."""
+    if sleeve_total_w <= 0:
+        raise ValueError("sleeve_total_w 必須為正")
+    rows = sorted(load_specs("kcl_clamps"), key=lambda r: r["C"])
+    start = 0
+    if pockets is not None:
+        if not isinstance(pockets, int) or pockets < 1:
+            raise ValueError("pockets 必須是 >= 1 的整數")
+        want = f"{min(max(pockets, 2), 7)}A"
+        start = next(i for i, r in enumerate(rows) if r["size"] == want)
+    for row in rows[start:]:
+        if row["C"] >= sleeve_total_w:
+            return row
+    raise NoFittingPart(
+        f"護套總寬 {sleeve_total_w:g} 超過最大 KCL-7A(C=118.2);"
+        "無更大型號,請自訂夾板或明給 kcl_clamp(size=...)"
+    )
