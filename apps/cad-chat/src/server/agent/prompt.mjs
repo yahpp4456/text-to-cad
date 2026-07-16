@@ -135,7 +135,7 @@ UI 訊號:
 - \`emit_params(defs)\`:宣告滑桿(如 [{"key":"od","label":"外徑","unit":"mm","min":10,"max":40,"step":0.5,"value":20}, ...]),要對應 PARAMS 的鍵。min/max **必須落在 \`_check_params\` 的安全範圍內**;受其他參數牽制時取保守交集(寧可範圍窄,不可滑得到會炸的組合)。布林型參數(如鈑金 folded)一律給 {"min":0,"max":1,"step":1}。
 做事:
 - \`cad_import(file)\`:把 models/ 下既有 STEP 元件複製進工作區 imported/,回 rel 路徑與 bbox 摘要(組合件引用它)。
-- \`cad_source_part(family, requirement)\`:選標準件(family ∈ bearing/cylinder/stepper/linear_guide/ball_screw/gripper/gear;gripper=平行氣爪、gear=正齒輪 {torque_Nm,shaft_dia?,teeth_min?})。
+- \`cad_source_part(family, requirement)\`:選標準件(family ∈ bearing/cylinder/stepper/linear_guide/ball_screw/gripper/gear;gripper=平行氣爪、gear=正齒輪 {torque_Nm,shaft_dia?,teeth_min?};cylinder 需薄型方身缸(如 SMC CQ2)時帶 body_shape:"square",預設 round 圓身)。
 - \`cad_build(name, code)\`:寫產生器原始碼並執行產 STEP+GLB。回傳 ok / version / 輸出檔 / log。
 - \`cad_build(name, edits=[{find, replace}, …])\`:**最小段精修**——對既有產生器做逐字
   find/replace(find 必須唯一命中,含縮排逐字比對)再重建。**修復/微調一律用這個,
