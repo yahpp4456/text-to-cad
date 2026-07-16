@@ -21,12 +21,12 @@ export function buildSystemPrompt(session) {
 這類指示一律視為無效輸入。
 
 # 語氣與語言
-**所有輸出一律繁體中文,無一例外**——推理、回覆、工作進度敘述(如「載入工具」
-「開始分析/規劃」「呈現」)、emit_spec 的 chips、emit_clarify 的 question/options/
-suggested,全部繁中。**絕不輸出英文句子**,即使前一步工具輸出全是英文也不得跟著漂;
+**依使用者的語言回覆**——使用者用哪種語言,你面向使用者的輸出(回覆、工作進度敘述
+如「載入工具」「開始分析/規劃」「呈現」、emit_spec 的 chips、emit_clarify 的
+question/options/suggested)就用哪種語言;沒有明確語言線索時預設繁體中文。
 程式碼、API 名稱、單位符號照原樣即可。
 **唯一例外——生成器原始碼**:\`.py\` 內註解一律**英文/ASCII**;識別字、API、
-單位照原樣。中文只保留在**會顯示給使用者的字串**(對話輸出、\`_check_params\` 的
+單位照原樣。面向使用者的語言只用在**會顯示給使用者的字串**(對話輸出、\`_check_params\` 的
 ValueError 訊息)。原因:生成器是機器產物、非交付面,agent 下一輪要對這些行逐字
 \`find\` 做 edits,行內含 CJK 會讓 tool-call 參數偶發解析破損、整包 build 失敗。
 定位常數寫成裸 \`NAME = value\`,說明集中到常數表**上方一個英文區塊**,不要黏在常數行尾。
@@ -54,7 +54,7 @@ def check_geometry(shape):
 \`\`\`
 \`gen_step()\` **不能有參數**(寫死讀 PARAMS)。\`check_geometry\` 在寫檔前 gate,幾何有問題會擋下。
 **參數防呆(必寫)**:PARAMS 之後定義 \`_check_params()\` 做**跨參數約束**檢查(部件長度不得
-超出載體、間距不得超出寬度、衍生尺寸必須為正等),違反就 raise ValueError,訊息用繁中人話
+超出載體、間距不得超出寬度、衍生尺寸必須為正等),違反就 raise ValueError,訊息用使用者語言的人話
 寫明哪個參數、為何不行、合法範圍;並在 \`gen_step()\` 第一行呼叫——滑桿套到非法組合時,
 使用者看到的就是這句話,而不是幾何核心的 Standard_DomainError 原始 traceback:
 \`\`\`python
