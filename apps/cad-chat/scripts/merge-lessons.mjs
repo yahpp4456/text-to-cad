@@ -18,7 +18,9 @@
 //
 // 已知限制:合併為 **union-only**,跨機的刪除不會傳播(在 A 機刪掉的 lesson,若
 // B 機快照仍留著它的 cases,下次合併會把那些 case 當 pending 帶回)。報告會標示
-// 「來自快照、本機活檔沒有」的 lesson signature 供人工判斷。
+// 「來自快照、本機活檔沒有」的 lesson signature 供人工判斷。status 同理:disable
+// 不傳播(union 取 active,disable 無時間戳可比新舊),來源不一致時列入報告
+// (statusConflicts)由人重新 disable。措辭權威 = 最新 distilledAt(非 caseCount)。
 
 import fs from "node:fs";
 import os from "node:os";
@@ -127,21 +129,38 @@ export function mergeStores(stores, { labels = [] } = {}) {
     groups.get(root).push(entry);
   }
 
-  // 每群 → 一條合併 lesson;措辭取「證據多的贏家」。
+  // 每群 → 一條合併 lesson;措辭取「最新蒸餾的贏家」(distilledAt 新者為權威,
+  // 平手才比 caseCount)。不能拿 caseCount 當第一鍵:輸出的 caseCount 是現算的
+  // (通常低於舊快照裡的膨脹值),若以計數為權威,本機重蒸餾的新措辭會被舊快照
+  // 的高計數永遠壓回去(review 2026-07-16)。
   const conflicts = [];
+  const statusConflicts = [];
   const mergedLessons = [];
   const provenance = new Map(); // merged lesson 物件 → Set(來源標籤)
   for (const group of groups.values()) {
     const lessons = group.map((g) => g.lesson);
     const winner = [...lessons].sort((a, b) => {
-      const d = Number(b.caseCount || 0) - Number(a.caseCount || 0);
+      const d = String(b.distilledAt || "").localeCompare(String(a.distilledAt || ""));
       if (d) return d;
-      return String(b.distilledAt || "").localeCompare(String(a.distilledAt || ""));
+      const c = Number(b.caseCount || 0) - Number(a.caseCount || 0);
+      if (c) return c;
+      return String(a.signature || "").localeCompare(String(b.signature || ""));
     })[0];
     const allSigs = new Set();
     for (const l of lessons) for (const s of lessonSignatures(l)) allSigs.add(s);
     const primary = winner.signature;
     const alt = [...allSigs].filter((s) => s !== primary).sort();
+    // status 是 union 規則(有任一 active → active):disable 沒有時間戳可比新舊,
+    // 兩個方向都可能翻錯,取「不漏教訓」的一邊。但本機刻意 disable 被舊快照翻回
+    // active 不得無聲發生 → 來源不一致時進報告,由人重新 disable。
+    const statuses = new Set(lessons.map((l) => l.status || "active"));
+    if (statuses.size > 1) {
+      statusConflicts.push({
+        signature: primary,
+        resolved: lessons.every((l) => l.status === "disabled") ? "disabled" : "active",
+        sources: group.map((g) => ({ label: g.label, status: g.lesson.status || "active" })),
+      });
+    }
     const merged = {
       id: null, // 排序後指派
       signature: primary,
@@ -239,6 +258,7 @@ export function mergeStores(stores, { labels = [] } = {}) {
     },
     duplicateCasesRemoved: totalInputCases - cases.length,
     conflicts,
+    statusConflicts,
     lessons: mergedLessons.map((l) => ({
       id: l.id,
       signature: l.signature,
@@ -268,8 +288,15 @@ function printReport(report, { liveLabel } = {}) {
     const flag = liveLabel && !l.sources.includes(liveLabel) ? "  ⟵ 來自快照，本機活檔無" : "";
     log(`  ${l.id} [${l.signature}] ${l.caseCount} cases (${l.status}) 來源:${l.sources.join(",")}${flag}`);
   }
+  if (report.statusConflicts.length) {
+    log("── ⚠ status 不一致（union 規則取 active；若你是刻意 disable，合併後請重新 disable）──");
+    for (const s of report.statusConflicts) {
+      const srcs = s.sources.map((x) => `${x.label}=${x.status}`).join(", ");
+      log(`  [${s.signature}] → ${s.resolved}（${srcs}）`);
+    }
+  }
   if (report.conflicts.length) {
-    log("── 同 signature 措辭衝突（自動挑證據多的，被淘汰者列此供檢視）──");
+    log("── 同 signature 措辭衝突（自動挑最新蒸餾的，被淘汰者列此供檢視）──");
     for (const c of report.conflicts) {
       log(`  [${c.signature}]`);
       log(`    保留 (caseCount ${c.kept.caseCount}): ${c.kept.title} — ${c.kept.rule}`);

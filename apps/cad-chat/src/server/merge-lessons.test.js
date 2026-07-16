@@ -85,7 +85,7 @@ test("撞 id 合併:id 全重編、無碰撞、seq/lessonSeq 接續", () => {
   assert.equal(store.lessonSeq, 2);
 });
 
-test("同 signature 措辭衝突:挑 caseCount 高的贏,計數現算(非相加),落敗進 report", () => {
+test("同 signature 措辭衝突:distilledAt 平手時挑 caseCount 高的贏,計數現算(非相加),落敗進 report", () => {
   const a = mkStore({
     cases: [
       mkCase({ signature: "build:X", sessionId: "s_a", turnId: "t_a1", at: "2026-07-15T01:00:00.000Z", resolved: true }),
@@ -148,6 +148,38 @@ test("case 自然鍵去重:兩檔同一筆 case(同 session/turn/at/sig)→ 只�
   assert.equal(store.cases.length, 1);
   assert.equal(report.duplicateCasesRemoved, 1);
   assert.equal(store.cases[0].resolved, true, "撞鍵保留較完整者(resolved 優先)");
+});
+
+test("措辭權威=最新蒸餾:本機重蒸餾的新措辭(distilledAt 新)勝過舊快照的高 caseCount", () => {
+  // 情境:第一次合併後活檔 caseCount 被現算壓低(3),對方機舊快照還記著膨脹的 17;
+  // 本機隨後重蒸餾出新措辭。若以 caseCount 為權威,新措辭會被舊快照永遠壓回去。
+  const live = mkStore({
+    lessons: [mkLesson({ signature: "build:X", title: "新措辭", rule: "新規則", caseCount: 3, distilledAt: "2026-07-16T00:00:00.000Z" })],
+  });
+  const staleSnapshot = mkStore({
+    lessons: [mkLesson({ signature: "build:X", title: "舊措辭", rule: "舊規則", caseCount: 17, distilledAt: "2026-07-15T00:00:00.000Z" })],
+  });
+  const { store, report } = mergeStores([staleSnapshot, live], { labels: ["快照", "活檔"] });
+  assert.equal(store.lessons.length, 1);
+  assert.equal(store.lessons[0].title, "新措辭");
+  assert.equal(report.conflicts[0].dropped.title, "舊措辭");
+});
+
+test("status 不一致:union 取 active(不漏教訓),但列入 report.statusConflicts 供人工重 disable", () => {
+  const a = mkStore({ lessons: [mkLesson({ signature: "build:X", status: "disabled" })] });
+  const b = mkStore({ lessons: [mkLesson({ signature: "build:X", status: "active" })] });
+  const { store, report } = mergeStores([a, b], { labels: ["A", "B"] });
+  assert.equal(store.lessons[0].status, "active");
+  assert.equal(report.statusConflicts.length, 1);
+  assert.equal(report.statusConflicts[0].signature, "build:X");
+  assert.deepEqual(
+    report.statusConflicts[0].sources.map((s) => `${s.label}=${s.status}`).sort(),
+    ["A=disabled", "B=active"],
+  );
+  // 全 disabled → disabled,且不算衝突
+  const c = mergeStores([a, mkStore({ lessons: [mkLesson({ signature: "build:X", status: "disabled" })] })]);
+  assert.equal(c.store.lessons[0].status, "disabled");
+  assert.equal(c.report.statusConflicts.length, 0);
 });
 
 test("idempotency:把合併結果連同原始輸入再合併,計數與結構穩定", () => {
