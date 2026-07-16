@@ -12,6 +12,7 @@
     "start": "node src/server/server.mjs",
     "electron:dev": "electron .",
     "bake-auth": "node scripts/bake-auth.mjs",
+    "merge-lessons": "node scripts/merge-lessons.mjs",
     "build:packaged": "node scripts/bake-auth.mjs && vite build",
     "dist": "node scripts/bake-auth.mjs && vite build && electron-builder --win --config electron-builder.yml",
     "dist:personal": "node scripts/bake-auth.mjs --allow-oauth && vite build && electron-builder --win --config electron-builder.yml"
