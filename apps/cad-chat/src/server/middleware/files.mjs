@@ -8,11 +8,15 @@ import path from "node:path";
 
 import { BASE_PATH, DATA_ROOT, MODELS_FIXTURES_ROOT, MODELS_ROOT } from "../config.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
+import { LIBRARY_DIR, addLibraryPart } from "../cad/library.mjs";
 import { pathIsInside, resolveInside, resolveModelRead } from "../cad/paths.mjs";
+import { resolveImportSource } from "../cad/pipeline.mjs";
 import { scrubPaths, spawnPython } from "../cad/python.mjs";
 
 const STEP_DIR = "skills/cad/scripts/step";
+const INSPECT_DIR = "skills/cad/scripts/inspect";
 const OPEN_TIMEOUT_MS = 120_000; // 裸 STEP 轉 GLB 上限(大檔 tessellation 可能要一陣子)
+const LIBRARY_INSPECT_TIMEOUT_MS = 30_000; // 收庫 bbox 量測上限(best-effort,逾時=null)
 
 // 使用者傳入的 models 相對路徑正規化(容忍 models/ 前綴與反斜線)。
 function normalizeRel(p) {
@@ -237,6 +241,70 @@ async function handleOpen(body, res, ctx = {}) {
   });
 }
 
+// 收一件 STEP 進零件庫(免 LLM;FileBrowser「收入庫」鈕):來源驗證重用
+// resolveImportSource(models/ 沙箱 + .step/.stp 限定),寫入只准可寫層
+// (addLibraryPart 內 resolveInside(modelsRoot));bbox 用 inspect facts
+// best-effort(逾時/失敗 = null,不擋收庫)。
+async function handleLibraryAdd(body, res, ctx = {}) {
+  const modelsRoot = ctx.modelsRoot || MODELS_ROOT;
+  const fileParam = normalizeRel(body?.file);
+  if (!fileParam) {
+    sendJson(res, 400, { ok: false, error: "missing file" });
+    return;
+  }
+  if (fileParam.startsWith(`${LIBRARY_DIR}/`)) {
+    sendJson(res, 400, { ok: false, error: "檔案已在零件庫內" });
+    return;
+  }
+  const src = resolveImportSource(fileParam, { modelsRoot });
+  if (!src.ok) {
+    sendJson(res, src.error === "路徑超出 models/" ? 403 : 400, src);
+    return;
+  }
+  // bbox/faceCount best-effort(同 handleOpen 的跨根 target 解析:可寫層走
+  // DATA_ROOT 相對、fixtures 層走絕對輸入)
+  let bbox = null;
+  try {
+    const target = pathIsInside(src.srcAbs, DATA_ROOT)
+      ? path.relative(DATA_ROOT, src.srcAbs).split(path.sep).join("/")
+      : src.srcAbs;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), LIBRARY_INSPECT_TIMEOUT_MS);
+    const r = await spawnPython(INSPECT_DIR, ["refs", target, "--facts", "--format", "json"], {
+      signal: ac.signal,
+    });
+    clearTimeout(timer);
+    const json = JSON.parse(r.stdout);
+    const tok = json.tokens?.[0] || {};
+    bbox = {
+      size: Array.isArray(tok.entryFacts?.size)
+        ? tok.entryFacts.size.map((v) => Math.round(v * 100) / 100)
+        : null,
+      faceCount: tok.summary?.faceCount ?? null,
+    };
+  } catch {
+    bbox = null;
+  }
+  let result;
+  try {
+    result = addLibraryPart({
+      srcAbs: src.srcAbs,
+      modelsRoot,
+      slug: body?.slug,
+      label: body?.label || path.basename(src.srcAbs).replace(/\.ste?p$/i, ""),
+      family: body?.family,
+      notes: body?.notes,
+      source: `library-add from models/${fileParam}`,
+      overwrite: body?.overwrite === true,
+      bbox,
+    });
+  } catch (err) {
+    sendJson(res, 500, { ok: false, error: scrubPaths(String(err?.message || err)) });
+    return;
+  }
+  sendJson(res, 200, result.ok ? { ...result, bboxMm: result.meta.bboxMm } : result);
+}
+
 export function filesMiddleware() {
   return function files(req, res, next) {
     const url = parseUrl(req);
@@ -263,6 +331,13 @@ export function filesMiddleware() {
     if (url.pathname === "/api/open" && req.method === "POST") {
       readJsonBody(req)
         .then((body) => handleOpen(body, res, req.cadchat))
+        .catch((err) => sendJson(res, 400, { ok: false, error: scrubPaths(String(err?.message || err)) }));
+      return;
+    }
+
+    if (url.pathname === "/api/library-add" && req.method === "POST") {
+      readJsonBody(req)
+        .then((body) => handleLibraryAdd(body, res, req.cadchat))
         .catch((err) => sendJson(res, 400, { ok: false, error: scrubPaths(String(err?.message || err)) }));
       return;
     }

@@ -1221,6 +1221,23 @@
   font-size: 11px;
   color: var(--text-dim);
 }
+/* 收入零件庫 inline 迷你表單(名稱輸入 + family 快選;kindPick 同視覺語言) */
+.fb-lib-input {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 6px;
+  max-width: 130px;
+}
+.fb-notice {
+  padding: 10px 16px;
+  font-size: 12px;
+  color: var(--ok, #34ab86);
+  background: color-mix(in oklab, #34ab86 7%, var(--panel));
+}
 .fb-empty {
   padding: 24px 16px;
   font-size: 12px;
@@ -2202,6 +2219,162 @@
   color: #fff;
   background: var(--design);
 }
+/* 掃出件工作窗開關(fold-switch 同位階;掃出件與鈑金件互斥,同錨點不衝突) */
+.sweep-switch {
+  position: absolute;
+  top: 48px;
+  left: 20px;
+  z-index: 7;
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  box-shadow: 0 2px 10px rgba(20, 30, 55, 0.12);
+  backdrop-filter: blur(6px);
+}
+/* ── 掃出工作窗:蓋在 3D 上的浮動雙欄(z-9:蓋 nameplate/offer(8)、
+   讓位 scrim(10)/clarify(11);.canvas 是 relative+overflow:hidden) ── */
+.sweep-window {
+  position: absolute;
+  top: 88px;
+  left: 20px;
+  right: 20px;
+  bottom: 88px;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 40px rgba(20, 30, 55, 0.18);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+}
+.sweepwin-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.sweepwin-title {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: var(--text);
+}
+.sweepwin-close {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 14px;
+  padding: 2px 6px;
+}
+.sweepwin-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.sweepwin-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+  min-height: 0;
+}
+.sweepwin-path {
+  border-right: 1px solid var(--line-soft);
+}
+.sweepwin-eyebrow {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+.sweepwin-hint {
+  font-size: 11px;
+  color: #9aa3b0;
+}
+.sweepwin-svg {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  background: #fbfcfe;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+.sweepwin-baked {
+  fill: none;
+  stroke: #b6c0cf;
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
+}
+.sweepwin-live {
+  fill: none;
+  stroke: var(--part);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.sweepwin-prof {
+  fill: color-mix(in oklab, var(--part) 18%, #fff);
+  stroke: var(--part);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.sweepwin-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.sweepwin-fields .param.param-num {
+  padding: 4px 6px;
+  border-right: none;
+}
+.sweepwin-apply {
+  align-self: flex-start;
+  cursor: pointer;
+  padding: 7px 16px;
+  border-radius: 7px;
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #fff;
+  background: var(--part);
+}
+.sweepwin-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sweepwin-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: #fff;
+}
+.sweepwin-chat {
+  align-self: flex-start;
+  cursor: pointer;
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--text);
+  background: #fff;
+}
+.sweepwin-chat:hover {
+  border-color: var(--part);
+  color: var(--part);
+}
 .model-info {
   position: absolute;
   left: 20px;
@@ -2525,7 +2698,13 @@
 .paramsbar-track {
   flex: 1;
   display: flex;
-  overflow-x: auto;
+  /* number 化改版:可換行的緊湊佈局(不再橫向捲動找參數);高度封頂防擠壓
+     canvas,超出改垂直捲動。DofBar(data-sketch,range 拉桿)dof 少,wrap 無害。 */
+  flex-wrap: wrap;
+  align-content: flex-start;
+  max-height: 128px;
+  overflow-y: auto;
+  overflow-x: visible;
 }
 .paramsbar-empty {
   padding: 16px;
@@ -2557,9 +2736,72 @@
   font-size: 13px;
 }
 .param input[type="range"] {
+  /* 仍供草模 DofBar(data-sketch)使用;設計模式已改 NumberField */
   width: 100%;
   accent-color: var(--part);
   cursor: pointer;
+}
+/* number 化參數格:label 上、輸入欄下,窄版可多欄併排 */
+.param.param-num {
+  flex: 0 1 auto;
+  min-width: 150px;
+  padding: 8px 14px;
+}
+/* ── NumberField(共用:ParamsBar 與掃出工作窗)── */
+.numfield {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  padding: 2px 4px;
+}
+.numfield[data-invalid] {
+  border-color: var(--danger);
+  background: color-mix(in oklab, var(--danger) 6%, #fff);
+}
+.numfield input {
+  width: 64px;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 13px;
+  text-align: center;
+  color: var(--text);
+}
+.numfield input:disabled {
+  color: #a3acba;
+}
+.numfield-unit {
+  font-size: 10.5px;
+  color: #9aa3b0;
+  padding-right: 2px;
+}
+.numfield-btn {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.numfield-btn:hover {
+  background: color-mix(in oklab, var(--part) 12%, #fff);
+  color: var(--part);
+}
+.numfield-btn[data-disabled] {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
 }
 .paramsbar-apply {
   flex: none;

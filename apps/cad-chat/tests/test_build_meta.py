@@ -58,6 +58,9 @@ class BuildMetaSidecarE2E(unittest.TestCase):
         self.assertEqual(dofs["flip"]["angle_deg"], 90.0)
         # 播放子集不外洩掃掠欄位
         self.assertNotIn("pairs", dofs["flip"])
+        # 無 SWEEP_PATHS/SWEEP_VIEW 宣告的 generator:overlay 與工作窗都不誤亮
+        self.assertEqual(self.meta["sweepPaths"], [])
+        self.assertIsNone(self.meta["sweepView"])
 
     def test_sidecar_matches_validate_motion_only(self):
         """sidecar 與 validate.py --motion-only 同源(cadpy.motion_decl)不漂移。"""

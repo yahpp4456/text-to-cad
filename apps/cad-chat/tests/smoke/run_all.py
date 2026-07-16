@@ -31,6 +31,9 @@ ORDER = [
     # 檔去重」工作流;同 glbUrl 保留 status 由 chatStore.test.js 單元測覆蓋。
     "smoke_open_project.py",
     "smoke_flat_toggle.py",
+    "smoke_sweep_overlay.py",
+    "smoke_sweep_window.py",
+    "smoke_library.py",
     "smoke_sketch.py",
     "smoke_versions.py",
     "smoke_restore.py",
@@ -49,6 +52,7 @@ LLM_GATED = [
     "smoke_lesson_offer_live.py",
     "smoke_sketch_live.py",
     "smoke_sketch_clarify_live.py",
+    "smoke_sweep_live.py",
 ]
 
 if not server_alive():

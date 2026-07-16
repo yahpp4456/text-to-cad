@@ -10,6 +10,7 @@ import ClarifyWizard from "./ClarifyWizard.jsx";
 import LessonOfferPanel from "./LessonOfferPanel.jsx";
 import PropertiesDrawer from "./PropertiesDrawer.jsx";
 import SpecPanel from "./SpecPanel.jsx";
+import SweepWindow from "./SweepWindow.jsx";
 
 // 面標記「預設顯示」上限:每件 6 個、整體 12(避免菱形海)。這只是預設——
 // 候選面不設限,使用者可從「◇ 面標記」面板切全部/隱藏/逐面勾選。
@@ -78,6 +79,9 @@ export default function Canvas3D({
   onExportParts,
   partsBusy,
   exportNote,
+  params,
+  onParam,
+  onApplyParams,
 }) {
   const mountRef = useRef(null);
   const markersRef = useRef([]);
@@ -145,6 +149,32 @@ export default function Canvas3D({
       live = false;
     };
   }, [canvas.flatLinesUrl]);
+  // 掃出路徑資料:換版時 fetch 該版 sidecar JSON(很小),3D 視圖疊路徑中心虛線 overlay 用。
+  const [sweepData, setSweepData] = useState(null);
+  const [sweepOn, setSweepOn] = useState(true);
+  // 掃出工作窗開闔(不隨 canvas.ver 重置——套用後留窗看新 2D;render guard 的
+  // sweepData?.view 讓「新版無 view」時自動消失)。ref 供 dev 鉤讀最新值。
+  const [sweepWinOpen, setSweepWinOpen] = useState(false);
+  const sweepWinOpenRef = useRef(false);
+  sweepWinOpenRef.current = sweepWinOpen;
+  const sweepDataRef = useRef(null);
+  sweepDataRef.current = sweepData;
+  useEffect(() => {
+    if (!canvas.sweepPathsUrl) {
+      setSweepData(null);
+      return undefined;
+    }
+    let live = true;
+    fetch(canvas.sweepPathsUrl)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (live) setSweepData(j && Array.isArray(j.paths) && j.paths.length ? j : null);
+      })
+      .catch(() => live && setSweepData(null));
+    return () => {
+      live = false;
+    };
+  }, [canvas.sweepPathsUrl]);
   // 換版重置回摺疊(避免上一版停在攤平、新版無 flatGlbUrl 時卡住)
   useEffect(() => {
     setView("folded");
@@ -225,6 +255,8 @@ export default function Canvas3D({
     name: canvas.name,
     // 攤平態才疊折彎虛線(摺疊態傳 null → 不建 overlay)
     bendLines: view === "flat" ? flatLines : null,
+    // 掃出路徑中心虛線(攤平態不疊——路徑是 3D 摺疊幾何的語境)
+    sweepPaths: view !== "flat" ? sweepData?.paths || null : null,
     onStatus: (status) => dispatch({ type: "SET_CANVAS_STATUS", status }),
     onReady: ({
       runtime,
@@ -235,6 +267,7 @@ export default function Canvas3D({
       setGrid,
       setAxes,
       setBendLines,
+      setSweepPaths,
       setFaceHighlights,
       setMeasure,
       clearMeasure,
@@ -254,6 +287,7 @@ export default function Canvas3D({
         setGrid,
         setAxes,
         setBendLines,
+        setSweepPaths,
         setFaceHighlights,
         setMeasure,
         clearMeasure,
@@ -269,6 +303,7 @@ export default function Canvas3D({
       setPlaying(false);
       setGridOn(true); // 新模型載入 → 網格/座標軸回到預設開
       setAxesOn(true);
+      setSweepOn(true); // 掃出路徑 overlay 隨新模型回到預設開(場景重建 visible 本就 true)
       setMarkerMode("default"); // 標記顯示模式跟著新模型重置
       setMarkerPick(new Set());
       setPickerOpen(false);
@@ -326,6 +361,16 @@ export default function Canvas3D({
           const g = apiRef.current.chrome?.bendLines;
           return g ? { visible: g.visible, count: g.children.length } : null;
         },
+        // 掃出路徑 overlay 探針:{visible, count=children 數(每路徑 1 線 + 2 端點球)}
+        sweepPaths: () => {
+          const g = apiRef.current.chrome?.sweepPaths;
+          return g ? { visible: g.visible, count: g.children.length } : null;
+        },
+      };
+      // 掃出工作窗探針(smoke 用;全讀 ref,不受 deps stale closure 影響)
+      window.__cadSweepWin = {
+        open: () => sweepWinOpenRef.current,
+        view: () => sweepDataRef.current?.view || null,
       };
       window.__cadFaceFill = {
         count: () => apiRef.current.faceFillCount?.() ?? 0,
@@ -432,6 +477,11 @@ export default function Canvas3D({
     setMeasureMode(next);
     if (next) setPickerOpen(false); // 進量測關面標記面板(避免菱形干擾點選)
     else clearMeasureSel();
+  };
+  const toggleSweep = () => {
+    const next = !sweepOn;
+    setSweepOn(next);
+    apiRef.current.setSweepPaths?.(next);
   };
 
   // 「已帶入對話」= pickRefs 現存的 token(chips 移除/送出即熄滅,生命週期跟著 composer)。
@@ -710,6 +760,19 @@ export default function Canvas3D({
               </a>
             </div>
           )}
+          {/* 掃出件專屬:左上工作窗開關(fold-switch 同位階;現實無 generator 同時
+              有 gen_flat 與 SWEEP_VIEW,同錨點不衝突)。sidecar 有 view 才亮。 */}
+          {sweepData?.view && view !== "flat" && (
+            <div className="sweep-switch" role="group" aria-label="掃出工作窗">
+              <a
+                className="fold-seg"
+                data-on={sweepWinOpen}
+                onClick={() => setSweepWinOpen((v) => !v)}
+              >
+                ⟜ 掃出
+              </a>
+            </div>
+          )}
           <div className="canvas-tools" data-drawer={propsOpen}>
             <a className="tool-chip" data-on={gridOn} onClick={toggleGrid}>
               ⊞ 網格
@@ -723,6 +786,11 @@ export default function Canvas3D({
             <a className="tool-chip" data-on={measureMode} onClick={toggleMeasure}>
               📏 量測
             </a>
+            {sweepData && view !== "flat" && (
+              <a className="tool-chip sweep-toggle" data-on={sweepOn} onClick={toggleSweep}>
+                ⌒ 路徑
+              </a>
+            )}
             <a
               className="tool-chip marker-toggle"
               data-on={pickerOpen}
@@ -916,6 +984,20 @@ export default function Canvas3D({
         </>
       )}
 
+      {/* 掃出工作窗:浮動雙欄(左路徑+參數/右輪廓唯讀),clarify 待答時讓位。
+          params 由 App 傳入(與底部 ParamsBar 共享同一份 state/dirty)。 */}
+      {sweepWinOpen && sweepData?.view && view !== "flat" && !clarify && params && (
+        <SweepWindow
+          view={sweepData.view}
+          paths={sweepData.paths}
+          params={params}
+          disabled={canvas.status !== "ready" || running}
+          onParam={onParam}
+          onApply={onApplyParams}
+          onClose={() => setSweepWinOpen(false)}
+          onChatProfile={(text) => dispatch({ type: "SET_PREFILL", text })}
+        />
+      )}
       {/* 需要使用者作答的介面一律在視圖(聊天卡全為被動紀錄):
           規格修正 → SpecPanel(左上;clarify 待答時讓位,精靈步驟 1 即規格面);
           教訓是/否 → LessonOfferPanel(下方置中;同樣讓位給 clarify 聚光燈)。 */}

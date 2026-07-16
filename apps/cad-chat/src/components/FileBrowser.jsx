@@ -10,13 +10,18 @@ export default function FileBrowser({ open, onClose, onOpenFile, onImportFile, o
   const [dir, setDir] = useState("");
   const [entries, setEntries] = useState([]);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState(""); // 收庫成功等非錯誤訊息
   const [busy, setBusy] = useState(""); // 進行中動作的 rel(顯示 spinner 字樣)
   const [kindPick, setKindPick] = useState(null); // 待選 kind 的 step rel
+  // 收入零件庫的 inline 迷你表單:{rel, label, family, overwrite}(kindPick 同範式)
+  const [libPick, setLibPick] = useState(null);
 
   useEffect(() => {
     if (!open) return;
     setError("");
+    setNotice("");
     setKindPick(null);
+    setLibPick(null);
     fetch(apiUrl(`/api/files?dir=${encodeURIComponent(dir)}`))
       .then((r) => r.json())
       .then((j) => {
@@ -46,6 +51,38 @@ export default function FileBrowser({ open, onClose, onOpenFile, onImportFile, o
         setKindPick(rel);
       } else {
         setError(j.error || "開啟失敗");
+      }
+    } catch {
+      setError("無法連線到本機伺服器");
+    }
+    setBusy("");
+  };
+
+  // 收入零件庫:POST /api/library-add;exists → 同表單轉「覆蓋?」二次確認。
+  const submitLibrary = async () => {
+    if (!libPick || busy) return;
+    setBusy(libPick.rel);
+    setError("");
+    setNotice("");
+    try {
+      const r = await fetch(apiUrl("/api/library-add"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          file: libPick.rel,
+          label: libPick.label,
+          family: libPick.family,
+          overwrite: libPick.overwrite === true,
+        }),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        setLibPick(null);
+        setNotice(`已收入 parts-library/${j.slug}${j.bboxMm ? `(bbox ${j.bboxMm.join("×")} mm)` : ""}`);
+      } else if (j.error === "exists") {
+        setLibPick((p) => (p ? { ...p, overwrite: true, existsSlug: j.slug } : p));
+      } else {
+        setError(j.error || "收入庫失敗");
       }
     } catch {
       setError("無法連線到本機伺服器");
@@ -86,6 +123,7 @@ export default function FileBrowser({ open, onClose, onOpenFile, onImportFile, o
         </div>
 
         {error && <div className="fb-error">⚠ {error}</div>}
+        {notice && <div className="fb-notice">✓ {notice}</div>}
 
         <div className="fb-list">
           {entries.map((e) => (
@@ -124,6 +162,45 @@ export default function FileBrowser({ open, onClose, onOpenFile, onImportFile, o
                         組合件
                       </a>
                     </span>
+                  ) : libPick?.rel === e.rel ? (
+                    // 收入零件庫 inline 迷你表單(kindPick 同範式):名稱 + family 快選。
+                    // exists 回應後轉「覆蓋?」二次確認(overwrite:true 重送)。
+                    <span className="fb-kind-pick fb-lib-form">
+                      {libPick.overwrite ? (
+                        <>
+                          已存在 {libPick.existsSlug},覆蓋?
+                          <a className="fb-action" onClick={submitLibrary}>
+                            {busy === e.rel ? "處理中…" : "覆蓋"}
+                          </a>
+                        </>
+                      ) : (
+                        <>
+                          <input
+                            className="fb-lib-input"
+                            value={libPick.label}
+                            placeholder="零件名稱"
+                            onChange={(ev) => setLibPick({ ...libPick, label: ev.target.value })}
+                          />
+                          <select
+                            className="fb-lib-input"
+                            value={libPick.family}
+                            onChange={(ev) => setLibPick({ ...libPick, family: ev.target.value })}
+                          >
+                            <option value="cylinder">cylinder</option>
+                            <option value="bearing">bearing</option>
+                            <option value="gripper">gripper</option>
+                            <option value="motor">motor</option>
+                            <option value="other">other</option>
+                          </select>
+                          <a className="fb-action" onClick={submitLibrary}>
+                            {busy === e.rel ? "處理中…" : "確定"}
+                          </a>
+                        </>
+                      )}
+                      <a className="fb-action" onClick={() => setLibPick(null)}>
+                        取消
+                      </a>
+                    </span>
                   ) : (
                     // 裸檔(非專案目錄內):唯讀開啟看圖 + 匯入場景。專案目錄不再進得來,
                     // 故無「智慧路由」分支。
@@ -134,6 +211,22 @@ export default function FileBrowser({ open, onClose, onOpenFile, onImportFile, o
                       {e.kind === "step" && onImportFile && (
                         <a className="fb-action" onClick={() => !busy && onImportFile(e.rel)}>
                           匯入場景
+                        </a>
+                      )}
+                      {e.kind === "step" && !e.rel.startsWith("parts-library/") && (
+                        <a
+                          className="fb-action"
+                          onClick={() =>
+                            !busy &&
+                            setLibPick({
+                              rel: e.rel,
+                              label: e.name.replace(/\.(step|stp)$/i, ""),
+                              family: "other",
+                              overwrite: false,
+                            })
+                          }
+                        >
+                          收入庫
                         </a>
                       )}
                     </>

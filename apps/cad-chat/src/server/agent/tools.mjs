@@ -52,7 +52,7 @@ export function buildCadchatServer({ session, emit, signal }) {
       ),
       tool(
         "emit_params",
-        "宣告參數滑桿(鍵須對應產生器 PARAMS)。",
+        "宣告參數輸入欄(鍵須對應產生器 PARAMS)。整數參數(顆數/口袋數/齒數等)必標 int:true——UI 據此鎖整數輸入。",
         {
           defs: z.array(
             z.object({
@@ -63,6 +63,7 @@ export function buildCadchatServer({ session, emit, signal }) {
               max: z.number(),
               step: z.number(),
               value: z.number(),
+              int: z.boolean().optional(),
             }),
           ),
         },

@@ -72,7 +72,7 @@ Codex 的任何回報一律當原始素材,由 Claude 驗證後才採用。
   (本機已裝 codex-cli,ChatGPT 訂閱登入)。
 - 委派方式:先把核准的計畫寫成 spec 檔 `tmp/codex-task-<slug>.md`
   (spec 一律放 `tmp/`,不進版控、不放 `scripts/`),spec 內必須重申
-  「不要 commit、不要 push」。然後用 **Git Bash**(2026-07-16 實測全綠):
+  「不要 commit、不要 push」。然後用 **Git Bash**:
 
   ```bash
   codex exec -c 'windows.sandbox="unelevated"' -s workspace-write \
@@ -96,6 +96,18 @@ Codex 的任何回報一律當原始素材,由 Claude 驗證後才採用。
     `elevated`/`unelevated`。
   - 本機 `codex exec`(0.144.x)**沒有 `--full-auto`**(舊版旗標),自動改檔
     用 `-s workspace-write`。禁用 `--dangerously-bypass-approvals-and-sandbox`。
+  - **state DB 卡死要停損**:同 session 第二次 `codex exec` 可能撞自己的
+    `~/.codex/state_5.sqlite`(log 出現「attempt to write a readonly
+    database」)後空轉不退出,只留半成品殘檔(如 `// placeholder`)。
+    症狀出現或 **~10 分鐘無檔案落地即 TaskStop 停損**,改自己寫或
+    `codex exec resume --last` 重試;殺掉後必 `git status` 清點殘檔。
+    spec 反正先落檔在 tmp/,停損改自寫的成本很低——這也是「spec 先寫死」
+    除了品質外的第二個理由。
+  - **unelevated 沙箱禁 Node 子程序**:`node --test <files>`(每檔 spawn
+    子程序)在 Codex 沙箱內直接 `spawn EPERM`。委派含 JS 測試自驗的任務要
+    接受它「同程序直跑測試檔」的替代回報;**驗證跑腿委派不要點名
+    `node --test`**(它跑不了),node 系驗證由 Claude 自跑,Codex 跑腿留給
+    python -m unittest / 單檔腳本這類不 spawn 的。
 - 模型:預設吃 `~/.codex/config.toml`(目前 `gpt-5.6-sol` +
   `model_reasoning_effort="max"`);單次覆寫用 `-m <model>`、
   `-c model_reasoning_effort="<low|medium|high|max>"`。
@@ -118,8 +130,10 @@ Codex 的任何回報一律當原始素材,由 Claude 驗證後才採用。
     traceback 最後幾行)。Claude 綠了就信、FAIL 才親自下場看完整 log 重跑。
   - 沙箱限制:unelevated 沙箱**網路受限**——需要開埠、起 dev server、
     打 LLM API 的層(cad-chat L2 伺服器類、L4 LLM 回合)**不能**丟給
-    Codex,仍由 Claude 直接跑。適合委派的是純本地執行層:L0 build、
-    L1 單元測試、python -m unittest、幾何煙霧腳本這類。
+    Codex,仍由 Claude 直接跑。**也禁 Node 子程序**(`node --test`/
+    vite build 會 spawn EPERM)——會 spawn 的跑腿別委派,由 Claude 自跑。
+    適合委派的只剩真純本地單程序層:python -m unittest、幾何煙霧腳本、
+    單檔 node 腳本這類。
   - 網路其實有開關(`-c sandbox_workspace_write.network_access=true`,
     實測 key 存在)——**禁用**:等於把外網+repo 內 `.env` 憑證交給零判斷
     執行者;且 L4 判讀(假綠要看圖)本來就是 Claude 的活。L4 省 context

@@ -18,10 +18,12 @@ import {
   REFERENCE_SELECTED_FILL_OPACITY,
 } from "cadjs/lib/viewer/referenceGeometry";
 
+import { buildSweepSegments } from "../lib/sweepOverlay.js";
+
 export function useCadViewport(
   mountRef,
   glbUrl,
-  { name, onStatus, onReady, onFrame, onPickPart, bendLines, measureModeRef, onMeasurePick } = {},
+  { name, onStatus, onReady, onFrame, onPickPart, bendLines, sweepPaths, measureModeRef, onMeasurePick } = {},
 ) {
   const liveRef = useRef({});
 
@@ -160,6 +162,48 @@ export function useCadViewport(
         if (down) bendGroup.add(down);
         viewport.scene.add(bendGroup);
       }
+      // 掃出路徑中心線 overlay(仿 bendGroup 的 dashed LineSegments;資料 = present 的
+      // sweepPathsUrl sidecar,Canvas3D fetch 後傳入)。depthTest:false —— 掃出中心線
+      // 在(常為空心的)實體內部,不穿透深度就永遠看不到;起終點小球仿 measure mkDot。
+      const sweepGroup = new THREE.Group();
+      sweepGroup.renderOrder = 28;
+      {
+        const built = buildSweepSegments(sweepPaths);
+        if (built.length) {
+          const dotGeo = new THREE.SphereGeometry(Math.max(radius * 0.012, 0.4), 16, 12);
+          for (const pd of built) {
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pd.segments), 3));
+            const line = new THREE.LineSegments(
+              geo,
+              new THREE.LineDashedMaterial({
+                color: 0x18a0c4,
+                dashSize: Math.max(radius * 0.025, 1.5),
+                gapSize: Math.max(radius * 0.018, 1.0),
+                transparent: true,
+                opacity: 0.9,
+                depthTest: false,
+                depthWrite: false,
+                toneMapped: false,
+              }),
+            );
+            line.computeLineDistances(); // LineDashedMaterial 必須,否則不斷線
+            line.frustumCulled = false;
+            line.renderOrder = 29;
+            sweepGroup.add(line);
+            for (const p of [pd.start, pd.end]) {
+              const dot = new THREE.Mesh(
+                dotGeo,
+                new THREE.MeshBasicMaterial({ color: 0x18a0c4, depthTest: false, toneMapped: false }),
+              );
+              dot.position.set(p[0], p[1], p[2]);
+              dot.renderOrder = 30;
+              sweepGroup.add(dot);
+            }
+          }
+          viewport.scene.add(sweepGroup);
+        }
+      }
       const setGrid = (on) => {
         if (gridMesh) gridMesh.visible = !!on;
       };
@@ -168,6 +212,9 @@ export function useCadViewport(
       };
       const setBendLines = (on) => {
         bendGroup.visible = !!on;
+      };
+      const setSweepPaths = (on) => {
+        sweepGroup.visible = !!on;
       };
 
       const ro =
@@ -466,6 +513,7 @@ export function useCadViewport(
         gridMesh,
         axes,
         bendGroup,
+        sweepGroup,
         measureGroup,
         faceFill,
         onPointerDown,
@@ -490,12 +538,13 @@ export function useCadViewport(
           setGrid,
           setAxes,
           setBendLines,
+          setSweepPaths,
           setFaceHighlights,
           setMeasure,
           clearMeasure,
           faceFillCount,
           faceFillDebug,
-          chrome: { grid: gridMesh, axes, bendLines: bendGroup, measure: measureGroup }, // dev/測試檢視用(visible/children 斷言)
+          chrome: { grid: gridMesh, axes, bendLines: bendGroup, sweepPaths: sweepGroup, measure: measureGroup }, // dev/測試檢視用(visible/children 斷言)
         });
       }
     }
@@ -537,6 +586,13 @@ export function useCadViewport(
           }
           s.bendGroup.parent?.remove(s.bendGroup);
         }
+        if (s.sweepGroup) {
+          for (const child of [...s.sweepGroup.children]) {
+            child.geometry?.dispose?.(); // 端點球共用 dotGeo,重複 dispose 無害
+            child.material?.dispose?.();
+          }
+          s.sweepGroup.parent?.remove(s.sweepGroup);
+        }
         if (s.measureGroup) {
           for (const child of [...s.measureGroup.children]) {
             child.geometry?.dispose?.();
@@ -553,5 +609,5 @@ export function useCadViewport(
       liveRef.current = {};
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [glbUrl, bendLines]);
+  }, [glbUrl, bendLines, sweepPaths]);
 }

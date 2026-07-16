@@ -236,6 +236,25 @@ test("canvas.flatGlbUrl:PRESENT 帶入、切版本沿用、非鈑金版歸 null(
   assert.equal(reducer(s2, { type: "SELECT_VERSION", id: "v2" }).canvas.flatGlbUrl, null);
 });
 
+test("canvas.sweepPathsUrl:PRESENT 帶入、切版帶回該版、無掃出版歸 null(路徑 overlay 依據)", () => {
+  let s = reducer(initialState, {
+    type: "PRESENT", glbUrl: "/s.glb", name: "sl", code: "sl", ver: "v1",
+    sweepPathsUrl: "/s.sweep.json",
+  });
+  assert.equal(s.canvas.sweepPathsUrl, "/s.sweep.json");
+  // 一般產出無 sweepPathsUrl → null(不繼承,chip 不誤亮)
+  const gen = reducer(s, { type: "PRESENT", glbUrl: "/g.glb", name: "g", code: "g", ver: "v2" });
+  assert.equal(gen.canvas.sweepPathsUrl, null);
+  // 切版帶回該版 sweepPathsUrl(RESTORE 走 spread 自動存活)
+  let s2 = reducer(initialState, {
+    type: "ADD_VERSION",
+    version: { id: "v1", name: "sl", glbUrl: "/s.glb", sweepPathsUrl: "/s.sweep.json" },
+  });
+  s2 = reducer(s2, { type: "ADD_VERSION", version: { id: "v2", name: "g", glbUrl: "/g.glb" } });
+  assert.equal(reducer(s2, { type: "SELECT_VERSION", id: "v1" }).canvas.sweepPathsUrl, "/s.sweep.json");
+  assert.equal(reducer(s2, { type: "SELECT_VERSION", id: "v2" }).canvas.sweepPathsUrl, null);
+});
+
 test("canvas.projectDir:openFile 唯讀檢視帶入、切版本沿用、一般產出歸 null", () => {
   // openFile PRESENT 帶 projectDir(唯讀但屬可編輯專案)→ submitText 據此自動帶入編輯
   let s = reducer(initialState, {

@@ -62,6 +62,17 @@ test("version/present 事件:projectDir + flatGlbUrl 透傳(缺 → null)", () =
   assert.equal(p[0].flatGlbUrl, "f");
 });
 
+test("version/present 事件:sweepPathsUrl 透傳(掃出路徑 overlay;缺 → null)", () => {
+  const v = collect("version", { id: "v1", name: "x", glbUrl: "u", sweepPathsUrl: "sw" });
+  assert.equal(v[0].version.sweepPathsUrl, "sw");
+  const v0 = collect("version", { id: "v2", name: "x", glbUrl: "u" });
+  assert.equal(v0[0].version.sweepPathsUrl, null);
+  const p = collect("present", { glbUrl: "u", name: "x", code: "x", ver: "o1", sweepPathsUrl: "sw" });
+  assert.equal(p[0].sweepPathsUrl, "sw");
+  const p0 = collect("present", { glbUrl: "u", name: "x", code: "x", ver: "o2" });
+  assert.equal(p0[0].sweepPathsUrl, null);
+});
+
 test("params_values 事件:SET_PARAM_VALUES 單 dispatch(regen 回滾滑桿拉回);缺 values 給空物件", () => {
   const actions = collect("params_values", { values: { w: 20, h: 10 } });
   assert.equal(actions.length, 1);

@@ -419,6 +419,7 @@ export default function App() {
             fileType: j.present.type || "",
             flatGlbUrl: j.present.flatGlbUrl ?? null, // 鈑金攤平切換(JSON 路徑亦需帶)
             flatLinesUrl: j.present.flatLinesUrl ?? null, // 攤平折彎線 overlay
+            sweepPathsUrl: j.present.sweepPathsUrl ?? null, // 掃出路徑 overlay(JSON 路徑亦需帶)
           });
         }
         if (j.params?.length) dispatch({ type: "SET_PARAMS", defs: j.params });
@@ -560,6 +561,7 @@ export default function App() {
             fileType: j.present.type || "",
             flatGlbUrl: j.present.flatGlbUrl ?? null, // 鈑金攤平切換(JSON 路徑亦需帶)
             flatLinesUrl: j.present.flatLinesUrl ?? null, // 攤平折彎線 overlay
+            sweepPathsUrl: j.present.sweepPathsUrl ?? null, // 掃出路徑 overlay(JSON 路徑亦需帶)
           });
         }
         if (j.params?.length) dispatch({ type: "SET_PARAMS", defs: j.params });
@@ -1155,6 +1157,10 @@ export default function App() {
                 motion={
                   state.motion && state.motion.forVer === state.canvas.ver ? state.motion : null
                 }
+                // 掃出工作窗:與底部 ParamsBar 共享同一份 params state/dirty/套用
+                params={state.params}
+                onParam={(k, v) => dispatch({ type: "SET_PARAM_VALUE", key: k, value: v })}
+                onApplyParams={applyParams}
               />
               <ParamsBar
                 params={state.params}

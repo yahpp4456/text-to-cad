@@ -43,6 +43,13 @@ export default defineConfig({
   worker: { format: "es" },
   server: {
     host: "127.0.0.1",
+    // Parallel dev instances (e.g. a second test server via CADCHAT_PORT) fight
+    // over the default HMR ws port (24678); the loser's pages keep throwing
+    // "WebSocket closed without opened.", polluting smoke-test JS-error
+    // assertions. Give the extra instance its own port via CADCHAT_HMR_PORT.
+    hmr: process.env.CADCHAT_HMR_PORT
+      ? { port: Number(process.env.CADCHAT_HMR_PORT) }
+      : undefined,
     fs: {
       // cadjs source lives outside the app root — allow Vite to serve it.
       allow: [appRoot, cadJsPackageRoot],

@@ -55,8 +55,10 @@ with sync_playwright() as p:
     c.check("A: 一鍵 → v1 session(非 o1 唯讀)",
             page.locator(".version-chip").count() == 1
             and "v1" in page.locator(".version-id").first.inner_text())
-    page.wait_for_selector(".param input[type=range]", timeout=15000)
-    c.check("A: PARAMS 出現滑桿", page.locator(".param input[type=range]").count() >= 3)
+    # 2026-07-16 range→NumberField 改版:設計模式參數列是 number 輸入框
+    # (range 只剩草模 DofBar,見 smoke_sketch.py)
+    page.wait_for_selector(".param .numfield input", timeout=15000)
+    c.check("A: PARAMS 出現數值輸入欄", page.locator(".param .numfield input").count() >= 3)
     labels = [page.locator(".param-label").nth(i).inner_text()
               for i in range(page.locator(".param-label").count())]
     c.check("A: 無 folded 滑桿(攤平改視圖切換)",

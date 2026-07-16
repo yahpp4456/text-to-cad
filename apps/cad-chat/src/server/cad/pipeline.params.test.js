@@ -55,10 +55,48 @@ test("rewriteParams:整塊改寫 PARAMS、其餘內容逐字不變、回傳改�
     assert.equal(rw.ok, true);
     assert.equal(rw.prevSrc, GEN_SRC); // 回滾原料 = 改寫前整檔
     const now = readGen(s, "foo");
-    assert.ok(now.includes('PARAMS = {"w": 5, "h": 10}'));
+    // 源碼 w/h 字面帶小數點 → 重寫保留 float 形(整數啟發式不得誤掛 int)
+    assert.ok(now.includes('PARAMS = {"w": 5.0, "h": 10.0}'), now.match(/PARAMS = \{[^}]*\}/)?.[0]);
     // PARAMS 區塊以外逐字保留(docstring 與 gen_step 本體)
     assert.ok(now.startsWith('"""fixture generator"""'));
     assert.ok(now.includes('return PARAMS["w"] - PARAMS["h"]'));
+  } finally {
+    fs.rmSync(s.workdir, { recursive: true, force: true });
+  }
+});
+
+test("rewriteParams:子集以磁碟現值墊底 merge——其餘鍵不蒸發(agent 部分 emit 的 KeyError 回歸鎖)", () => {
+  const s = tmpSession("rwsubset");
+  try {
+    writeGen(s, "foo");
+    const rw = rewriteParams(s, "foo", { w: 5 }); // 只送 w,漏 h
+    assert.equal(rw.ok, true);
+    const now = readGen(s, "foo");
+    assert.ok(now.includes('"w": 5'), "指定鍵已更新");
+    assert.ok(now.includes('"h": 10'), "未指定鍵以磁碟現值保留(整塊替換不得蒸發)");
+    // 新鍵(磁碟沒有)照樣可加
+    rewriteParams(s, "foo", { d: 3 });
+    const now2 = readGen(s, "foo");
+    assert.ok(now2.includes('"w": 5') && now2.includes('"h": 10') && now2.includes('"d": 3'));
+  } finally {
+    fs.rmSync(s.workdir, { recursive: true, force: true });
+  }
+});
+
+test("float-ness 保留 + int 旗標:重生不掉小數點,整數分支才掛 int:true(連鎖雷回歸鎖)", () => {
+  const s = tmpSession("rwfloat");
+  try {
+    // pocket_w 源碼 16.0(float)、pockets 源碼 6(int)
+    writeGen(s, "foo", 'PARAMS = {"pockets": 6, "pocket_w": 16.0}\n');
+    const d0 = Object.fromEntries(paramDefsFromGenerator(s, "foo").map((d) => [d.key, d]));
+    assert.equal(d0.pockets.int, true); // 整數分支掛 int
+    assert.equal(d0.pocket_w.int, undefined); // mm 分支不掛
+    // 重生成整數值:float 鍵必須寫成 20.0 形,否則下一輪被整數啟發式誤鎖
+    rewriteParams(s, "foo", { pocket_w: 20 });
+    assert.ok(readGen(s, "foo").includes('"pocket_w": 20.0'), readGen(s, "foo"));
+    const d1 = Object.fromEntries(paramDefsFromGenerator(s, "foo").map((d) => [d.key, d]));
+    assert.equal(d1.pocket_w.int, undefined, "重生後 pocket_w 不得被誤掛 int:true");
+    assert.equal(d1.pockets.int, true);
   } finally {
     fs.rmSync(s.workdir, { recursive: true, force: true });
   }

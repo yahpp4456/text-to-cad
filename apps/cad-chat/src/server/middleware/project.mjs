@@ -271,11 +271,12 @@ async function handleRevertVersion(body, res, ctx = {}) {
   try {
     // 快照複回頂層;單件版要清掉頂層殘留的 asm.json,type 才不會誤判成組合件。
     // .flat.step.glb + .flat.lines.json:攤平預覽 GLB 與折彎線也複回(回退版要能用)。
-    for (const f of [`${name}.py`, `${name}.step`, `.${name}.step.glb`, `.${name}.flat.step.glb`, `.${name}.flat.lines.json`, `${name}.asm.json`, `.${name}.step.js`]) {
+    // .sweep.json:掃出路徑 overlay 同理——快照沒有就刪頂層殘留(防 stale overlay)。
+    for (const f of [`${name}.py`, `${name}.step`, `.${name}.step.glb`, `.${name}.flat.step.glb`, `.${name}.flat.lines.json`, `.${name}.sweep.json`, `${name}.asm.json`, `.${name}.step.js`]) {
       const src = path.join(snapDir, f);
       const dst = path.join(session.workdir, f);
       if (fs.existsSync(src)) fs.copyFileSync(src, dst);
-      else if ((f === `${name}.asm.json` || f === `.${name}.flat.step.glb` || f === `.${name}.flat.lines.json`) && fs.existsSync(dst)) fs.rmSync(dst);
+      else if ((f === `${name}.asm.json` || f === `.${name}.flat.step.glb` || f === `.${name}.flat.lines.json` || f === `.${name}.sweep.json`) && fs.existsSync(dst)) fs.rmSync(dst);
     }
     session.lastName = name;
     if (Number(meta.partCount) > 0) session.lastPartCount = Number(meta.partCount);

@@ -32,6 +32,11 @@ description: apps/cad-chat 的分層驗證流程與擴充守則。改動 cad-cha
 ```bash
 # 起 dev server(8788;背景跑)
 cd apps/cad-chat && npm run dev
+# 第二測試實例(不動使用者常駐的 8788;HMR 埠必須隔開,否則兩實例搶預設
+# 24678,輸家的頁面持續拋「WebSocket closed without opened.」把所有煙測的
+# 「無 JS 錯誤」斷言打紅)——煙測用 CADCHAT_BASE 指過去:
+#   CADCHAT_PORT=8899 CADCHAT_HMR_PORT=24679 npm run dev
+#   CADCHAT_BASE=http://127.0.0.1:8899 <venv-python> run_all.py
 # 殺佔埠孤兒(TaskStop 殺不到 node 子程序時)— PowerShell:
 #   Get-NetTCPConnection -LocalPort 8788 -State Listen | % { Stop-Process -Id $_.OwningProcess -Force }
 # 健康探測
@@ -126,6 +131,43 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `chrome.bendLines`——**摺疊態斷言用 count===0 而非「group 不存在」**。座標直接對位(攤平
   GLB Z-up 無 recenter)。dev 鉤 `__cadChrome.bendLines()` → {visible,count};smoke_flat_toggle
   已擴充(攤平 count>0、摺疊 count=0)。
+- **路徑掃出 + 護套(2026-07-16)**:幾何掃出一律 `cadpy.parts.sweep` 家族
+  (`swept_solid`/`cleanroom_sleeve`/`kcl_clamp`/`path_polyline`),**不要手刻
+  build123d sweep()**——路徑弧側選錯(RadiusArc 正負號)、接點不相切(cusp)、
+  彎徑過緊自交,三種都產出 **BRepCheck 照樣判 valid 的垃圾實體**,只有 API 的
+  建構保證(三點定弧/禁尖角/彎徑 ValueError 地板)與 Pappus 體積閉式測試擋得住。
+  另兩個 0.11 kernel 雷:`EllipticalCenterArc(end_angle=)` 直接 crash(只用
+  `arc_size=`);帶孔面一次 sweep 對某些輪廓在 `Solid.sweep` assert 炸(API 內建
+  失敗退外/內雙掃相減)。路徑 overlay 資料鏈:模組層 `SWEEP_PATHS`(與掃出共用
+  同一路徑 spec,path_polyline 取樣)→ meta 收割 → `.{name}.sweep.json` sidecar →
+  `sweepPathsUrl` **完全鏡射 flatLinesUrl 全鏈**(快照凍結清單、project revert
+  複回+刪殘留清單、emitPresent、version/present、events/chatStore、App.jsx
+  openProject/revert 兩處手組 PRESENT)——漏任一處跨切版/重整就失效。overlay 虛線
+  `depthTest:false`(中心線在空心體內部);dev 鉤 `__cadChrome.sweepPaths()`。
+  `rewriteParams` 已改磁碟現值墊底 merge(子集不蒸發;`pipeline.params.test.js`
+  釘住)。動掃出幾何 → `test_sweep_parts.py`(先 sync-vendored)+
+  `smoke_sweep_overlay.py`;動 prompt 掃出配方 → L4 `smoke_sweep_live.py`。
+- **掃出工作窗 + NumberField(2026-07-16 二輪)**:sidecar `view` 欄位
+  (SWEEP_VIEW 收割,任一欄壞=整份 None;schemaVersion 恆 1 additive)→
+  「⟜ 掃出」chip 開浮動雙欄窗。**live 2D 預覽(sweepView.js)與 cadpy 取樣
+  逐式鏡射 + golden 測試**——動 `_resolve_path`/`_seg_point`/`path_polyline`
+  任一端,`sweepView.test.js` golden 必重算(python 現算值),否則套用瞬間
+  live/baked 兩層跳動。NumberField:`def.int===true` 是鎖整數唯一判準
+  (**禁 step==1 啟發式**——300mm 的 fallback step 也是 1);**float-ness**:
+  `toPyDict` 對源碼帶小數點的鍵輸出 `20.0` 形(`pipeline.params.test.js`
+  釘死;不修則重生一次 mm 參數被整數啟發式誤掛 int 鎖死)。range 只剩草模
+  DofBar(`smoke_sketch.py` 依賴 `.paramsbar[data-sketch] input[type=range]`,
+  **CSS 的 range 規則不得刪**);設計模式參數斷言一律 `.param .numfield input`。
+  同一參數鍵的 numfield 會出現兩份(工作窗+底部列)——Playwright 選擇器必
+  scope 容器。動這條路 → `numberField.test.js`+`sweepView.test.js`+
+  `smoke_sweep_window.py`;動 emit_params/SWEEP_VIEW 契約 → L4
+  `smoke_sweep_live.py`(已斷 SWEEP_VIEW 在源碼)。
+- **STP 零件庫(2026-07-16)**:`models/parts-library/<slug>/{<slug>.step,meta.json}`;
+  收庫=`POST /api/library-add`(FileBrowser「收入庫」inline 表單;來源沙箱重用
+  resolveImportSource、寫入只准可寫層);用庫=prompt 教 agent Glob/Read meta 後走
+  既有 cad_import——**generator 禁直引 models/ 路徑**(session 自包含不變式)。
+  動這條路 → `library.test.js` + `smoke_library.py`(FileBrowser 目錄列表 fetch
+  非同步:斷言列內容前必先 `wait_for_selector` 目標列,否則量到舊 DOM)。
 - **單一快路徑 + 匯出閘(2026-07-10 收斂,雙模式已拆)**:產圖回合一律零 spawn 快路徑;
   完整驗證只在精算(/api/validate)、匯出閘(/api/export、/api/export-parts 內建;
   /api/validate-ver 是 STEP 直下載的單獨入口)、開專案、回退。verified memo=

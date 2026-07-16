@@ -42,14 +42,41 @@ export function writeGenerator(session, name, code) {
 }
 
 // 把數值序列化成 Python dict literal(JSON 雙引號鍵,Python 可直接 eval)。
-function toPyDict(values) {
-  const entries = Object.entries(values).map(
-    ([k, v]) => `${JSON.stringify(String(k))}: ${Number(v)}`,
-  );
+// floatKeys:原始碼字面帶小數點的鍵——整數值也要寫成 `20.0` 形,否則重生一次
+// 小數點蒸發,paramDefsFromGenerator 的整數啟發式會把 mm 參數誤判成顆數
+// (掛上 int:true 鎖整數)——連鎖雷。
+function toPyDict(values, floatKeys = new Set()) {
+  const entries = Object.entries(values).map(([k, v]) => {
+    const n = Number(v);
+    const lit = floatKeys.has(k) && Number.isInteger(n) ? `${n}.0` : `${n}`;
+    return `${JSON.stringify(String(k))}: ${lit}`;
+  });
   return `{${entries.join(", ")}}`;
 }
 
+// 原始碼 PARAMS 區塊裡「字面含小數點」的鍵集(float-ness 真相源;toPyDict 用)。
+export function paramFloatKeysFromGenerator(session, name) {
+  let src;
+  try {
+    src = fs.readFileSync(genPyPath(session, name), "utf8");
+  } catch {
+    return new Set();
+  }
+  const m = src.match(/PARAMS\s*=\s*\{([^{}]*)\}/);
+  if (!m) return new Set();
+  const out = new Set();
+  const entry = /["']([^"']+)["']\s*:\s*(-?\d+(?:\.\d+)?)/g;
+  let e;
+  while ((e = entry.exec(m[1])) !== null) {
+    if (e[2].includes(".")) out.add(e[1]);
+  }
+  return out;
+}
+
 // 決定性參數重生:改寫產生器頂部的 `PARAMS = {…}` 區塊(免 LLM round-trip)。
+// 傳入值先以磁碟現值墊底 merge:整塊替換的語意下,呼叫端(agent 的
+// cad_build(params) 只 emit 部分滑桿、或前端漏鍵)送「子集」會把其餘鍵蒸發,
+// 產生器 import 即 KeyError、滑桿永遠套不上——墊底後子集=只改那幾鍵,其餘照舊。
 export function rewriteParams(session, name, values) {
   const bad = Object.entries(values).filter(([, v]) => !Number.isFinite(Number(v)));
   if (bad.length) {
@@ -66,7 +93,10 @@ export function rewriteParams(session, name, values) {
   if (!re.test(src)) {
     return { ok: false, error: "產生器沒有可改寫的 PARAMS 區塊" };
   }
-  fs.writeFileSync(file, src.replace(re, `PARAMS = ${toPyDict(values)}`), "utf8");
+  const current = paramValuesFromGenerator(session, name) || {};
+  const merged = { ...current, ...values };
+  const floatKeys = paramFloatKeysFromGenerator(session, name); // float-ness 保留(見 toPyDict)
+  fs.writeFileSync(file, src.replace(re, `PARAMS = ${toPyDict(merged, floatKeys)}`), "utf8");
   return { ok: true, prevSrc: src }; // prevSrc:build 失敗回滾用(buildOrRollback)
 }
 
@@ -221,10 +251,32 @@ export function readBuildMeta(session, name) {
       partCount: Number(meta.partCount) || meta.parts.length,
       motion: meta.motion || null, // 已是播放子集(cadpy.motion_decl.playback_motion)
       motionErrs: Array.isArray(meta.motionErrs) ? meta.motionErrs.map(String) : [],
+      // 掃出路徑預覽折線(generator 模組層 SWEEP_PATHS,cadpy 收割時已防禦正規化)
+      sweepPaths: Array.isArray(meta.sweepPaths) ? meta.sweepPaths : [],
+      // 掃出工作窗資料(SWEEP_VIEW;cadpy 收割「任一欄壞=整份 None」)
+      sweepView: meta.sweepView && typeof meta.sweepView === "object" ? meta.sweepView : null,
     };
   } catch {
     return null;
   }
+}
+
+// 掃出路徑預覽 sidecar(`.{name}.sweep.json`):把 meta 收割的 SWEEP_PATHS 落成
+// /api/asset 可服務的獨立 JSON(不直接 serve .step.meta.json——那份還載 motion 等
+// 別的語意)。空/缺 → 刪殘留,滑桿把路徑改沒了不留殘影(鏡射 asm.json 刪除語義)。
+// sweepView(掃出工作窗資料)為選配 additive 欄位:schemaVersion 恆 1,舊消費者
+// 不受影響;sidecar 存在性仍只由 paths 決定(view 依附路徑,無路徑無窗)。
+// 獨立 export 供 L1 直測。
+export function writeSweepSidecar(session, name, sweepPaths, sweepView = null) {
+  const p = path.join(session.workdir, `.${sanitizeName(name)}.sweep.json`);
+  const paths = Array.isArray(sweepPaths) ? sweepPaths : [];
+  if (!paths.length) {
+    fs.rmSync(p, { force: true });
+    return null;
+  }
+  const body = { schemaVersion: 1, paths, ...(sweepView ? { view: sweepView } : {}) };
+  fs.writeFileSync(p, JSON.stringify(body), "utf8");
+  return p;
 }
 
 // 跑 scripts/step:產 STEP + 隱藏 GLB。回 {ok, log, stderr, stepRel, glbRel, ms}。
@@ -266,6 +318,13 @@ export async function runStep(session, name, { onLog, signal } = {}) {
     // 權威 partCount 同步(來自同一次 gen_step):build 後未 validate 就 present 的
     // 回合,readTypeFor 的 fallback 與 badge 也拿到新鮮值。
     if (meta && meta.partCount > 0) session.lastPartCount = meta.partCount;
+    // 掃出路徑預覽 sidecar 跟本次 build 的收割走(失敗 build 不動它:頂層殘檔只在
+    // 下次成功 present 前有效,快照裡的舊版 sidecar 才是舊版 overlay 的真相源)。
+    try {
+      writeSweepSidecar(session, name, meta?.sweepPaths, meta?.sweepView);
+    } catch {
+      /* overlay 是輔助資訊,寫失敗不擋 build */
+    }
   } else if (session.lastBuildMeta?.name === n) {
     // 失敗 build(Python 側已先 unlink sidecar):清掉記憶體 meta,雙保險防 stale。
     session.lastBuildMeta = null;
@@ -575,7 +634,8 @@ export function paramDefsFromGenerator(session, name) {
     if (!Number.isFinite(value) || value <= 0) continue;
     let def;
     if (Number.isInteger(value) && value > 0 && value <= 20 && !e[2].includes(".")) {
-      def = { key, label: key, min: 1, max: Math.max(value * 3, 12), step: 1, value };
+      // int:true → NumberField 鎖整數(唯一判準;step==1 的 mm 參數不得掛)
+      def = { key, label: key, min: 1, max: Math.max(value * 3, 12), step: 1, value, int: true };
     } else {
       const step = value >= 20 ? 1 : value >= 2 ? 0.5 : 0.1;
       def = {
@@ -603,8 +663,9 @@ function snapshotVersion(session, name, verNum, { type, partCount }) {
   const dir = snapshotDir(session, verNum);
   fs.mkdirSync(dir, { recursive: true });
   // .flat.step.glb + .flat.lines.json:鈑金攤平預覽 GLB 與折彎線 overlay,切舊版也要能
-  // 切攤平/看折彎線 → 一併進快照(存在才複)
-  for (const f of [`${n}.py`, `${n}.step`, `.${n}.step.glb`, `.${n}.flat.step.glb`, `.${n}.flat.lines.json`, `${n}.asm.json`, `.${n}.step.js`]) {
+  // 切攤平/看折彎線 → 一併進快照(存在才複)。.sweep.json:掃出路徑預覽折線,
+  // 同理跟版凍結(切舊版 overlay 要對舊幾何)。
+  for (const f of [`${n}.py`, `${n}.step`, `.${n}.step.glb`, `.${n}.flat.step.glb`, `.${n}.flat.lines.json`, `.${n}.sweep.json`, `${n}.asm.json`, `.${n}.step.js`]) {
     const src = path.join(session.workdir, f);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, f));
   }
@@ -698,15 +759,22 @@ export function emitPresent(session, name, emit) {
   // 快照才給)——前端據此顯示「摺疊/攤平」切換鈕與攤平態折彎虛線。快照失敗退頂層。
   let flatGlbUrl = null;
   let flatLinesUrl = null;
+  const nn = sanitizeName(name);
+  const snapPre = snapshotOk ? `versions/v${session.version}/` : "";
+  const assetUrl = (rel) =>
+    `${BASE_PATH}/api/asset?file=${encodeURIComponent(`${session.workdirRel}/${rel}`)}&v=${session.version}`;
   if (generatorHasFlat(session, name)) {
-    const nn = sanitizeName(name);
-    const snapPre = snapshotOk ? `versions/v${session.version}/` : "";
-    const assetUrl = (rel) =>
-      `${BASE_PATH}/api/asset?file=${encodeURIComponent(`${session.workdirRel}/${rel}`)}&v=${session.version}`;
     const glbRelP = `${snapPre}.${nn}.flat.step.glb`;
     const linesRelP = `${snapPre}.${nn}.flat.lines.json`;
     if (fs.existsSync(path.join(session.workdir, glbRelP))) flatGlbUrl = assetUrl(glbRelP);
     if (fs.existsSync(path.join(session.workdir, linesRelP))) flatLinesUrl = assetUrl(linesRelP);
+  }
+  // 掃出路徑預覽 sidecar 的本版快照 URL(檔案真的凍進快照才給;無 generatorHas 閘
+  // ——sidecar 存在本身就是閘)。前端據此疊路徑中心虛線 overlay。
+  let sweepPathsUrl = null;
+  {
+    const sweepRelP = `${snapPre}.${nn}.sweep.json`;
+    if (fs.existsSync(path.join(session.workdir, sweepRelP))) sweepPathsUrl = assetUrl(sweepRelP);
   }
   emit("artifact", {
     ver, name, code: name, ghost, formats,
@@ -729,9 +797,10 @@ export function emitPresent(session, name, emit) {
     hasDxf, // 鈑金件(產生器有 gen_dxf)→ 前端亮「⤓ DXF 展開圖」鈕
     flatGlbUrl, // 鈑金件(有 gen_flat)→ 前端「摺疊/攤平」即時切換(null=無)
     flatLinesUrl, // 折彎線 sidecar → 攤平態疊虛線 overlay(null=無)
+    sweepPathsUrl, // 掃出路徑 sidecar → 3D 視圖路徑中心虛線 overlay(null=無)
     ...stamp, // verified(前端 badge / 匯出閘依賴)
   });
-  emit("present", { ver, name, code: name, file: stepRel, glbUrl: gUrl, type, flatGlbUrl, flatLinesUrl });
+  emit("present", { ver, name, code: name, file: stepRel, glbUrl: gUrl, type, flatGlbUrl, flatLinesUrl, sweepPathsUrl });
   persistSession(session); // version/lastName 剛變動 → 落盤(重整/重啟後計數不歸零)
   return { ver, glbUrl: gUrl };
 }

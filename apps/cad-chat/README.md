@@ -453,6 +453,79 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
 - **驗證**:`measureFacts.test.js`(L1,8 項對後端 golden 逐位)+ `smoke_measure.py`(L3,?glb= 直開免
   session → pickFace×2 → 即時 result==320 + 尺寸線 + HUD 無「量測中」)。
 
+## 路徑掃出(sweep)+ 無塵護套 + STP 零件庫(2026-07-16)
+
+**幾何掃出**(2D 封閉輪廓沿路徑實體化)落地為 `cadpy.parts.sweep` 家族,repo 首個
+幾何掃出能力(先前的 "sweep" 全是運動掃掠驗證):
+
+- **API**(`from cadpy.parts import …`):`swept_solid(profile, path, wall_t=…)`
+  通用掃出(circle/stadium/rounded_rect/polyline 輪廓 × line/waypoints/drag_chain
+  路徑;`wall_t>0`=空心薄壁);`cleanroom_sleeve(pockets, pocket_w, …)` Elocab EHSL
+  無塵護套(N 豆莢橢圓弧帶,總寬=N×(袋寬+1)+3 型錄閉式);`kcl_clamp`/`clamp_location`
+  端部固定頭;`select_sleeve`/`select_kcl_clamp` 選型(specs:`ehsl_sleeves.json`
+  /`kcl_clamps.json`);`path_polyline(path, n)` 等弧長取樣(零 OCP)。
+- **kernel 陷阱由 API 建構保證擋**(BRepCheck 對這些全判 valid,不能靠驗證):路徑
+  弧側(ThreePointArc 解析中點,無 RadiusArc 正負號歧義)、接點相切(彎角必給圓角
+  半徑)、彎徑地板(r−輪廓半高≥0.5mm 否則 ValueError)、空心=帶孔面一次掃優先
+  +失敗退外/內雙掃相減。閉式測試:`tests/python/packages/cadpy/test_sweep_parts.py`
+  (Pappus 體積、總寬、零扭轉 bbox 證人)。
+- **路徑預覽 overlay**:generator 模組層 `SWEEP_PATHS=[{"label","points":
+  path_polyline(同一路徑 spec)}]` → build meta 收割(`_harvest_build_meta`,壞項
+  整條丟棄、8 條×512 點上限)→ `.{name}.sweep.json` sidecar → `sweepPathsUrl`
+  (**完全鏡射 flatLinesUrl 全鏈**:快照凍結清單、revert 複回清單、emitPresent、
+  version/present 事件、events/chatStore/App.jsx 兩處手組 PRESENT——漏任一處跨
+  切版/重整就失效)→ `useCadViewport` sweepGroup(dashed LineSegments,
+  `depthTest:false` 因中心線在空心體內部)+「⌒ 路徑」chip + `__cadChrome.sweepPaths()`。
+- **滑桿硬化**:`rewriteParams` 傳入值先以磁碟現值墊底 merge——agent 只 emit 部分
+  滑桿(舊 KeyError gotcha)或前端漏鍵時,子集=只改那幾鍵,其餘不蒸發。
+- **dogfood fixtures**:`models/cleanroom_sleeve_x`(6袋16mm+雙端 KCL,對齊原廠
+  `models/ref-cable-sheath/cable_x.stp`)、`models/cleanroom_sleeve_y`(select_sleeve
+  電纜清單選款、直段 600、單端夾板)。
+- **驗證**:L1 `pipeline.sweep.test.js`/`sweepOverlay.test.js`/chatStore/events 案例、
+  cadpy 側 `test_build_meta_sidecar.py` 收割案例;L3 `smoke_sweep_overlay.py`
+  (API 鏈+子集重生 lockstep+UI chip/探針+負案);L4 `smoke_sweep_live.py`
+  (agent 採用契約:cleanroom_sleeve/SWEEP_PATHS/型錄彎徑/總寬實測)。
+
+**掃出工作窗 + 參數列 number 化(2026-07-16 二輪)**:
+
+- **「⟜ 掃出」工作窗**(掃出件專屬視圖功能,fold-switch 同位階 chip):浮動
+  雙欄視窗蓋在 3D 上——左半=路徑 2D 圖(baked=sidecar 灰虛線;live=現值即時
+  取樣,`src/lib/sweepView.js` **逐式鏡射** cadpy `_resolve_path`/`_seg_point`
+  等弧長取樣,golden 測試釘死,套用後兩層逐字重合)+路徑參數 NumberField
+  (改值即時重畫,按套用才重生 3D);右半=輪廓 2D 剖面(`fill-rule:evenodd`
+  鏤空內腔)+輪廓唯讀 chips+「💬 用對話修改輪廓」(SET_PREFILL;輪廓只能
+  透過 chat 改)。資料源=sidecar 新增選配 `view` 欄位(generator 模組層
+  `SWEEP_VIEW`:pathKind/pathParams=PARAMS 鍵/profileParams=值物件/
+  profileLoops=`sleeve_profile_loops()`/`profile_loops()` 零 OCP 取樣;
+  `_harvest_sweep_view` 任一欄壞=整份 None)。開闔不隨版本重置;clarify 讓位;
+  dev 鉤 `__cadSweepWin`。
+- **參數列 number 化**:range 拉桿 → `NumberField`(text input+▲▼ 步進;
+  `def.int===true` 鎖整數(唯一判準,禁 step==1 啟發式)、float 兩位小數、
+  clamp min/max、blur/Enter commit、未聚焦一律渲染 prop 值=回滾事件可拉回);
+  `.paramsbar-track` flex-wrap 換行+max-height 封頂,不再橫向捲動。
+  草模 DofBar 仍用 range(純客端 scrub,語意不同)。
+- **float-ness 連鎖雷修復**:`toPyDict` 對「源碼字面含小數點的鍵」把整數值寫成
+  `20.0` 形(`paramFloatKeysFromGenerator`)——否則重生一次小數點蒸發,
+  `paramDefsFromGenerator` 整數啟發式把 mm 參數誤掛 `int:true` 鎖死。
+- 驗證:`numberField.test.js`/`sweepView.test.js`(golden)/pipeline sweep+params
+  擴充;L3 `smoke_sweep_window.py`(19 斷言:sidecar view/開窗/live 即時零 chat/
+  套用跟版重合/prefill/int/clamp/負案);`smoke_open_project.py` 滑桿斷言改
+  numfield。emit_params 契約加 `int:true`;掃出配方段加 SWEEP_VIEW 必宣告。
+
+**STP 零件庫 MVP**(`models/parts-library/<slug>/{<slug>.step, meta.json}`):把
+外部 STP(如新汽缸)收成耐久忠實外形庫,重複引用不重新生成。
+
+- **收庫**:FileBrowser step 列「收入庫」inline 表單(名稱+family)→ 免 LLM
+  `POST /api/library-add {file,label?,family?,notes?,overwrite?}`(來源重用
+  `resolveImportSource` 沙箱;bbox 用 inspect facts best-effort;同 slug 回
+  `exists` 由前端二次確認覆蓋)。純邏輯在 `src/server/cad/library.mjs`(L1 直測)。
+- **用庫**:零新機制——agent 白名單本就有 Glob/Read,prompt 教它
+  `Glob models/parts-library/*/meta.json` → `Read` 核對 → `cad_import(...)` 走既有
+  imported/ 慣例(**generator 絕不直引 models/ 路徑**,否則 session 自包含不變式
+  全破)。分工:`cad_source_part`=選型簡化替身;零件庫=忠實外形。
+- **驗證**:L1 `library.test.js`;L3 `smoke_library.py`(收庫磁碟斷言+負案 5 發+
+  UI inline 表單流+庫內檔不套娃)。
+
 ## 視圖作答面(2026-07-14):需要使用者回答的一律在視圖操作
 
 原則收斂(兩模式通用):**凡需要使用者作答的「選項類/規格類」互動,唯一作答面在

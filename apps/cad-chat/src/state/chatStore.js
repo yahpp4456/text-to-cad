@@ -19,8 +19,9 @@ export const initialState = {
   // 據此「自動帶入編輯」。非專案檢視/一般產出 = null。
   // flatGlbUrl:鈑金件(有 gen_flat)的攤平預覽 GLB;非 null → 3D 視圖出摺疊/攤平切換鈕。
   // flatLinesUrl:折彎線 sidecar;攤平態疊虛線 overlay 用。
+  // sweepPathsUrl:掃出路徑 sidecar(SWEEP_PATHS);非 null → 3D 視圖疊路徑虛線 overlay + 「⌒ 路徑」chip。
   // sceneUrl:草模場景 JSON(type:"sketch" 的版本);SketchCanvas3D 據此載入播放。
-  canvas: { glbUrl: "", name: "", code: "", ver: "", status: "empty", type: "", source: "", projectDir: null, flatGlbUrl: null, flatLinesUrl: null, sceneUrl: null }, // status: empty|loading|ready|error
+  canvas: { glbUrl: "", name: "", code: "", ver: "", status: "empty", type: "", source: "", projectDir: null, flatGlbUrl: null, flatLinesUrl: null, sweepPathsUrl: null, sceneUrl: null }, // status: empty|loading|ready|error
   params: { defs: [], values: {}, dirty: false },
   pickRefs: [], // [{token,label}] 帶入對話的幾何參考(多選;UI 上限 4,去重,超限丟最舊)
   propsOpen: false,
@@ -257,6 +258,7 @@ export function reducer(state, action) {
           projectDir: v.projectDir ?? null, // 切到唯讀專案檢視版 → 帶回其升級目錄
           flatGlbUrl: v.flatGlbUrl ?? null, // 切版帶回該版攤平 GLB(非鈑金版=null)
           flatLinesUrl: v.flatLinesUrl ?? null, // 切版帶回該版折彎線
+          sweepPathsUrl: v.sweepPathsUrl ?? null, // 切版帶回該版掃出路徑 overlay
           sceneUrl: v.sceneUrl ?? null, // 草模版帶回場景 JSON(CAD 版=null)
         },
       };
@@ -286,6 +288,7 @@ export function reducer(state, action) {
           projectDir: action.projectDir ?? null, // openFile 唯讀檢視帶入;其餘路徑 null
           flatGlbUrl: action.flatGlbUrl ?? null, // 鈑金攤平 GLB(present 帶;非鈑金=null)
           flatLinesUrl: action.flatLinesUrl ?? null, // 折彎線 sidecar
+          sweepPathsUrl: action.sweepPathsUrl ?? null, // 掃出路徑 sidecar(present 帶;無=null)
           sceneUrl: action.sceneUrl ?? null, // 草模場景 JSON(present type:"sketch" 帶)
         },
       };
