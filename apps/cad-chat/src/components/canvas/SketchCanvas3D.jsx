@@ -334,6 +334,7 @@ export default function SketchCanvas3D({
           <SpecPanel
             key={spec.id}
             spec={spec}
+            readOnly={running}
             onSubmitText={onSubmitText}
             onEditsChange={onSpecEdits}
           />

@@ -1,7 +1,22 @@
 import React from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { isAssumedChip, stripAssumedTag } from "../../lib/clarifyText.js";
 import TypeBadge from "../TypeBadge.jsx";
+
+// AI 氣泡的 markdown 元件覆寫:連結一律新分頁 + 安全 rel;表格包一層可橫向捲動的盒
+// (不撐爆聊天欄)。只有 finalized 非錯誤訊息走 markdown(見 AiMsg)。
+const mdComponents = {
+  a: ({ node, ...props }) => (
+    <a target="_blank" rel="noopener noreferrer nofollow" {...props} />
+  ),
+  table: ({ node, ...props }) => (
+    <div className="ai-md-tablewrap">
+      <table {...props} />
+    </div>
+  ),
+};
 
 function UserMsg({ it }) {
   return (
@@ -34,11 +49,25 @@ function UserMsg({ it }) {
 }
 
 function AiMsg({ it }) {
+  // 串流中與錯誤訊息維持純文字:串流保留打字游標(.ai-text.streaming::after)且避免
+  // 半截表格/未閉合 code fence 破圖;錯誤字串(含路徑/token 的 * _ `)不進 parser 免被
+  // 誤解析。只有 finalized 非錯誤才渲染 markdown(加 ai-md class 關掉 pre-wrap)。
+  const plain = it.isError || it.streaming;
   return (
     <div className="msg-ai">
       <span className="ai-avatar" />
-      <div className={`ai-text${it.isError ? " ai-error" : ""}${it.streaming ? " streaming" : ""}`}>
-        {it.text}
+      <div
+        className={`ai-text${it.isError ? " ai-error" : ""}${it.streaming ? " streaming" : ""}${
+          plain ? "" : " ai-md"
+        }`}
+      >
+        {plain ? (
+          it.text
+        ) : (
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            {it.text}
+          </ReactMarkdown>
+        )}
       </div>
     </div>
   );

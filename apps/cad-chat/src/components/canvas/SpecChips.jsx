@@ -7,7 +7,7 @@ import { isAssumedChip, stripAssumedTag } from "../../lib/clarifyText.js";
 // 卸載(精靈換步/新規格 remount)即丟棄未確認草稿——與抽出前的精靈行為一致。
 // editableAll:精靈只允許改「假設」值(確認值來自使用者輸入,不該在答題中改);
 // SpecPanel 全部可改(事後修正=變更請求,不限假設值)。
-export default function SpecChips({ specs, edits, onEdits, editableAll = false }) {
+export default function SpecChips({ specs, edits, onEdits, editableAll = false, readOnly = false }) {
   const [editing, setEditing] = useState(null); // { k, draft } inline 輸入中
 
   const confirmEdit = (c) => {
@@ -28,9 +28,11 @@ export default function SpecChips({ specs, edits, onEdits, editableAll = false }
         const edited = c.k in edits;
         // edited 也算 editable:精靈接手 SpecPanel 轉交的草稿時,非 assumed 的
         // 「已修正」chip 也要能點開回退(改回原值即取消該筆修正)。
-        const editable = editableAll || assumed || edited;
+        // readOnly(回合進行中)一律關閉:光靠 editableAll=false 不夠,assumed/edited
+        // chip 仍會可點——這裡短路才真正靜態化(onClick/✎/data-editable/inline 全歸零)。
+        const editable = !readOnly && (editableAll || assumed || edited);
         const shown = edited ? edits[c.k] : stripAssumedTag(c.v);
-        if (editing?.k === c.k) {
+        if (editing?.k === c.k && !readOnly) {
           return (
             <span className="cw-chip" data-editing="true" key={i}>
               <span className="chip-k">{c.k}</span>

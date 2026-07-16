@@ -19,6 +19,7 @@ ORDER = [
     "smoke_view_chrome.py",
     "smoke_clarify_wizard.py",
     "smoke_spec_panel.py",
+    "smoke_chat_markdown.py",
     "smoke_upload.py",
     "smoke_verify_gate.py",
     "smoke_asm_ui.py",

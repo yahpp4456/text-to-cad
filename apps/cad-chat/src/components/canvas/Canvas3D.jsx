@@ -923,6 +923,7 @@ export default function Canvas3D({
         <SpecPanel
           key={spec.id}
           spec={spec}
+          readOnly={running}
           onSubmitText={onSubmitText}
           onEditsChange={onSpecEdits}
         />

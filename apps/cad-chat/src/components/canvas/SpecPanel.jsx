@@ -9,7 +9,9 @@ import SpecChips from "./SpecChips.jsx";
 // 不限「假設」值);套用走 composeClarifyReply 的「規格修正:」prompt 契約——
 // 回合進行中送出由 useChatStream 佇列接手,回合結束自動送。clarify 待答時由
 // 父層隱藏(精靈步驟 1 就是規格確認面,不重複)。
-export default function SpecPanel({ spec, onSubmitText, onEditsChange }) {
+// readOnly:回合進行中(state.running)轉唯讀——chip 不可點、隱藏套用鈕、footer 改
+// 被動提示。避免使用者在 AI 還在跑時改規格(中途送出會被佇列到回合結束才送,造成困惑)。
+export default function SpecPanel({ spec, readOnly, onSubmitText, onEditsChange }) {
   const [open, setOpen] = useState(true);
   const [edits, setEdits] = useState({}); // { [k]: newV }
   // mount(含讓位後重掛)即把上游草稿 ref 對齊本地空 edits:上一輪轉交給精靈的
@@ -38,7 +40,7 @@ export default function SpecPanel({ spec, onSubmitText, onEditsChange }) {
   };
 
   return (
-    <div className="canvas-spec" data-open={open}>
+    <div className="canvas-spec" data-open={open} data-readonly={readOnly || undefined}>
       <a className="canvas-spec-head" onClick={() => setOpen((v) => !v)}>
         <span className="canvas-spec-kicker">◈ 解析規格</span>
         <span className="canvas-spec-count">{chips.length}</span>
@@ -46,9 +48,17 @@ export default function SpecPanel({ spec, onSubmitText, onEditsChange }) {
       </a>
       {open && (
         <>
-          <SpecChips specs={chips} edits={edits} onEdits={updateEdits} editableAll />
+          <SpecChips
+            specs={chips}
+            edits={edits}
+            onEdits={updateEdits}
+            editableAll
+            readOnly={readOnly}
+          />
           <div className="cw-foot">
-            {editCount > 0 ? (
+            {readOnly ? (
+              <span className="cw-hint">回合進行中,結束後可修正 ▸</span>
+            ) : editCount > 0 ? (
               <a className="cw-confirm" onClick={apply}>
                 套用修正({editCount})→
               </a>

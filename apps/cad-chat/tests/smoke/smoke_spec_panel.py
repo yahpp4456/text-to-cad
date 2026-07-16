@@ -63,6 +63,23 @@ with sync_playwright() as p:
         panel.locator(".cw-chip[data-editable]").count() == 2,
     )
 
+    # ── A2. 回合進行中(running)→ 面板唯讀(避免 AI 還在跑時改規格造成困惑)──
+    # 直接派 START_RUN/END_RUN 繞開 stub /api/chat 的即時 done timing race。
+    page.evaluate("() => window.__cadDispatch({ type: 'START_RUN' })")
+    page.wait_for_timeout(120)
+    c.check("回合進行中 → 面板標 data-readonly", page.locator(".canvas-spec[data-readonly]").count() == 1)
+    c.check("唯讀 → 無可編輯 chip", panel.locator(".cw-chip[data-editable]").count() == 0)
+    c.check("唯讀 → 隱藏套用/提示鈕(.cw-confirm)", panel.locator(".cw-confirm").count() == 0)
+    c.check("唯讀 → footer 被動提示", "回合進行中" in panel.locator(".cw-foot").inner_text())
+    # 唯讀 chip 靜態化的確定性斷言(不點擊:.cw-chips 是 pointer-events:none,點不到):
+    # 無 ✎、無 inline 輸入框(inline 只由已移除的 onClick 開啟)。
+    c.check("唯讀 → 無 ✎ 編輯提示", panel.locator(".cw-chip .chip-edit").count() == 0)
+    c.check("唯讀 → 無 inline 輸入框", panel.locator(".cw-chip-input").count() == 0)
+    page.evaluate("() => window.__cadDispatch({ type: 'END_RUN' })")
+    page.wait_for_timeout(120)
+    c.check("回合結束 → data-readonly 消失", page.locator(".canvas-spec[data-readonly]").count() == 0)
+    c.check("回合結束 → chip 恢復可編輯(2 顆)", panel.locator(".cw-chip[data-editable]").count() == 2)
+
     # ── B. inline 修改非 assumed chip → 套用 → 「規格修正:」契約 ──
     panel.locator(".cw-chip", has_text="外徑").click()
     page.wait_for_timeout(120)

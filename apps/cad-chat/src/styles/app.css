@@ -439,6 +439,81 @@
   color: var(--danger);
 }
 
+/* AI 氣泡 markdown(僅 finalized 非錯誤訊息掛 .ai-md;串流/錯誤仍走純文字 pre-wrap) */
+.ai-text.ai-md {
+  white-space: normal; /* 蓋掉 .ai-text 的 pre-wrap,否則區塊間多空行 */
+  min-width: 0; /* flex 子項可縮,內部捲動盒(表格/pre)才生效 */
+}
+.ai-md > :first-child {
+  margin-top: 0;
+}
+.ai-md > :last-child {
+  margin-bottom: 0;
+}
+.ai-md p {
+  margin: 0 0 8px;
+}
+.ai-md strong {
+  font-weight: 700;
+  color: var(--ink);
+}
+.ai-md em {
+  font-style: italic;
+}
+.ai-md a {
+  color: var(--design);
+  text-decoration: underline;
+}
+.ai-md ul,
+.ai-md ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+.ai-md li {
+  margin: 2px 0;
+}
+.ai-md code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--panel-sub);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.ai-md pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  background: var(--panel-sub);
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  overflow-x: auto;
+  max-width: 100%;
+}
+.ai-md pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+}
+.ai-md-tablewrap {
+  overflow-x: auto;
+  max-width: 100%;
+  margin: 0 0 8px;
+}
+.ai-md table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.ai-md th,
+.ai-md td {
+  border: 1px solid var(--line);
+  padding: 3px 8px;
+  text-align: left;
+}
+.ai-md th {
+  background: var(--panel-sub);
+  font-weight: 600;
+}
+
 /* generic card */
 .card {
   margin-left: 34px;
@@ -3313,6 +3388,15 @@
 .canvas-spec-caret {
   margin-left: auto;
   font-size: 10px;
+  color: var(--text-muted);
+}
+/* 回合進行中:規格 chip 淡化且不可點(scoped 在祖先,不動與 ClarifyWizard 共用的 .cw-*) */
+.canvas-spec[data-readonly] .cw-chips {
+  opacity: 0.55;
+  pointer-events: none;
+}
+.canvas-spec[data-readonly] .cw-hint {
+  font-style: italic;
   color: var(--text-muted);
 }
 
