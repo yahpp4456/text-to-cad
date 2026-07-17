@@ -411,6 +411,7 @@
   background: var(--panel-sub);
 }
 .lib-card-thumb {
+  position: relative; /* 管理模式選取 ✓ 角標的定位基準 */
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -443,12 +444,31 @@
 }
 .lib-card-actions {
   display: flex;
+  flex-wrap: wrap; /* 卡片僅 132px 寬,chip 擠不下時換行,別溢出卡框 */
   gap: 6px;
   margin-top: 2px;
 }
-.lib-card-actions .lib-del:hover {
+/* 管理(批次刪除)模式:標頭刪除鈕 hover/armed 紅、選中卡紅框 + ✓ 角標 */
+.lib-shelf-head .lib-del:hover,
+.lib-shelf-head .lib-del[data-armed="true"] {
   border-color: #c0392b;
   color: #c0392b;
+}
+.lib-card[data-selected="true"] {
+  border-color: #c0392b;
+}
+.lib-card-check {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #c0392b;
+  color: #fff;
+  font-size: 11px;
+  display: grid;
+  place-items: center;
 }
 .empty-examples-eyebrow {
   font-family: var(--font-eyebrow);
@@ -3149,6 +3169,294 @@
   color: #fff;
   background: var(--emit);
   border-color: var(--emit);
+}
+/* ── ViewCube:精密 CAD 儀表式視角控制(面/稜/角 = 26 向;六面另有直達鍵) ── */
+.view-cube {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 7;
+  width: 154px;
+  padding: 9px;
+  border: 1px solid rgba(130, 145, 168, 0.46);
+  border-radius: 12px;
+  color: #26344b;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.94), rgba(232, 237, 245, 0.84)),
+    repeating-linear-gradient(90deg, transparent 0 11px, rgba(37, 54, 80, 0.035) 11px 12px);
+  box-shadow:
+    0 12px 30px rgba(27, 39, 62, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(9px);
+  transition:
+    right 0.15s,
+    width 0.18s ease,
+    padding 0.18s ease,
+    border-color 0.15s,
+    box-shadow 0.15s;
+  user-select: none;
+}
+.view-cube[data-drawer="true"] {
+  right: 348px;
+}
+.view-cube[data-collapsed="true"] {
+  width: 58px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 10px;
+}
+.view-cube:hover {
+  border-color: color-mix(in oklab, var(--emit) 52%, #aab6c8);
+  box-shadow:
+    0 14px 34px rgba(27, 39, 62, 0.2),
+    0 0 0 2px color-mix(in oklab, var(--emit) 9%, transparent);
+}
+.view-cube-head {
+  min-height: 23px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 6px 2px;
+  border-bottom: 1px solid rgba(127, 142, 165, 0.24);
+  font-family: var(--font-eyebrow);
+}
+.view-cube-head > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #657187;
+}
+.view-cube-head i {
+  width: 6px;
+  height: 6px;
+  background: var(--emit);
+  transform: rotate(45deg);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--emit) 14%, transparent);
+}
+.view-cube-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+.view-cube-head-actions button {
+  cursor: pointer;
+  border: 0;
+  color: #40506a;
+  background: transparent;
+  font-family: var(--font-eyebrow);
+  font-weight: 800;
+}
+.view-cube-head-actions button:hover,
+.view-cube-head-actions button:focus-visible {
+  color: var(--emit);
+  outline: none;
+  background: color-mix(in oklab, var(--emit) 9%, transparent);
+}
+.view-cube-head-actions .view-cube-iso {
+  min-height: 20px;
+  border-left: 1px solid rgba(127, 142, 165, 0.25);
+  padding: 2px 7px;
+  font-size: 9px;
+  letter-spacing: 0.9px;
+}
+.view-cube-collapse {
+  width: 24px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 4px;
+}
+.view-cube-chevron {
+  width: 11px;
+  height: 7px;
+  overflow: visible;
+}
+.view-cube-chevron path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+.view-cube-stage {
+  display: block;
+  width: 100%;
+  height: 116px;
+  overflow: visible;
+}
+.view-cube-region {
+  cursor: pointer;
+  outline: none;
+}
+.view-cube-region polygon {
+  transition: fill 0.12s, stroke 0.12s, stroke-width 0.12s;
+}
+.view-cube-face-label {
+  fill: rgba(255, 255, 255, 0.92);
+  paint-order: stroke;
+  stroke: rgba(24, 35, 54, 0.4);
+  stroke-width: 0.8px;
+  font-family: var(--font-eyebrow);
+  font-size: 6.4px;
+  font-weight: 900;
+  letter-spacing: -0.1px;
+}
+.view-cube-axis-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(127, 142, 165, 0.24);
+}
+.view-cube-axis-strip button {
+  cursor: pointer;
+  min-width: 0;
+  height: 23px;
+  border: 1px solid rgba(126, 140, 163, 0.35);
+  border-radius: 4px;
+  padding: 0;
+  color: #56647a;
+  background: rgba(255, 255, 255, 0.72);
+  font-family: var(--font-eyebrow);
+  font-size: 8.5px;
+  font-weight: 900;
+  line-height: 1;
+}
+.view-cube-axis-strip button:hover,
+.view-cube-axis-strip button:focus-visible {
+  border-color: var(--emit);
+  color: var(--emit);
+  outline: none;
+}
+.view-cube-axis-strip button[data-on="true"] {
+  color: #fff;
+  background: #263b5c;
+  border-color: #263b5c;
+}
+.view-cube-axis-strip button[data-axis="x"]:not([data-on="true"]) { color: #b9443f; }
+.view-cube-axis-strip button[data-axis="y"]:not([data-on="true"]) { color: #25834b; }
+.view-cube-axis-strip button[data-axis="z"]:not([data-on="true"]) { color: #315faa; }
+.view-cube-expand {
+  cursor: pointer;
+  width: 100%;
+  min-height: 66px;
+  display: grid;
+  grid-template-rows: 30px auto 7px;
+  place-items: center;
+  gap: 3px;
+  border: 0;
+  padding: 7px 5px 6px;
+  color: #536178;
+  background: transparent;
+  font-family: var(--font-eyebrow);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 1.4px;
+}
+.view-cube-expand > svg:first-child {
+  width: 30px;
+  height: 30px;
+}
+.view-cube-expand > svg:first-child path {
+  fill: color-mix(in oklab, var(--emit) 16%, #eaf0f7);
+  stroke: #465b78;
+  stroke-width: 1.15;
+  stroke-linejoin: bevel;
+  transition: fill 0.15s, stroke 0.15s;
+}
+.view-cube-expand .view-cube-chevron {
+  width: 10px;
+  height: 6px;
+}
+.view-cube-expand:hover,
+.view-cube-expand:focus-visible {
+  color: var(--emit);
+  outline: none;
+  background: color-mix(in oklab, var(--emit) 7%, transparent);
+}
+.view-cube-expand:hover > svg:first-child path,
+.view-cube-expand:focus-visible > svg:first-child path {
+  fill: color-mix(in oklab, var(--emit) 28%, #f5f8fb);
+  stroke: var(--emit);
+}
+
+/* 面右鍵選單:只對命中的 STEP topology 面出現;曲面保留操作但明確禁用。 */
+.face-context-menu {
+  position: absolute;
+  z-index: 14;
+  width: 206px;
+  overflow: hidden;
+  border: 1px solid rgba(70, 87, 113, 0.72);
+  border-radius: 8px;
+  color: #edf3fb;
+  background:
+    linear-gradient(150deg, rgba(28, 42, 65, 0.97), rgba(18, 29, 47, 0.98)),
+    repeating-linear-gradient(0deg, transparent 0 7px, rgba(255, 255, 255, 0.025) 7px 8px);
+  box-shadow: 0 16px 38px rgba(18, 29, 47, 0.34);
+  backdrop-filter: blur(10px);
+  animation: face-menu-in 0.12s ease-out both;
+}
+@keyframes face-menu-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.face-context-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px 6px;
+  border-bottom: 1px solid rgba(214, 226, 242, 0.13);
+  font-family: var(--font-eyebrow);
+}
+.face-context-head > span {
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 1.7px;
+  color: #74d4e6;
+}
+.face-context-head > small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 8px;
+  letter-spacing: 0.3px;
+  color: #9baac0;
+}
+.face-context-menu > button {
+  cursor: pointer;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  border: 0;
+  padding: 9px;
+  color: #f5f8fc;
+  background: transparent;
+  text-align: left;
+}
+.face-context-menu > button:hover:not(:disabled),
+.face-context-menu > button:focus-visible:not(:disabled) {
+  outline: none;
+  background: rgba(66, 184, 207, 0.14);
+}
+.face-context-menu > button > span {
+  font-size: 12px;
+  font-weight: 800;
+}
+.face-context-menu > button > small {
+  font-size: 9px;
+  color: #9fafc3;
+}
+.face-context-menu > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 /* ◇ 面標記面板:預設/全部/隱藏快切 + 逐面勾選;列 hover = 3D 面填色預覽 */
 .marker-panel {

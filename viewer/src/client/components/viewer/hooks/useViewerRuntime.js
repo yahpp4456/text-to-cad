@@ -453,6 +453,20 @@ export function useViewerRuntime({
       const handleControlsStart = () => {
         controlsStartDistance = readControlsDistance();
         cancelCameraTransition(runtimeRef.current);
+        // Normal-to / top-view transitions steer camera.up away from world Z
+        // (top view uses [0, 1, 0]), but OrbitControls locked its orbit axis
+        // to Z at construction — with a diverged up, lookAt's roll basis
+        // fights the orbit axis and dragging twists until a preset resets it.
+        // Snap up back to world Z as soon as the user interacts (turntable
+        // convention: the roll rights itself when orbiting away from a pole).
+        if (
+          Math.abs(camera.up.x) > 1e-6 ||
+          Math.abs(camera.up.y) > 1e-6 ||
+          Math.abs(camera.up.z - 1) > 1e-6
+        ) {
+          camera.up.set(0, 0, 1);
+          orthographicCamera.up.copy(camera.up);
+        }
         beginInteraction();
       };
       const handleControlsChange = () => {

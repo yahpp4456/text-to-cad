@@ -17,6 +17,7 @@ from _util import BASE, HERE, server_alive
 # versions 先於 restore:restore 吃 versions 產出的 .out/versions_session.json
 ORDER = [
     "smoke_view_chrome.py",
+    "smoke_view_orientation.py",
     "smoke_clarify_wizard.py",
     "smoke_spec_panel.py",
     "smoke_chat_markdown.py",

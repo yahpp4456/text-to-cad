@@ -19,6 +19,10 @@ import {
 } from "cadjs/lib/viewer/referenceGeometry";
 
 import { buildSweepSegments } from "../lib/sweepOverlay.js";
+import {
+  buildNormalToFaceView,
+  DEFAULT_VIEW_ORIENTATION_PRESET,
+} from "../lib/viewOrientations.js";
 
 export function useCadViewport(
   mountRef,
@@ -71,6 +75,7 @@ export function useCadViewport(
         50000,
       );
       camera.up.set(0, 0, 1);
+      let cameraTransition = null;
 
       // renderModel 不會把 canvas 掛進 DOM —— 自建一個、掛入 host、當 options.canvas。
       const canvasEl = document.createElement("canvas");
@@ -86,8 +91,9 @@ export function useCadViewport(
         autoStart: true,
         disposeModel: false,
         beforeRender: () => {
+          stepCameraTransition(performance.now());
           controls.update();
-          onFrame?.({ camera, host });
+          onFrame?.({ camera, controls, host });
         },
       });
 
@@ -95,11 +101,169 @@ export function useCadViewport(
       controls.enableDamping = true;
       controls.dampingFactor = 0.12;
       const { center, radius } = centerAndRadiusFromBounds(THREE, model.bounds, "cad");
+      // 開機方向必須跟 DEFAULT_VIEW_ORIENTATION_PRESET 同源:硬編碼舊值 [1,-1,0.8]
+      // 離角落 preset 太近(dot≈0.9949 > 0.985),載入當下 ViewCube 就誤標角落 active。
       camera.position
         .copy(center)
-        .add(new THREE.Vector3(1, -1, 0.8).normalize().multiplyScalar(radius * 3.2));
+        .add(
+          new THREE.Vector3(...DEFAULT_VIEW_ORIENTATION_PRESET.direction)
+            .normalize()
+            .multiplyScalar(radius * 3.2),
+        );
       controls.target.copy(center);
       controls.update();
+
+      const transitionEase = (value) => (
+        value < 0.5 ? 4 * value * value * value : 1 - Math.pow(-2 * value + 2, 3) / 2
+      );
+      function cancelCameraTransition() {
+        if (!cameraTransition) return;
+        controls.enableDamping = cameraTransition.restoreDamping;
+        cameraTransition = null;
+      }
+      function stepCameraTransition(timestamp) {
+        const transition = cameraTransition;
+        if (!transition) return;
+        const progress = Math.min(
+          Math.max((timestamp - transition.startedAt) / transition.durationMs, 0),
+          1,
+        );
+        const eased = transitionEase(progress);
+        camera.position.lerpVectors(transition.startPosition, transition.endPosition, eased);
+        controls.target.lerpVectors(transition.startTarget, transition.endTarget, eased);
+        camera.up.lerpVectors(transition.startUp, transition.endUp, eased).normalize();
+        if (progress >= 1) {
+          controls.enableDamping = transition.restoreDamping;
+          cameraTransition = null;
+        }
+      }
+      const transitionCameraTo = ({
+        position,
+        target,
+        up,
+        durationMs = 280,
+      } = {}) => {
+        if (
+          !position?.isVector3 ||
+          !target?.isVector3 ||
+          !up?.isVector3 ||
+          ![position.x, position.y, position.z, target.x, target.y, target.z, up.x, up.y, up.z]
+            .every(Number.isFinite)
+        ) {
+          return false;
+        }
+        cancelCameraTransition();
+        controls.update();
+        cameraTransition = {
+          startedAt: performance.now(),
+          durationMs: Math.max(Number(durationMs) || 0, 1),
+          startPosition: camera.position.clone(),
+          endPosition: position.clone(),
+          startTarget: controls.target.clone(),
+          endTarget: target.clone(),
+          startUp: camera.up.clone(),
+          endUp: up.clone().normalize(),
+          restoreDamping: controls.enableDamping,
+        };
+        controls.enableDamping = false;
+        return true;
+      };
+      const cameraState = () => {
+        const direction = camera.position.clone().sub(controls.target);
+        return {
+          position: camera.position.toArray(),
+          target: controls.target.toArray(),
+          direction: direction.lengthSq() > 1e-9 ? direction.normalize().toArray() : [0, 0, 0],
+          up: camera.up.toArray(),
+        };
+      };
+      const focusViewPreset = (preset, { durationMs = 280 } = {}) => {
+        if (
+          !Array.isArray(preset?.direction) ||
+          !Array.isArray(preset?.up)
+        ) {
+          return false;
+        }
+        const direction = new THREE.Vector3(...preset.direction);
+        const up = new THREE.Vector3(...preset.up);
+        if (direction.lengthSq() <= 1e-9 || up.lengthSq() <= 1e-9) return false;
+        const distance = Math.max(camera.position.distanceTo(controls.target), radius * 0.2, 0.1);
+        const target = controls.target.clone();
+        const position = target.clone().add(direction.normalize().multiplyScalar(distance));
+        return transitionCameraTo({ position, target, up: up.normalize(), durationMs });
+      };
+      const resetView = ({ durationMs = 320 } = {}) => {
+        const frame = autoZoomFrameForBounds(THREE, {
+          camera,
+          controls,
+          bounds: model.bounds,
+          padding: 1.18,
+          viewDirection: DEFAULT_VIEW_ORIENTATION_PRESET.direction,
+          viewUp: DEFAULT_VIEW_ORIENTATION_PRESET.up,
+        });
+        return frame
+          ? transitionCameraTo({
+              position: frame.position,
+              target: frame.target,
+              up: frame.up,
+              durationMs,
+            })
+          : focusViewPreset(DEFAULT_VIEW_ORIENTATION_PRESET, { durationMs });
+      };
+      const normalToFace = (pickData, { fit = true, durationMs = 320 } = {}) => {
+        const currentDirection = camera.position.clone().sub(controls.target);
+        const faceCenter = Array.isArray(pickData?.center)
+          ? pickData.center
+          : Array.isArray(pickData?.bbox?.min) && Array.isArray(pickData?.bbox?.max)
+            ? pickData.bbox.min.map(
+                (value, index) => (Number(value) + Number(pickData.bbox.max[index])) / 2,
+              )
+            : null;
+        const cameraSideDirection = faceCenter
+          ? camera.position.clone().sub(new THREE.Vector3(...faceCenter))
+          : currentDirection;
+        const view = buildNormalToFaceView(pickData, {
+          cameraDirection: cameraSideDirection.toArray(),
+          cameraUp: camera.up.toArray(),
+        });
+        if (!view) return false;
+        const direction = new THREE.Vector3(...view.direction).normalize();
+        const up = new THREE.Vector3(...view.up).normalize();
+        const target = new THREE.Vector3(...view.center);
+        let position = target.clone().add(
+          direction.clone().multiplyScalar(Math.max(currentDirection.length(), radius * 0.2, 0.1)),
+        );
+        if (fit && view.bounds) {
+          const frame = autoZoomFrameForBounds(THREE, {
+            camera,
+            controls,
+            bounds: view.bounds,
+            padding: 1.35,
+            viewDirection: view.direction,
+            viewUp: view.up,
+          });
+          if (frame) {
+            position = target.clone().add(direction.clone().multiplyScalar(frame.distance));
+          }
+        }
+        return transitionCameraTo({ position, target, up, durationMs });
+      };
+      controls.addEventListener("start", cancelCameraTransition);
+      // 正視於/上視等轉場會把 camera.up 帶離世界 Z(頂視是 [0,1,0]),但
+      // OrbitControls 的軌道軸在建構當下就鎖死為 Z——up 不一致時 lookAt 的
+      // 滾轉基準跟軌道軸打架,拖曳會扭轉(使用者要按 ISO 才復原)。修法:
+      // 使用者一開始互動就把 up 收回世界 Z;貼近頂/底視時滾轉會小幅回正,
+      // 這是 turntable 慣例(等同各家 CAD 從頂視一拖就回正的行為)。
+      const restoreWorldUpOnInteract = () => {
+        if (
+          Math.abs(camera.up.x) > 1e-6 ||
+          Math.abs(camera.up.y) > 1e-6 ||
+          Math.abs(camera.up.z - 1) > 1e-6
+        ) {
+          camera.up.set(0, 0, 1);
+        }
+      };
+      controls.addEventListener("start", restoreWorldUpOnInteract);
 
       // 地板網格:複用 viewer 的 shader 網格(有限圓盤、格距貼齊模型尺度、拉遠不會
       // 變成無限蜘蛛網)。顏色壓暗配藍圖底,透明度低於模型不搶戲。
@@ -519,6 +683,8 @@ export function useCadViewport(
         onPointerDown,
         onClick,
         onDblClick,
+        cancelCameraTransition,
+        restoreWorldUpOnInteract,
         clearClickTimer: () => {
           if (clickTimer) clearTimeout(clickTimer);
           clickTimer = null;
@@ -532,6 +698,12 @@ export function useCadViewport(
           runtime,
           viewport,
           model,
+          controls,
+          cameraState,
+          focusViewPreset,
+          resetView,
+          normalToFace,
+          pickFaceAt,
           setSelection,
           setPartDisplay,
           setAutoRotate,
@@ -561,6 +733,9 @@ export function useCadViewport(
           if (s.onDblClick) s.canvasEl.removeEventListener("dblclick", s.onDblClick);
         }
         s.ro?.disconnect();
+        s.cancelCameraTransition?.();
+        s.controls?.removeEventListener?.("start", s.cancelCameraTransition);
+        s.controls?.removeEventListener?.("start", s.restoreWorldUpOnInteract);
         s.controls?.dispose?.();
         if (s.faceFill?.group) {
           for (const child of [...s.faceFill.group.children]) {

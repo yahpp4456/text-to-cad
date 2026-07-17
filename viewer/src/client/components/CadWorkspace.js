@@ -21,6 +21,7 @@ import ViewerLoadingOverlay from "./workbench/ViewerLoadingOverlay";
 import FloatingToolBar from "./workbench/FloatingToolBar";
 import CadWorkspaceTopBar from "./workbench/CadWorkspaceTopBar";
 import CadWorkspaceHome from "./workbench/CadWorkspaceHome";
+import { normalToReferenceAvailability } from "./viewer/normalToView";
 import { useCadAssets } from "./workbench/hooks/useCadAssets";
 import {
   resolveDesktopPanelWidths,
@@ -7641,6 +7642,7 @@ export default function CadWorkspace({
           .filter(Boolean)
       ]);
       const fitAvailable = fitReferenceIds.length > 0 || fitPartIds.length > 0;
+      const normalToState = normalToReferenceAvailability(topologyReference);
       const { lines } = copyPayloadWithSelectedIdFallback(buildSelectionCopyPayload({
         references: referencesForCopy.length ? referencesForCopy : [topologyReference],
         parts: [],
@@ -7665,6 +7667,10 @@ export default function CadWorkspace({
         showVisibility: false,
         showHideAll: false,
         showCameraActions: true,
+        showNormalTo: normalToState.visible,
+        normalToDisabled: !normalToState.available,
+        normalToDisabledReason: normalToState.reason,
+        normalToReferenceId: pickedPartId,
         zoomToFitDisabled: !fitAvailable,
         fitReferenceIds,
         fitPartIds
@@ -8054,6 +8060,20 @@ export default function CadWorkspace({
       animate: true
     })) {
       setCopyStatus("No geometry to fit");
+    }
+  }, []);
+
+  const normalToViewerContextMenu = useCallback((menu) => {
+    const referenceId = String(menu?.normalToReferenceId || menu?.referenceId || "").trim();
+    if (!referenceId) {
+      setCopyStatus("No face to orient to");
+      return;
+    }
+    if (!viewerRef.current?.normalToReference?.(referenceId, {
+      animate: true,
+      fit: true
+    })) {
+      setCopyStatus(String(menu?.normalToDisabledReason || "Unable to orient to this face"));
     }
   }, []);
 
@@ -8645,6 +8665,7 @@ export default function CadWorkspace({
           onViewerContextMenuReveal={revealViewerContextMenuNode}
           onViewerContextMenuResetZoom={resetZoomViewerContextMenu}
           onViewerContextMenuZoomToFit={zoomToFitViewerContextMenu}
+          onViewerContextMenuNormalTo={normalToViewerContextMenu}
           onViewerContextMenuExpandSelected={expandSelectedViewerContextMenuNodes}
           onViewerContextMenuCollapseSelected={collapseSelectedViewerContextMenuNodes}
           onViewerContextMenuExpandAll={expandAllViewerContextMenuNodes}

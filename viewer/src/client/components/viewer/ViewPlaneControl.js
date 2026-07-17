@@ -1,10 +1,19 @@
 import { useState } from "react";
-
-const ORIENTATION_FALLBACK = Object.freeze({
-  x: [1, 0, 0],
-  y: [0, 1, 0],
-  z: [0, 0, 1]
-});
+// Cube-face/region geometry is shared with cad-chat's ViewCube through cadjs;
+// only scale, palette and layout choices stay in this component.
+import {
+  CUBE_FACES,
+  CUBE_REGION_BREAKS,
+  CUBE_REGION_DIRECTIONS,
+  directionForCubeRegion,
+  insetInterval,
+  normalizeOrientationAxes,
+  pointForCubeFace,
+  polygonPoints,
+  projectDirection,
+  projectedPoint as projectedCubePoint
+} from "cadjs/lib/viewer/viewCubeMath.js";
+import { directionSignsKey as directionKey } from "cadjs/lib/viewer/viewOrientations.js";
 
 const DEFAULT_VIEW_PLANE_PALETTE = Object.freeze({
   axis: {
@@ -27,7 +36,8 @@ const DEFAULT_VIEW_PLANE_PALETTE = Object.freeze({
   }
 });
 
-const DEFAULT_VIEW_PLANE_SIZE = "6.71875rem";
+const DEFAULT_VIEW_PLANE_SIZE = "6rem";
+const CUBE_SCALE = 24;
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -96,43 +106,19 @@ function resolveViewPlanePalette(viewerTheme) {
   };
 }
 
-function normalizeAxis(axis, fallback) {
-  if (!Array.isArray(axis) || axis.length !== 3) {
-    return [...fallback];
-  }
-  const x = Number(axis[0]);
-  const y = Number(axis[1]);
-  const z = Number(axis[2]);
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
-    return [...fallback];
-  }
-  const magnitude = Math.hypot(x, y, z);
-  if (magnitude < 1e-6) {
-    return [...fallback];
-  }
-  return [x / magnitude, y / magnitude, z / magnitude];
+function projectedPoint(orientation, point) {
+  return projectedCubePoint(orientation, point, { scale: CUBE_SCALE });
 }
 
-function normalizeOrientation(orientation) {
-  return {
-    x: normalizeAxis(orientation?.x, ORIENTATION_FALLBACK.x),
-    y: normalizeAxis(orientation?.y, ORIENTATION_FALLBACK.y),
-    z: normalizeAxis(orientation?.z, ORIENTATION_FALLBACK.z)
+function makeKeyboardHandler(action) {
+  return (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    action?.();
   };
-}
-
-function projectDirection(orientation, direction) {
-  const [dx = 0, dy = 0, dz = 0] = Array.isArray(direction) ? direction : [0, 0, 0];
-  return [
-    orientation.x[0] * dx + orientation.y[0] * dy + orientation.z[0] * dz,
-    orientation.x[1] * dx + orientation.y[1] * dy + orientation.z[1] * dz,
-    orientation.x[2] * dx + orientation.y[2] * dy + orientation.z[2] * dz
-  ];
-}
-
-function getAxisId(face) {
-  const id = String(face?.id || "");
-  return id.startsWith("x") ? "x" : id.startsWith("y") ? "y" : "z";
 }
 
 export default function ViewPlaneControl({
@@ -159,33 +145,10 @@ export default function ViewPlaneControl({
     return null;
   }
 
-  const orientation = normalizeOrientation(viewPlaneOrientation);
+  const orientation = normalizeOrientationAxes(viewPlaneOrientation);
   const palette = resolveViewPlanePalette(viewerTheme);
   const faces = Array.isArray(viewPlaneFaces) ? viewPlaneFaces : [];
-  const projectedNodes = faces
-    .map((face) => {
-      const axisId = getAxisId(face);
-      const axisPalette = palette.axis[axisId] || palette.axis.z;
-      const [x, y, z] = projectDirection(orientation, face.direction);
-      const depth = clamp((z + 1) / 2, 0, 1);
-      const fillColor = mixRgb(axisPalette.back, axisPalette.front, depth);
-      const edgeColor = mixRgb([10, 16, 28], axisPalette.front, depth * 0.82 + 0.08);
-      return {
-        id: face.id,
-        title: face.title,
-        x: 50 + x * 28,
-        y: 50 - y * 28,
-        z,
-        depth,
-        radius: 4.95 + depth * 1.05,
-        fill: rgbToCss(fillColor),
-        edge: rgbToCss(edgeColor),
-        stem: rgbToCss(fillColor, 0.32 + depth * 0.48)
-      };
-    })
-    .sort((left, right) => left.z - right.z);
-  const backNodes = projectedNodes.filter((node) => node.z < 0);
-  const frontNodes = projectedNodes.filter((node) => node.z >= 0);
+  const presetByDirection = new Map(faces.map((face) => [directionKey(face.direction), face]));
   const is2d = variant === "2d";
   const customViewPlaneSize = !compact && !is2d
     ? normalizeCssLength(viewPlaneSize, DEFAULT_VIEW_PLANE_SIZE)
@@ -194,99 +157,190 @@ export default function ViewPlaneControl({
   const viewPlaneSizeStyle = customViewPlaneSize
     ? { width: customViewPlaneSize, height: customViewPlaneSize }
     : undefined;
-  const viewPlaneSurfaceClasses = is2d
-    ? "cad-glass-surface pointer-events-auto relative rounded-md border border-sidebar-border text-sidebar-foreground shadow-sm transition duration-150"
-    : "pointer-events-auto relative text-sidebar-foreground transition duration-150";
-  const viewPlaneLabel = is2d ? "2D view selector" : "Perspective selector";
   const normalizedBottomOffset = typeof viewPlaneOffsetBottom === "number"
     ? `${viewPlaneOffsetBottom}px`
     : viewPlaneOffsetBottom;
-  const centerHovered = hoveredNodeId === "__default__";
-  const renderNode = (node) => {
-    const active = activeViewPlaneFace === node.id;
-    const hovered = hoveredNodeId === node.id;
+  const activatePreset = (id) => {
+    setHoveredNodeId("");
+    activateViewPlaneFace?.(id);
+  };
+
+  const render2dSelector = () => {
+    const projectedNodes = faces.map((face) => {
+      const [x, y] = projectDirection(orientation, face.direction);
+      return {
+        ...face,
+        x: 50 + x * 28,
+        y: 50 - y * 28
+      };
+    });
     return (
-      <g
-        key={node.id}
-        role="button"
-        tabIndex={0}
-        aria-label={node.title}
-        aria-pressed={active}
-        className="group cursor-pointer focus:outline-none"
-        onPointerDown={(event) => {
-          event.stopPropagation();
-        }}
-        onPointerEnter={() => {
-          setHoveredNodeId(node.id);
-        }}
-        onPointerMove={() => {
-          setHoveredNodeId(node.id);
-        }}
-        onPointerLeave={() => {
-          setHoveredNodeId((current) => (current === node.id ? "" : current));
-        }}
-        onMouseEnter={() => {
-          setHoveredNodeId(node.id);
-        }}
-        onMouseMove={() => {
-          setHoveredNodeId(node.id);
-        }}
-        onMouseLeave={() => {
-          setHoveredNodeId((current) => (current === node.id ? "" : current));
-        }}
-        onFocus={() => {
-          setHoveredNodeId(node.id);
-        }}
-        onBlur={() => {
-          setHoveredNodeId((current) => (current === node.id ? "" : current));
-        }}
-        onClick={(event) => {
-          event.stopPropagation();
-          activateViewPlaneFace(node.id);
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter" && event.key !== " ") {
-            return;
-          }
-          event.preventDefault();
-          event.stopPropagation();
-          activateViewPlaneFace(node.id);
-        }}
-      >
-        <circle
-          cx={node.x}
-          cy={node.y}
-          r={node.radius + 4.4}
-          className="transition-opacity duration-150"
-          opacity={hovered ? 1 : 0}
-          fill={node.fill}
-          fillOpacity="0.12"
-          stroke="var(--sidebar-foreground)"
-          strokeOpacity="0.72"
-          strokeWidth="1.1"
-        />
-        <circle
-          cx={node.x}
-          cy={node.y}
-          r={node.radius + (active ? 2.1 : 0)}
-          fill="none"
-          stroke={active ? "var(--sidebar-foreground)" : "transparent"}
-          strokeWidth={active ? 1.6 : 0}
-        />
-        <circle
-          cx={node.x}
-          cy={node.y}
-          r={node.radius}
-          className="transition-transform duration-150 ease-out"
-          style={{
-            transform: hovered ? "scale(1.1)" : "scale(1)",
-            transformBox: "fill-box",
-            transformOrigin: "center"
+      <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" aria-label="2D view selector">
+        <rect x="15" y="15" width="70" height="70" rx="8" fill="var(--sidebar)" stroke="var(--sidebar-border)" strokeWidth="0.75" />
+        <line x1="22" y1="50" x2="78" y2="50" stroke="color-mix(in oklch, var(--sidebar-foreground) 18%, transparent)" strokeWidth="1" />
+        <line x1="50" y1="22" x2="50" y2="78" stroke="color-mix(in oklch, var(--sidebar-foreground) 18%, transparent)" strokeWidth="1" />
+        {projectedNodes.map((node) => {
+          const hovered = hoveredNodeId === node.id;
+          return (
+            <g
+              key={node.id}
+              role="button"
+              tabIndex={0}
+              aria-label={node.title}
+              className="cursor-pointer focus:outline-none"
+              onPointerDown={(event) => event.stopPropagation()}
+              onPointerEnter={() => setHoveredNodeId(node.id)}
+              onPointerLeave={() => setHoveredNodeId("")}
+              onFocus={() => setHoveredNodeId(node.id)}
+              onBlur={() => setHoveredNodeId("")}
+              onClick={(event) => {
+                event.stopPropagation();
+                activatePreset(node.id);
+              }}
+              onKeyDown={makeKeyboardHandler(() => activatePreset(node.id))}
+            >
+              <circle cx={node.x} cy={node.y} r={hovered ? 8 : 6} fill={rgbToCss(palette.center.fill, hovered ? 1 : 0.88)} stroke={rgbToCss(palette.center.stroke)} strokeWidth="1" />
+            </g>
+          );
+        })}
+        <g
+          role="button"
+          tabIndex={0}
+          aria-label="Fit 2D view"
+          className="cursor-pointer focus:outline-none"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            activateDefaultViewPlane?.();
           }}
-          fill={node.fill}
-          stroke={active ? "var(--sidebar-foreground)" : node.edge}
-          strokeWidth={active ? 1.35 : 1}
+          onKeyDown={makeKeyboardHandler(activateDefaultViewPlane)}
+        >
+          <circle cx="50" cy="50" r="10" fill={rgbToCss(palette.center.fill, 0.95)} stroke={rgbToCss(palette.center.stroke)} strokeWidth="1.1" />
+        </g>
+      </svg>
+    );
+  };
+
+  const cubeFaces = CUBE_FACES.map((face) => {
+    const normal = [0, 0, 0];
+    normal[face.axis === "x" ? 0 : face.axis === "y" ? 1 : 2] = face.sign;
+    const normalDepth = projectDirection(orientation, normal)[2];
+    const corners = [
+      pointForCubeFace(face, -1, -1),
+      pointForCubeFace(face, 1, -1),
+      pointForCubeFace(face, 1, 1),
+      pointForCubeFace(face, -1, 1)
+    ].map((point) => projectedPoint(orientation, point));
+    return {
+      ...face,
+      normalDepth,
+      corners,
+      depth: corners.reduce((sum, point) => sum + point.depth, 0) / corners.length
+    };
+  }).sort((left, right) => left.depth - right.depth);
+
+  const renderCubeFace = (face) => {
+    const axisPalette = palette.axis[face.axis] || palette.axis.z;
+    const faceDepth = clamp((face.normalDepth + 1) / 2, 0, 1);
+    const faceFill = mixRgb(axisPalette.back, axisPalette.front, faceDepth * 0.58 + 0.18);
+    const visible = face.normalDepth > 0.015;
+    const facePreset = presetByDirection.get(directionKey(directionForCubeRegion(face, 0, 0)));
+    const faceLabel = String(facePreset?.label || "").toUpperCase();
+
+    return (
+      <g key={face.id} data-view-cube-face={face.id}>
+        <polygon
+          points={polygonPoints(face.corners)}
+          fill={rgbToCss(faceFill, visible ? 0.35 : 0.1)}
+          stroke={visible ? "color-mix(in oklch, var(--sidebar-foreground) 52%, transparent)" : "color-mix(in oklch, var(--sidebar-foreground) 15%, transparent)"}
+          strokeWidth={visible ? 0.85 : 0.5}
+          strokeLinejoin="round"
+          pointerEvents="none"
         />
+        {visible ? CUBE_REGION_DIRECTIONS.flatMap((vDirection, vIndex) => (
+          CUBE_REGION_DIRECTIONS.map((uDirection, uIndex) => {
+            const preset = presetByDirection.get(directionKey(
+              directionForCubeRegion(face, uDirection, vDirection)
+            ));
+            if (!preset) {
+              return null;
+            }
+            const [uStart, uEnd] = insetInterval(
+              CUBE_REGION_BREAKS[uIndex],
+              CUBE_REGION_BREAKS[uIndex + 1]
+            );
+            const [vStart, vEnd] = insetInterval(
+              CUBE_REGION_BREAKS[vIndex],
+              CUBE_REGION_BREAKS[vIndex + 1]
+            );
+            const points = [
+              pointForCubeFace(face, uStart, vStart),
+              pointForCubeFace(face, uEnd, vStart),
+              pointForCubeFace(face, uEnd, vEnd),
+              pointForCubeFace(face, uStart, vEnd)
+            ].map((point) => projectedPoint(orientation, point));
+            const regionId = `${face.id}:${uIndex}:${vIndex}`;
+            const hovered = hoveredNodeId === regionId;
+            const active = activeViewPlaneFace === preset.id;
+            const fill = active
+              ? "color-mix(in oklch, var(--sidebar-foreground) 28%, transparent)"
+              : hovered
+                ? rgbToCss(faceFill, 0.82)
+                : rgbToCss(faceFill, 0.48);
+            return (
+              <g
+                key={regionId}
+                role="button"
+                tabIndex={0}
+                aria-label={preset.title}
+                aria-pressed={active}
+                className="cursor-pointer focus:outline-none"
+                onPointerDown={(event) => event.stopPropagation()}
+                onPointerEnter={() => setHoveredNodeId(regionId)}
+                onPointerMove={() => setHoveredNodeId(regionId)}
+                onPointerLeave={() => setHoveredNodeId("")}
+                onFocus={() => setHoveredNodeId(regionId)}
+                onBlur={() => setHoveredNodeId("")}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  activatePreset(preset.id);
+                }}
+                onKeyDown={makeKeyboardHandler(() => activatePreset(preset.id))}
+              >
+                <polygon
+                  points={polygonPoints(points)}
+                  fill={fill}
+                  stroke={active
+                    ? "var(--sidebar-foreground)"
+                    : hovered
+                      ? rgbToCss(axisPalette.front, 0.95)
+                      : "color-mix(in oklch, var(--sidebar-foreground) 20%, transparent)"}
+                  strokeWidth={active ? 1.35 : hovered ? 1.05 : 0.52}
+                  strokeLinejoin="round"
+                  className="transition-[fill,stroke,stroke-width] duration-150"
+                />
+              </g>
+            );
+          })
+        )) : null}
+        {visible && faceLabel ? (() => {
+          const center = projectedPoint(orientation, pointForCubeFace(face, 0, 0));
+          return (
+            <text
+              x={center.x}
+              y={center.y + 2.35}
+              textAnchor="middle"
+              fill="var(--sidebar-foreground)"
+              fillOpacity="0.82"
+              fontSize="6.3"
+              fontWeight="700"
+              letterSpacing="-0.15"
+              pointerEvents="none"
+            >
+              {faceLabel}
+            </text>
+          );
+        })() : null}
       </g>
     );
   };
@@ -299,141 +353,55 @@ export default function ViewPlaneControl({
       {viewPlaneHeader ? (
         <div
           className="pointer-events-auto"
-          onPointerDown={(event) => {
-            event.stopPropagation();
-          }}
+          onPointerDown={(event) => event.stopPropagation()}
         >
           {viewPlaneHeader}
         </div>
       ) : null}
+      {!is2d ? (
+        <button
+          type="button"
+          aria-label="Reset to default isometric view"
+          title="Reset to default isometric view"
+          className="cad-glass-surface pointer-events-auto absolute -left-6 top-0 grid size-5 place-items-center rounded-sm border border-sidebar-border text-sidebar-foreground/65 shadow-sm transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            activateDefaultViewPlane?.();
+          }}
+        >
+          <svg viewBox="0 0 16 16" className="size-3" aria-hidden="true">
+            <path d="M8 2.25 13.25 5.3v5.4L8 13.75 2.75 10.7V5.3L8 2.25Z" fill="none" stroke="currentColor" strokeWidth="1.15" strokeLinejoin="round" />
+            <path d="m2.95 5.45 5.05 3 5.05-3M8 8.45v5.05" fill="none" stroke="currentColor" strokeWidth="1.05" strokeLinejoin="round" />
+          </svg>
+        </button>
+      ) : null}
       <div
-        className={`${viewPlaneSurfaceClasses} ${viewPlaneSizeClasses}`}
+        className={`${is2d
+          ? "cad-glass-surface"
+          : "cad-glass-surface bg-sidebar/72 backdrop-blur-md"} ${viewPlaneSizeClasses} pointer-events-auto relative overflow-hidden rounded-md border border-sidebar-border text-sidebar-foreground shadow-[0_10px_28px_rgba(0,0,0,0.18)] transition duration-150`}
         style={viewPlaneSizeStyle}
-        onPointerDown={(event) => {
-          event.stopPropagation();
-        }}
+        onPointerDown={(event) => event.stopPropagation()}
       >
-        <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" aria-label={viewPlaneLabel}>
-          <defs>
-            <radialGradient id="view-sphere-shell" cx="34%" cy="28%" r="74%">
-              <stop offset="0%" stopColor="var(--sidebar)" />
-              <stop offset="100%" stopColor="var(--sidebar)" />
-            </radialGradient>
-          </defs>
-          {is2d ? (
-            <>
-              <rect x="15" y="15" width="70" height="70" rx="8" fill="url(#view-sphere-shell)" stroke="var(--sidebar-border)" strokeWidth="0.75" />
-              <line x1="22" y1="50" x2="78" y2="50" fill="none" stroke="color-mix(in oklch, var(--sidebar-foreground) 18%, transparent)" strokeWidth="1" strokeLinecap="round" />
-              <line x1="50" y1="22" x2="50" y2="78" fill="none" stroke="color-mix(in oklch, var(--sidebar-foreground) 18%, transparent)" strokeWidth="1" strokeLinecap="round" />
-            </>
-          ) : (
-            <>
-              <circle cx="50" cy="50" r="44" fill="url(#view-sphere-shell)" stroke="var(--sidebar-border)" strokeWidth="0.75" />
-              <ellipse cx="50" cy="50" rx="30" ry="11.8" fill="none" stroke="color-mix(in oklch, var(--sidebar-foreground) 12%, transparent)" strokeWidth="0.8" />
-              <ellipse cx="50" cy="50" rx="14" ry="30" fill="none" stroke="color-mix(in oklch, var(--sidebar-foreground) 12%, transparent)" strokeWidth="0.8" />
-            </>
-          )}
-          {backNodes.map((node) => (
-            <line
-              key={`${node.id}-stem`}
-              x1="50"
-              y1="50"
-              x2={node.x}
-              y2={node.y}
-              stroke={node.stem}
-              strokeWidth={1.6 + node.depth * 0.8}
-              strokeLinecap="round"
-              pointerEvents="none"
-            />
-          ))}
-          {backNodes.map((node) => renderNode(node))}
-          <g
-            role="button"
-            tabIndex={0}
-            aria-label={is2d ? "Fit 2D view" : "Reset to default isometric view"}
-            className="group cursor-pointer focus:outline-none"
-            onPointerDown={(event) => {
-              event.stopPropagation();
-            }}
-            onPointerEnter={() => {
-              setHoveredNodeId("__default__");
-            }}
-            onPointerMove={() => {
-              setHoveredNodeId("__default__");
-            }}
-            onPointerLeave={() => {
-              setHoveredNodeId((current) => (current === "__default__" ? "" : current));
-            }}
-            onMouseEnter={() => {
-              setHoveredNodeId("__default__");
-            }}
-            onMouseMove={() => {
-              setHoveredNodeId("__default__");
-            }}
-            onMouseLeave={() => {
-              setHoveredNodeId((current) => (current === "__default__" ? "" : current));
-            }}
-            onFocus={() => {
-              setHoveredNodeId("__default__");
-            }}
-            onBlur={() => {
-              setHoveredNodeId((current) => (current === "__default__" ? "" : current));
-            }}
-            onClick={(event) => {
-              event.stopPropagation();
-              activateDefaultViewPlane?.();
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" && event.key !== " ") {
-                return;
-              }
-              event.preventDefault();
-              event.stopPropagation();
-              activateDefaultViewPlane?.();
-            }}
-          >
-            <circle cx="50" cy="50" r="10.2" fill="transparent" stroke="none" />
-            <circle
-              cx="50"
-              cy="50"
-              r="11.4"
-              className="transition-opacity duration-150"
-              opacity={centerHovered ? 1 : 0}
-              fill={rgbToCss(palette.center.fill, 0.16)}
-              stroke="var(--sidebar-foreground)"
-              strokeOpacity="0.72"
-              strokeWidth="1.1"
-            />
-            <circle
-              cx="50"
-              cy="50"
-              r="7.3"
-              className="transition-transform duration-150 ease-out"
+        {is2d ? render2dSelector() : (
+          <>
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 opacity-70"
               style={{
-                transform: centerHovered ? "scale(1.1)" : "scale(1)",
-                transformBox: "fill-box",
-                transformOrigin: "center"
+                background: "radial-gradient(circle at 32% 22%, color-mix(in oklch, var(--sidebar-foreground) 8%, transparent), transparent 58%)"
               }}
-              fill={rgbToCss(palette.center.fill, 0.95)}
-              stroke={rgbToCss(palette.center.stroke, 0.72)}
-              strokeWidth="1.05"
             />
-          </g>
-          {frontNodes.map((node) => (
-            <line
-              key={`${node.id}-stem-front`}
-              x1="50"
-              y1="50"
-              x2={node.x}
-              y2={node.y}
-              stroke={node.stem}
-              strokeWidth={1.6 + node.depth * 0.8}
-              strokeLinecap="round"
-              pointerEvents="none"
-            />
-          ))}
-          {frontNodes.map((node) => renderNode(node))}
-        </svg>
+            <svg
+              className="absolute inset-0 h-full w-full"
+              viewBox="0 0 100 100"
+              role="group"
+              aria-label="ViewCube orientation selector"
+            >
+              {cubeFaces.map(renderCubeFace)}
+            </svg>
+          </>
+        )}
       </div>
     </div>
   );

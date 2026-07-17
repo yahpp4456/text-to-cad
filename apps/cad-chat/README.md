@@ -255,11 +255,14 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
 - **LibraryShelf 直接看庫(不走 AI 問答)**:零件庫模式畫布上方常駐、可收合的
   卡片貨架(`components/canvas/LibraryShelf.jsx`)——每卡=**離屏 three 縮圖**
   (`src/lib/libThumbs.js`:GLB→`renderModel.capturePng()` dataURL,串行佇列單
-  context、快取 key=glbUrl 含 mtime buster)+ label/family/bbox +三動作:
+  context、快取 key=glbUrl 含 mtime buster)+ label/family/bbox +兩動作:
   「預覽」(PRESENT 進畫布,source:"opened" 不進時間軸)、「⇪ 設計」(確認切
   設計模式開新對話 → `/api/import` 強制 mint 新 session + prefill——注意閉包裡
-  的舊 sessionId 是零件庫 session,`importFile(rel, {sessionId:null})` 顯式覆寫)、
-  「刪」(inline 二次確認)。縮圖鏈:收庫兩路(endpoint+agent 工具)成功後
+  的舊 sessionId 是零件庫 session,`importFile(rel, {sessionId:null})` 顯式覆寫)。
+  刪除收進標頭「**管理**」批次模式(破壞性動作不常駐卡面):進模式後點卡選取
+  (紅框+✓ 角標,預覽/⇪ 設計讓位)→「刪除 N 件」二段確認 → 逐件序列打既有
+  單 slug `/api/library-delete`(server 零改動),完成後自動退出。
+  縮圖鏈:收庫兩路(endpoint+agent 工具)成功後
   fire-and-forget `ensureStepGlb` 順產庫內 GLB sidecar;缺 GLB 的卡由
   `POST /api/library-glb` 按需補轉(序列,防 spawn 突刺)。
 - **瀏覽端點**:`GET /api/library-list`(meta+GLB 存在性,addedAt 降冪)、
@@ -288,6 +291,18 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
   Read/Glob/Grep(查庫)+ 6 MCP 工具;lessons digest 不注入(同草模)。
   family 分類單一真相源 `src/lib/libraryFamilies.js`(9 類;FileBrowser 下拉、
   z.enum、prompt 分類表同源)。
+- **family 是跨來源共用的分類軸**(用語約定):同一個 family 詞彙表底下有兩種
+  零件「容器」——講「**產生器家族**」指 cadpy.parts 那組程式、「**庫件**」指
+  收藏的原廠 STP、「**family**」保留給分類值本身(`LIBRARY_FAMILIES` 變數名
+  =庫件允許的 family 列舉,不動)。分類名刻意與產生器家族**同名對齊**
+  (`linear_guide` 對 `linear_guide`),agent 靠同詞彙判斷「庫裡撈現成 vs
+  cadpy.parts 生一個」,勿改成 category 之類把對映變隱性:
+
+  | | cadpy.parts 產生器 | 零件庫庫件 |
+  |---|---|---|
+  | 幾何來源 | 參數閉式生成(build123d) | 原廠 STP 原樣收藏 |
+  | 能調尺寸 | 能(滑桿/選型換型號) | 不能 |
+  | 適用 | 有規格表、可參數化的標準件 | 只有原廠圖檔、不值得重建模的件 |
 - **端點行為**:library session 打 export/export-parts/validate/validate-ver/
   import/save-project → 顯式 400(`rejectNonDesignSession`,訊息含「零件庫」;
   草模訊息字樣「草模」不變)。hydrate 產物守衛第三分支:library 無建模產物
@@ -886,6 +901,22 @@ open-project 再送;`smoke_open_dedupe.py` 已隨開檔 option C 退場,不在 O
 - **網格 + 座標系**:3D 視圖預設顯示地板網格(複用 viewer 的 shader grid:有限圓盤、
   貼齊模型中心;格距 patch 成 1/2/5 nice 刻度 ≈ 半徑/6)與世界原點 `AxesHelper`
   (X 紅 / Y 綠 / Z 藍)。畫布工具 chips「⊞ 網格」「⤱ 座標軸」可各自開關。
+- **ViewCube + 正視於**:右下放大 ViewCube 把 6 個面、12 條稜、8 個角映成 26 個標準
+  相機方向,六面另有 X/-X/Y/-Y/Z/-Z 直達鍵,`ISO` 重新完整取景;可收合成迷你方塊入口
+  並以 localStorage 記住狀態,旋轉模型時方塊同步相機姿態與 active 視角。
+  STEP topology 的面可直接右鍵(或右鍵面菱形)開 `正視於`:
+  僅平面可用,依目前相機所在側選法向正負、投影既有 up 防止翻面,以面 bbox 自動取景,
+  全程純前端且不改投影模式。dev 鉤 `window.__cadView`
+  (`presetIds/active/camera/focus/home/faceRows/availability/normalToFace`);
+  L1 `viewOrientations.test.js` + L3 `smoke_view_orientation.py`。
+  **方位數學單一真相源在 `packages/cadjs/src/lib/viewer/`**(`viewOrientations.js`
+  preset 工廠/projectedUp 守衛/正視於側向 + `viewCubeMath.js` 立方投影):
+  `src/lib/viewOrientations.js` 只是注入繁中命名的薄轉接層(**相對路徑 import**
+  ——node --test 不解析 cadjs alias);viewer 端同名檔是英文命名轉接層。改幾何
+  規則一律改 cadjs 正本 + 跑 `npm --prefix packages/cadjs test`,並手動同步
+  `viewer/packages/cadjs`(vendored 複本;sync-vendored.sh 不管 JS)。
+  方位 state 不在 Canvas3D useState——`ViewCubeDock` 經 useSyncExternalStore
+  訂閱小 store,orbit 期間只重繪 ViewCube 不 reconcile 整棵樹。
 - **進度進視圖**:產圖中空畫布顯示五階段直列 + live 活動文字 + 最近工具卡
   (`.canvas-progress`);已有模型的改版重建顯示頂部細條;GLB 載入中有 loading 提示。
 - **選擇題 = 視圖聚光燈焦點模式**(2026-07-10 起聚光燈卡內容為**兩步精靈**,見上方專章):

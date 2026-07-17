@@ -22,6 +22,13 @@ import {
 } from "@/workbench/implicitGraphicsSettings";
 import ViewPlaneControl from "./viewer/ViewPlaneControl";
 import { updateOrbitControls } from "./viewer/orbitControls.js";
+import {
+  closestViewOrientationId,
+  DEFAULT_VIEW_DIRECTION,
+  VIEW_ORIENTATION_PRESET_BY_ID,
+  VIEW_ORIENTATION_PRESETS,
+  VIEW_ORIENTATION_WORLD_UP
+} from "./viewer/viewOrientations";
 
 const INTERACTION_IDLE_DELAY_MS = 140;
 const DEFAULT_DAMPING_FACTOR = 0.14;
@@ -31,25 +38,16 @@ const TRACKPAD_PINCH_ZOOM_SPEED = 14;
 const KEYBOARD_ORBIT_NUDGE_RAD = Math.PI / 32;
 const KEYBOARD_ORBIT_SPEED_RAD_PER_SEC = Math.PI * 0.42;
 const KEYBOARD_POLAR_EPSILON = 0.02;
-const DEFAULT_VIEW_DIRECTION = Object.freeze([2.1, -1.65, 1.08]);
-const WORLD_UP = Object.freeze([0, 0, 1]);
+const WORLD_UP = VIEW_ORIENTATION_WORLD_UP;
 const CAMERA_UP_PARALLEL_DOT_THRESHOLD = 0.9;
-const VIEW_PLANE_ACTIVE_DOT_THRESHOLD = 0.994;
 const VIEW_PLANE_TRANSITION_MS = 280;
 const DEFAULT_FOV_DEG = 48;
 const IMPLICIT_CAMERA_VERSION = 8;
 const AUTO_ZOOM_FRAME_MARGIN = 1.08;
 const AUTO_ZOOM_SPEED_MS = 400;
 const RESET_VIEW_CONTROL_BUTTON_CLASSES = "cad-glass-surface pointer-events-auto grid h-8 w-8 shrink-0 place-items-center rounded-full border border-sidebar-border text-sidebar-foreground/60 shadow-sm transition duration-150 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45";
-const VIEW_PLANE_FACES = [
-  { id: "z", title: "Jump to top view", direction: [0, 0, 1], up: [0, 1, 0] },
-  { id: "zNeg", title: "Jump to bottom view", direction: [0, 0, -1], up: [0, 1, 0] },
-  { id: "yNeg", title: "Jump to front view", direction: [0, -1, 0], up: WORLD_UP },
-  { id: "y", title: "Jump to back view", direction: [0, 1, 0], up: WORLD_UP },
-  { id: "x", title: "Jump to right view", direction: [1, 0, 0], up: WORLD_UP },
-  { id: "xNeg", title: "Jump to left view", direction: [-1, 0, 0], up: WORLD_UP }
-];
-const VIEW_PLANE_FACE_BY_ID = Object.fromEntries(VIEW_PLANE_FACES.map((face) => [face.id, face]));
+const VIEW_PLANE_FACES = VIEW_ORIENTATION_PRESETS;
+const VIEW_PLANE_FACE_BY_ID = VIEW_ORIENTATION_PRESET_BY_ID;
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -335,18 +333,7 @@ function getActiveViewPlaneFaceId(runtime) {
   if (offset.lengthSq() < 1e-6) {
     return "";
   }
-  offset.normalize();
-  let bestId = "";
-  let bestDot = -Infinity;
-  for (const face of VIEW_PLANE_FACES) {
-    const direction = new THREE.Vector3(...face.direction).normalize();
-    const dot = direction.dot(offset);
-    if (dot > bestDot) {
-      bestDot = dot;
-      bestId = face.id;
-    }
-  }
-  return bestDot >= VIEW_PLANE_ACTIVE_DOT_THRESHOLD ? bestId : "";
+  return closestViewOrientationId(offset.toArray(), VIEW_PLANE_FACES);
 }
 
 function perspectiveSnapshot(runtime, modelKey = "") {

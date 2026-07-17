@@ -71,6 +71,15 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
 - **`node --test` 不解析 cadjs Vite alias**:import `cadjs/...` 的前端 lib(如 `cadMotion.js`)
   無法直接 node 測 → 把純邏輯抽到無 cadjs 依賴的檔(如 `cadMotionMath.js`)再 L1 測;
   render/side-effect 部分靠 L3 `__cadMotion`。`three` 本身在 node 可解析(node_modules)。
+  第二解法(2026-07-17,`src/lib/viewOrientations.js` 用):要進 L1 的檔改**相對路徑**
+  import `../../../../packages/cadjs/src/...`(與 alias 指同一份源,Vite fs.allow 已涵蓋);
+  只被 jsx 消費、不進 L1 的檔照用 alias。
+- **改 `packages/cadjs` 正本要手動同步 `viewer/packages/cadjs`**(vendored 複本,
+  `sync-vendored.sh` 刻意不管 JS 套件;viewer 的 node_modules/cadjs 是指向該複本的
+  junction)——漏同步則 viewer 測試/建置跑舊 code。視圖方位數學(preset 工廠/
+  projectedUp/立方投影)單一真相源在 `packages/cadjs/src/lib/viewer/`,兩 app 的
+  `viewOrientations.js` 只是命名注入的薄轉接層;改幾何 → cadjs 正本 + 
+  `npm --prefix packages/cadjs test` + 同步複本 + 兩 app 轉接層測試。
 - **spawned Python(validate.py 等)的單元/整合測**放 `apps/cad-chat/tests/*.py`(unittest),
   直跑 `PYTHONUTF8=1 <venv-python> apps/cad-chat/tests/test_*.py`(不在 node --test / smoke 內)。
 - **MOTION 契約單一真相源在 `cadpy.motion_decl`**(validate.py `_read_motion` 與 build

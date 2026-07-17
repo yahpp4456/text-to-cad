@@ -142,6 +142,7 @@ function ViewerContextMenu({
   onReveal,
   onResetZoom,
   onZoomToFit,
+  onNormalTo,
   onExpandSelected,
   onCollapseSelected,
   onExpandAll,
@@ -260,6 +261,9 @@ function ViewerContextMenu({
             hideAllLabel={String(menu.hideAllLabel || "").trim() || "Show all"}
             visibilityDisabled={menu.visibilityDisabled === true}
             showCameraActions={menu.showCameraActions !== false}
+            showNormalTo={menu.showNormalTo === true}
+            normalToDisabled={menu.normalToDisabled === true}
+            normalToDisabledReason={String(menu.normalToDisabledReason || "")}
             resetZoomDisabled={menu.resetZoomDisabled === true}
             zoomToFitDisabled={menu.zoomToFitDisabled === true}
             showExpandCollapse={menu.showExpandCollapse === true}
@@ -274,6 +278,7 @@ function ViewerContextMenu({
             onHideOther={() => handleAction(onHideOther)}
             onHideAll={() => handleAction(onHideAll)}
             onToggleVisibility={() => handleAction(hidden ? onReveal : onHide)}
+            onNormalTo={() => handleAction(onNormalTo)}
             onResetZoom={() => handleAction(onResetZoom)}
             onZoomToFit={() => handleAction(onZoomToFit)}
             onExpandSelected={() => handleAction(onExpandSelected)}
@@ -357,6 +362,7 @@ export default function CadRenderPane({
   onViewerContextMenuReveal,
   onViewerContextMenuResetZoom,
   onViewerContextMenuZoomToFit,
+  onViewerContextMenuNormalTo,
   onViewerContextMenuExpandSelected,
   onViewerContextMenuCollapseSelected,
   onViewerContextMenuExpandAll,
@@ -609,6 +615,7 @@ export default function CadRenderPane({
           onReveal={onViewerContextMenuReveal}
           onResetZoom={onViewerContextMenuResetZoom}
           onZoomToFit={onViewerContextMenuZoomToFit}
+          onNormalTo={onViewerContextMenuNormalTo}
           onExpandSelected={onViewerContextMenuExpandSelected}
           onCollapseSelected={onViewerContextMenuCollapseSelected}
           onExpandAll={onViewerContextMenuExpandAll}

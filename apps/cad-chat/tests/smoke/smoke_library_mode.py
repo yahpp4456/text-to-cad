@@ -233,14 +233,34 @@ try:
         )
         c.check("F: 預覽載進畫布", True)
         c.check("F: 預覽不進時間軸", "尚無版本" in page.locator(".right-col").inner_text())
-        # 刪除:inline 二次確認 → 磁碟移除 → 卡片消失
-        page.locator(f'.lib-card[data-slug="{victim}"] .fb-action', has_text=re.compile(r"^刪$")).click()
-        page.locator(f'.lib-card[data-slug="{victim}"] .fb-action', has_text="確定刪").click()
+        # 刪除:標頭「管理」進批次選取模式(卡上已無「刪」chip)→ 點卡選取 →
+        # 「刪除 N 件」二段確認 → 磁碟移除 → 卡片消失、自動退出模式
+        c.check(
+            "F: 卡上無刪 chip(刪除收進管理模式)",
+            page.locator(".lib-card .fb-action", has_text=re.compile(r"^刪$")).count() == 0,
+        )
+        page.locator(".lib-shelf-head .fb-action", has_text=re.compile(r"^管理$")).click()
+        page.locator(f'.lib-card[data-slug="{victim}"] .lib-card-thumb').click()
+        c.check(
+            "F: 管理模式點卡=選取",
+            page.locator(f'.lib-card[data-slug="{victim}"][data-selected="true"]').count() == 1,
+        )
+        c.check(
+            "F: 管理模式動作列讓位",
+            page.locator(f'.lib-card[data-slug="{victim}"] .lib-card-actions').count() == 0,
+        )
+        page.locator(".lib-shelf-head .fb-action", has_text="刪除 1 件").click()
+        page.locator(".lib-shelf-head .fb-action", has_text="確定刪 1 件").click()
         page.wait_for_function(
             f"() => !document.querySelector('.lib-card[data-slug=\"{victim}\"]')",
             timeout=15000,
         )
         c.check("F: 刪除後卡片消失", True)
+        page.wait_for_selector('.lib-shelf-head .fb-action:has-text("管理")', timeout=5000)
+        c.check(
+            "F: 刪除完成自動退出管理模式",
+            page.locator(".lib-shelf-head .fb-action", has_text="取消").count() == 0,
+        )
         c.check(
             "F: 刪除後磁碟移除",
             not os.path.isdir(os.path.join(REPO, "models", "parts-library", victim)),

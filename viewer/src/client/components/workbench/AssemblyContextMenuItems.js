@@ -23,6 +23,9 @@ export default function AssemblyContextMenuItems({
   showVisibility = true,
   visibilityDisabled = false,
   showCameraActions = false,
+  showNormalTo = false,
+  normalToDisabled = false,
+  normalToDisabledReason = "",
   resetZoomDisabled = false,
   zoomToFitDisabled = false,
   showHideAll = false,
@@ -38,6 +41,7 @@ export default function AssemblyContextMenuItems({
   onHideOther,
   onHideAll,
   onToggleVisibility,
+  onNormalTo,
   onResetZoom,
   onZoomToFit,
   onExpandSelected,
@@ -119,6 +123,19 @@ export default function AssemblyContextMenuItems({
       {showCameraActions ? (
         <>
           <Separator />
+          {showNormalTo ? (
+            <Item
+              className={itemClassName}
+              disabled={normalToDisabled}
+              title={normalToDisabled ? normalToDisabledReason : "Orient the camera normal to this face"}
+              aria-label={normalToDisabled && normalToDisabledReason
+                ? `Normal To. ${normalToDisabledReason}`
+                : "Normal To"}
+              onSelect={onNormalTo}
+            >
+              <AssemblyContextMenuItemLabel>Normal To</AssemblyContextMenuItemLabel>
+            </Item>
+          ) : null}
           <Item
             className={itemClassName}
             disabled={resetZoomDisabled}

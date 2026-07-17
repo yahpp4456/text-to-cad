@@ -1,16 +1,26 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as THREE from "three";
 
 import { useCadViewport } from "../../hooks/useCadViewport.js";
 import { createMotionPlayer } from "../../lib/cadMotion.js";
 import { measureBetween } from "../../lib/measureFacts.js";
 import { buildTopologyModel } from "../../lib/cadTopology.js";
+import {
+  closestViewOrientationId,
+  normalToFaceAvailability,
+  VIEW_ORIENTATION_PRESET_BY_ID,
+  VIEW_ORIENTATION_PRESETS,
+  IDENTITY_ORIENTATION_AXES,
+  orientationAxesChanged,
+  orientationAxesFromQuaternion,
+} from "../../lib/viewOrientations.js";
 import { STAGES } from "../StageStepper.jsx";
 import ClarifyWizard from "./ClarifyWizard.jsx";
 import LessonOfferPanel from "./LessonOfferPanel.jsx";
 import PropertiesDrawer from "./PropertiesDrawer.jsx";
 import SpecPanel from "./SpecPanel.jsx";
 import SweepWindow from "./SweepWindow.jsx";
+import ViewCube from "./ViewCube.jsx";
 
 // 面標記「預設顯示」上限:每件 6 個、整體 12(避免菱形海)。這只是預設——
 // 候選面不設限,使用者可從「◇ 面標記」面板切全部/隱藏/逐面勾選。
@@ -24,6 +34,36 @@ const REL_ZH = {
   coincident: "面重合",
   aligned: "面同向",
 };
+// 方位讀取/比較走 cadjs 共用數學(viewer 的 readViewPlaneOrientation 同源)。
+function readViewOrientation(camera) {
+  return camera?.quaternion
+    ? orientationAxesFromQuaternion(camera.quaternion)
+    : IDENTITY_ORIENTATION_AXES;
+}
+
+// 方位 state 下沉:Canvas3D 不 useState 方位——orbit 期間 ~12.5Hz 的方位更新
+// 只該重繪 ViewCube,不 reconcile 整棵樹(SpecPanel/面標記等重子樹)。
+// ViewCubeDock 是唯一訂閱者,經 useSyncExternalStore 讀這個小 store。
+function createViewSyncStore() {
+  let snapshot = { orientation: IDENTITY_ORIENTATION_AXES, activeId: "" };
+  const listeners = new Set();
+  return {
+    get: () => snapshot,
+    set: (next) => {
+      snapshot = { ...snapshot, ...next };
+      listeners.forEach((listener) => listener());
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
+function ViewCubeDock({ store, ...props }) {
+  const view = useSyncExternalStore(store.subscribe, store.get);
+  return <ViewCube orientation={view.orientation} activeId={view.activeId} {...props} />;
+}
 
 // 預設那 6 個面用最遠點取樣挑「空間上散得開」的:同軸疊在一起的外圓柱/頂底面
 // 只會入選一兩個,名額讓給孔壁這類散佈的特徵(否則法蘭 7 面取前 6,第 4 個孔沒標記)。
@@ -115,6 +155,11 @@ export default function Canvas3D({
   const [measurePicks, setMeasurePicks] = useState([]); // [{token,center,rowIndex,label}] ≤2
   const [measureResult, setMeasureResult] = useState(null); // {value,axis,rel} | {error,axisFail}
   const [measureAxis, setMeasureAxis] = useState(null); // 軸 fallback:ok:false 時使用者指定
+  const [faceContextMenu, setFaceContextMenu] = useState(null);
+  const viewSyncStoreRef = useRef(null);
+  if (!viewSyncStoreRef.current) viewSyncStoreRef.current = createViewSyncStore();
+  const viewSyncRef = useRef({ at: 0, orientation: IDENTITY_ORIENTATION_AXES });
+  const activeViewIdRef = useRef("");
   const measureModeRef = useRef(false);
   measureModeRef.current = measureMode; // 給 viewport onClick 讀最新模式(不進 hook deps)
   const measurePicksRef = useRef([]);
@@ -259,6 +304,13 @@ export default function Canvas3D({
     sweepPaths: view !== "flat" ? sweepData?.paths || null : null,
     onStatus: (status) => dispatch({ type: "SET_CANVAS_STATUS", status }),
     onReady: ({
+      camera,
+      controls,
+      cameraState,
+      focusViewPreset,
+      resetView,
+      normalToFace,
+      pickFaceAt,
       runtime,
       model,
       setSelection,
@@ -279,6 +331,13 @@ export default function Canvas3D({
       topoRef.current = t;
       setTopo(t);
       apiRef.current = {
+        camera,
+        controls,
+        cameraState,
+        focusViewPreset,
+        resetView,
+        normalToFace,
+        pickFaceAt,
         model,
         runtime,
         setSelection,
@@ -313,10 +372,51 @@ export default function Canvas3D({
       setMeasurePicks([]);
       setMeasureResult(null);
       setMeasureAxis(null);
+      setFaceContextMenu(null);
+      const orientation = readViewOrientation(camera);
+      viewSyncRef.current = { at: performance.now(), orientation };
+      const direction = camera.position.clone().sub(controls.target).toArray();
+      activeViewIdRef.current = closestViewOrientationId(direction);
+      viewSyncStoreRef.current.set({ orientation, activeId: activeViewIdRef.current });
     },
     onFrame: ({ camera, host }) => {
       updateMarkers(camera, host);
       updateMeasureLabel(camera, host);
+      const now = performance.now();
+      if (now - viewSyncRef.current.at >= 80) {
+        viewSyncRef.current.at = now;
+        // 相機沒動就整段跳過(閒置時 readViewOrientation/cameraState/closest…
+        // 每 tick 都在白配置向量):position/quaternion/target 十個純量全等
+        // =沒動;NaN 初值恆不等,首 tick 必算一次。
+        const { position: p, quaternion: q } = camera;
+        const t = apiRef.current.controls?.target;
+        const sig = viewSyncRef.current.sig || (viewSyncRef.current.sig = new Array(10).fill(NaN));
+        const moved =
+          sig[0] !== p.x || sig[1] !== p.y || sig[2] !== p.z ||
+          sig[3] !== q.x || sig[4] !== q.y || sig[5] !== q.z || sig[6] !== q.w ||
+          sig[7] !== t?.x || sig[8] !== t?.y || sig[9] !== t?.z;
+        if (moved) {
+          sig[0] = p.x; sig[1] = p.y; sig[2] = p.z;
+          sig[3] = q.x; sig[4] = q.y; sig[5] = q.z; sig[6] = q.w;
+          sig[7] = t?.x; sig[8] = t?.y; sig[9] = t?.z;
+          const updates = {};
+          const orientation = readViewOrientation(camera);
+          if (orientationAxesChanged(viewSyncRef.current.orientation, orientation)) {
+            viewSyncRef.current.orientation = orientation;
+            updates.orientation = orientation;
+          }
+          const state = apiRef.current.cameraState?.();
+          const nextActiveId = closestViewOrientationId(state?.direction);
+          if (nextActiveId !== activeViewIdRef.current) {
+            activeViewIdRef.current = nextActiveId;
+            updates.activeId = nextActiveId;
+          }
+          // 只重繪訂閱 store 的 ViewCubeDock,Canvas3D 本體零 setState
+          if (updates.orientation || updates.activeId !== undefined) {
+            viewSyncStoreRef.current.set(updates);
+          }
+        }
+      }
       if (playingRef.current && playerRef.current && motionRef.current) {
         playerRef.current.apply(motionRef.current, performance.now() / 1000);
       }
@@ -401,6 +501,29 @@ export default function Canvas3D({
           return true;
         },
       };
+      window.__cadView = {
+        presetIds: () => VIEW_ORIENTATION_PRESETS.map((preset) => preset.id),
+        active: () => activeViewIdRef.current,
+        camera: () => apiRef.current.cameraState?.() || null,
+        focus: (presetId) => {
+          const preset = VIEW_ORIENTATION_PRESET_BY_ID[String(presetId || "")];
+          if (!preset) return false;
+          apiRef.current.setAutoRotate?.(false);
+          return apiRef.current.focusViewPreset?.(preset, { durationMs: 1 }) ?? false;
+        },
+        home: () => apiRef.current.resetView?.({ durationMs: 1 }) ?? false,
+        faceRows: () => [...(apiRef.current.runtime?.faceReferenceByRowIndex?.keys() || [])],
+        availability: (rowIndex) => {
+          const ref = apiRef.current.runtime?.faceReferenceByRowIndex?.get(Number(rowIndex));
+          return normalToFaceAvailability(ref?.pickData);
+        },
+        normalToFace: (rowIndex) => {
+          const ref = apiRef.current.runtime?.faceReferenceByRowIndex?.get(Number(rowIndex));
+          if (!ref?.pickData) return false;
+          apiRef.current.setAutoRotate?.(false);
+          return apiRef.current.normalToFace?.(ref.pickData, { fit: true, durationMs: 1 }) ?? false;
+        },
+      };
       window.__cadPreview = { group: () => previewGroupRef.current };
       window.__cadMarkers = { state: () => markerProbeRef.current };
       // 眼睛三態探針:display()=目前 map;stateFor(labelOrOccId)=該件第一筆
@@ -483,6 +606,82 @@ export default function Canvas3D({
     setSweepOn(next);
     apiRef.current.setSweepPaths?.(next);
   };
+  const stopAutoOrbit = useCallback(() => {
+    setOrbit(false);
+    apiRef.current.setAutoRotate?.(false);
+  }, []);
+  const activateViewPreset = useCallback((preset) => {
+    stopAutoOrbit();
+    setFaceContextMenu(null);
+    apiRef.current.focusViewPreset?.(preset);
+  }, [stopAutoOrbit]);
+  const resetCameraView = useCallback(() => {
+    stopAutoOrbit();
+    setFaceContextMenu(null);
+    apiRef.current.resetView?.();
+  }, [stopAutoOrbit]);
+  const positionFaceContextMenu = useCallback((event, face) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!face) {
+      setFaceContextMenu(null);
+      return;
+    }
+    const rect = mountRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const width = 206;
+    const height = 112;
+    setFaceContextMenu({
+      face,
+      x: Math.min(Math.max(event.clientX - rect.left, 8), Math.max(rect.width - width - 8, 8)),
+      y: Math.min(Math.max(event.clientY - rect.top, 8), Math.max(rect.height - height - 8, 8)),
+    });
+  }, []);
+  // OrbitControls 右鍵=平移,Windows/Chrome 在右鍵 mouseup 照樣發 contextmenu:
+  // 位移超過門檻視為拖曳,吞掉事件(preventDefault 也擋原生選單),不開「正視於」。
+  const rightDownRef = useRef(null);
+  const onViewportPointerDown = useCallback((event) => {
+    if (event.button === 2) rightDownRef.current = { x: event.clientX, y: event.clientY };
+  }, []);
+  const openFaceContextMenu = useCallback((event) => {
+    const down = rightDownRef.current;
+    rightDownRef.current = null;
+    if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) > 5) {
+      event.preventDefault();
+      return;
+    }
+    positionFaceContextMenu(
+      event,
+      apiRef.current.pickFaceAt?.(event.clientX, event.clientY) || null,
+    );
+  }, [positionFaceContextMenu]);
+  const openMarkerContextMenu = useCallback((event, node) => {
+    const pickData = node?.ref?.pickData;
+    if (!pickData) return;
+    positionFaceContextMenu(event, {
+      token: node.ref.copyText || node.label,
+      label: node.label,
+      center: pickData.center,
+      rowIndex: node.ref.rowIndex ?? pickData.rowIndex,
+      pick: pickData,
+    });
+  }, [positionFaceContextMenu]);
+  const activateNormalTo = useCallback(() => {
+    const pickData = faceContextMenu?.face?.pick;
+    if (!normalToFaceAvailability(pickData).available) return;
+    stopAutoOrbit();
+    apiRef.current.normalToFace?.(pickData, { fit: true });
+    setFaceContextMenu(null);
+  }, [faceContextMenu, stopAutoOrbit]);
+
+  useEffect(() => {
+    if (!faceContextMenu) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setFaceContextMenu(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [faceContextMenu]);
 
   // 「已帶入對話」= pickRefs 現存的 token(chips 移除/送出即熄滅,生命週期跟著 composer)。
   const citedTokens = useMemo(
@@ -637,9 +836,14 @@ export default function Canvas3D({
     return { pid, label: nd?.label || pid, token: nd?.token || `#${pid}` };
   });
   const motionReady = !!(motion && motion.dofs?.length);
+  const faceContextAvailability = normalToFaceAvailability(faceContextMenu?.face?.pick);
 
   return (
-    <div className="canvas" data-empty={empty}>
+    <div
+      className="canvas"
+      data-empty={empty}
+      onPointerDown={() => faceContextMenu && setFaceContextMenu(null)}
+    >
       <div className="canvas-tag">
         <span className="bar bar-emit" />
         <span className="canvas-eyebrow">3D CANVAS</span>
@@ -692,7 +896,48 @@ export default function Canvas3D({
       ) : (
         <>
           <span className="model-ghost">{(canvas.name || "MODEL").toUpperCase()}</span>
-          <div className="viewport" ref={mountRef} />
+          <div
+            className="viewport"
+            ref={mountRef}
+            onPointerDown={onViewportPointerDown}
+            onContextMenu={openFaceContextMenu}
+          />
+          <ViewCubeDock
+            store={viewSyncStoreRef.current}
+            presets={VIEW_ORIENTATION_PRESETS}
+            onSelect={activateViewPreset}
+            onHome={resetCameraView}
+            drawerOpen={propsOpen}
+          />
+          {faceContextMenu && (
+            <div
+              className="face-context-menu"
+              style={{ left: faceContextMenu.x, top: faceContextMenu.y }}
+              role="menu"
+              aria-label="面的視角操作"
+              onPointerDown={(event) => event.stopPropagation()}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <div className="face-context-head">
+                <span>FACE VIEW</span>
+                <small>{faceContextMenu.face.token || faceContextMenu.face.label || "FACE"}</small>
+              </div>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!faceContextAvailability.available}
+                title={faceContextAvailability.reason || "將鏡頭正對此平面"}
+                onClick={activateNormalTo}
+              >
+                <span>⊙ 正視於</span>
+                <small>
+                  {faceContextAvailability.available
+                    ? "置中並貼合選取平面"
+                    : faceContextAvailability.reason}
+                </small>
+              </button>
+            </div>
+          )}
           <div className="markers">
             {faceMarkers.map((n, i) => {
               const token = n.ref?.copyText || n.label;
@@ -701,12 +946,14 @@ export default function Canvas3D({
                 <a
                   key={n.id}
                   className="pick-marker"
+                  data-face-row={Number.isInteger(rowIndex) ? rowIndex : undefined}
                   data-cited={citedTokens.has(token) || undefined}
                   ref={(el) => {
                     markersRef.current[i] = { el, center: n.row.center };
                   }}
                   title={citedTokens.has(token) ? `${n.label} · 已帶入對話` : n.label}
                   onClick={() => onBringToChat(token, n.label)}
+                  onContextMenu={(event) => openMarkerContextMenu(event, n)}
                   onMouseEnter={() => Number.isInteger(rowIndex) && setHoverFaceRow(rowIndex)}
                   onMouseLeave={() =>
                     setHoverFaceRow((cur) => (cur === rowIndex ? null : cur))
@@ -840,7 +1087,9 @@ export default function Canvas3D({
                         <label
                           key={n.id}
                           className="marker-row"
+                          data-face-row={Number.isInteger(rowIndex) ? rowIndex : undefined}
                           data-cited={citedTokens.has(token) || undefined}
+                          onContextMenu={(event) => openMarkerContextMenu(event, n)}
                           onMouseEnter={() =>
                             Number.isInteger(rowIndex) && setHoverFaceRow(rowIndex)
                           }

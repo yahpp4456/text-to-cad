@@ -141,6 +141,16 @@ import {
   THEME_FLOOR_MODES
 } from "cadjs/lib/themeSettings";
 import ViewPlaneControl from "./viewer/ViewPlaneControl";
+import {
+  closestViewOrientationId,
+  DEFAULT_VIEW_DIRECTION,
+  DEFAULT_VIEW_ORIENTATION_PRESET,
+  orientationAxesFromQuaternion,
+  VIEW_ORIENTATION_PRESET_BY_ID,
+  VIEW_ORIENTATION_PRESETS,
+  VIEW_ORIENTATION_WORLD_UP
+} from "./viewer/viewOrientations";
+import { buildNormalToView, normalToReferenceCenter } from "./viewer/normalToView";
 import { useViewerDrawingOverlay } from "./viewer/hooks/useViewerDrawingOverlay";
 import { useViewerPicking } from "./viewer/hooks/useViewerPicking";
 import { useViewerRuntime } from "./viewer/hooks/useViewerRuntime";
@@ -183,7 +193,6 @@ const KEYBOARD_ORBIT_NUDGE_RAD = Math.PI / 32;
 const KEYBOARD_ORBIT_SPEED_RAD_PER_SEC = Math.PI * 0.42;
 const KEYBOARD_POLAR_EPSILON = 0.02;
 const PREVIEW_AUTO_ROTATE_SPEED = 1.0;
-const VIEW_PLANE_ACTIVE_DOT_THRESHOLD = 0.994;
 const VIEW_PLANE_TRANSITION_MS = 280;
 const VIEW_PLANE_POLE_DIRECTION_DOT_THRESHOLD = 0.9999;
 const VIEW_PLANE_POLE_DIRECTION_NUDGE = 0.02;
@@ -199,19 +208,15 @@ const DEFAULT_VIEW_PLANE_ORIENTATION = Object.freeze({
   z: [0, 0, 1]
 });
 const AUTO_ZOOM_PADDING = DEFAULT_AUTO_ZOOM_PADDING;
-const WORLD_UP = Object.freeze([0, 0, 1]);
+const WORLD_UP = VIEW_ORIENTATION_WORLD_UP;
 const CAD_COORDINATE_SYSTEM = "cad-z-up-v1";
 const ROBOT_COORDINATE_SYSTEM = "cad-z-up-robot-framing-v2";
-const DEFAULT_VIEW_DIRECTION = [2.1, -1.65, 1.08];
-const VIEW_PLANE_DEFAULT_PRESET = {
-  id: "isometric",
-  title: "Reset to default isometric view",
-  direction: DEFAULT_VIEW_DIRECTION,
-  up: WORLD_UP
-};
+const VIEW_PLANE_DEFAULT_PRESET = DEFAULT_VIEW_ORIENTATION_PRESET;
+const VIEW_PLANE_FACES = VIEW_ORIENTATION_PRESETS;
+const VIEW_PLANE_FACE_BY_ID = VIEW_ORIENTATION_PRESET_BY_ID;
 const DISPLAY_TOOLBAR_CLASSES = "cad-glass-surface pointer-events-auto absolute z-30 inline-flex h-8 w-fit items-center gap-0.5 rounded-md border border-sidebar-border p-1 text-sidebar-foreground shadow-sm";
 const DISPLAY_TOOLBAR_BUTTON_CLASSES = "grid size-6 shrink-0 place-items-center rounded-sm text-sidebar-foreground/70 transition hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 disabled:pointer-events-none disabled:opacity-50";
-const VIEW_PLANE_CONTROL_SIZE = "7.5rem";
+const VIEW_PLANE_CONTROL_SIZE = "6rem";
 const VIEW_PLANE_CONTROL_GAP = "0.5rem";
 const ZOOM_CONTROL_CONTENT_WIDTH = "6.875rem";
 const ZOOM_CONTROL_MIN_PERCENT = 10;
@@ -244,52 +249,6 @@ const DEFAULT_LIGHTING = {
 };
 const BEND_GUIDE_COLOR = "#f59e0b";
 const BEND_GUIDE_WIDTH_MULTIPLIER = 1.35;
-const VIEW_PLANE_FACES = [
-  {
-    id: "z",
-    label: "Z",
-    title: "Jump to top view",
-    direction: [0, 0, 1],
-    up: [0, 1, 0]
-  },
-  {
-    id: "zNeg",
-    label: "-Z",
-    title: "Jump to bottom view",
-    direction: [0, 0, -1],
-    up: [0, 1, 0]
-  },
-  {
-    id: "yNeg",
-    label: "-Y",
-    title: "Jump to front view",
-    direction: [0, -1, 0],
-    up: WORLD_UP
-  },
-  {
-    id: "y",
-    label: "Y",
-    title: "Jump to back view",
-    direction: [0, 1, 0],
-    up: WORLD_UP
-  },
-  {
-    id: "x",
-    label: "X",
-    title: "Jump to right view",
-    direction: [1, 0, 0],
-    up: WORLD_UP
-  },
-  {
-    id: "xNeg",
-    label: "-X",
-    title: "Jump to left view",
-    direction: [-1, 0, 0],
-    up: WORLD_UP
-  }
-];
-const VIEW_PLANE_FACE_BY_ID = Object.fromEntries(VIEW_PLANE_FACES.map((face) => [face.id, face]));
-
 function referenceSelectorType(reference) {
   return String(reference?.selectorType || "").trim();
 }
@@ -357,19 +316,10 @@ function viewPlaneOrientationEqual(a, b, epsilon = 1e-4) {
 }
 
 function readViewPlaneOrientation(runtime) {
-  if (!runtime?.THREE || !runtime?.camera) {
+  if (!runtime?.camera) {
     return null;
   }
-  const inverseCameraRotation = runtime.camera.quaternion.clone().invert();
-  const projectAxis = (x, y, z) => {
-    const projected = new runtime.THREE.Vector3(x, y, z).applyQuaternion(inverseCameraRotation);
-    return [projected.x, projected.y, projected.z];
-  };
-  return {
-    x: projectAxis(1, 0, 0),
-    y: projectAxis(0, 1, 0),
-    z: projectAxis(0, 0, 1)
-  };
+  return orientationAxesFromQuaternion(runtime.camera.quaternion);
 }
 
 function cameraMatchesViewPreset(runtime, preset, {
@@ -1585,6 +1535,122 @@ function zoomRuntimeToBounds(runtime, bounds, sceneScaleMode, {
   return applied;
 }
 
+function boundsRadiusAroundTarget(runtime, bounds, target, modelOffset = null) {
+  if (!runtime?.THREE || !target?.isVector3) {
+    return null;
+  }
+  const normalizedBounds = mergeBoundsList([bounds]);
+  if (!normalizedBounds) {
+    return 0;
+  }
+  const offset = modelOffset?.isVector3
+    ? modelOffset
+    : new runtime.THREE.Vector3(
+        toNumber(modelOffset?.[0]),
+        toNumber(modelOffset?.[1]),
+        toNumber(modelOffset?.[2])
+      );
+  let radius = 0;
+  for (const x of [normalizedBounds.min[0], normalizedBounds.max[0]]) {
+    for (const y of [normalizedBounds.min[1], normalizedBounds.max[1]]) {
+      for (const z of [normalizedBounds.min[2], normalizedBounds.max[2]]) {
+        const corner = new runtime.THREE.Vector3(toNumber(x), toNumber(y), toNumber(z)).add(offset);
+        radius = Math.max(radius, corner.distanceTo(target));
+      }
+    }
+  }
+  return radius;
+}
+
+function focusRuntimeNormalToView(runtime, view, sceneScaleMode, {
+  animate = true,
+  fit = true,
+  modelOffset = null
+} = {}) {
+  if (
+    !runtime?.THREE ||
+    !runtime?.camera ||
+    !runtime?.controls ||
+    !view ||
+    !Array.isArray(view.center) ||
+    !Array.isArray(view.direction) ||
+    !Array.isArray(view.up)
+  ) {
+    return false;
+  }
+
+  const offset = modelOffset?.isVector3
+    ? modelOffset
+    : new runtime.THREE.Vector3(
+        toNumber(modelOffset?.[0]),
+        toNumber(modelOffset?.[1]),
+        toNumber(modelOffset?.[2])
+      );
+  const target = new runtime.THREE.Vector3(...view.center).add(offset);
+  const direction = new runtime.THREE.Vector3(...view.direction);
+  const up = new runtime.THREE.Vector3(...view.up);
+  if (
+    ![target.x, target.y, target.z, direction.x, direction.y, direction.z, up.x, up.y, up.z].every(Number.isFinite) ||
+    direction.lengthSq() <= 1e-9 ||
+    up.lengthSq() <= 1e-9
+  ) {
+    return false;
+  }
+  direction.normalize();
+  up.normalize();
+
+  const frameMetrics = getViewportFrameMetrics(runtime, runtime.frameInsetsRef?.current);
+  const currentDistance = runtime.camera.position.distanceTo(runtime.controls.target);
+  let distance = clamp(
+    Number.isFinite(currentDistance) && currentDistance > 1e-6
+      ? currentDistance
+      : Math.max(runtime.controls.minDistance || 1, 1),
+    runtime.controls.minDistance || 0.01,
+    runtime.controls.maxDistance || Infinity
+  );
+  let orthographicHalfHeight = null;
+  if (fit) {
+    const radius = Math.max(
+      boundsRadiusAroundTarget(runtime, view.bounds || pointBounds(view.center), target, offset) || 0,
+      getSceneScaleSettings(sceneScaleMode).minModelRadius
+    );
+    const fitCamera = runtime.camera?.isPerspectiveCamera
+      ? runtime.camera
+      : runtime.perspectiveCamera || runtime.camera;
+    distance = clamp(
+      getFitDistanceForBoundingSphere(fitCamera, radius, sceneScaleMode, frameMetrics.aspect),
+      runtime.controls.minDistance || 0.01,
+      runtime.controls.maxDistance || Infinity
+    );
+    if (runtime.camera.isOrthographicCamera) {
+      orthographicHalfHeight = getOrthographicHalfHeightForBoundingSphere(
+        radius,
+        sceneScaleMode,
+        frameMetrics
+      );
+    }
+  }
+
+  const snapshot = {
+    position: target.clone().add(direction.multiplyScalar(distance)).toArray(),
+    target: target.toArray(),
+    up: up.toArray(),
+    zoom: fit ? 1 : runtime.camera.zoom,
+    projection: runtimeCameraProjection(runtime)
+  };
+  if (animate) {
+    return transitionCameraToPerspectiveSnapshot(runtime, snapshot, {
+      durationMs: VIEW_PLANE_TRANSITION_MS,
+      easing: CAMERA_TRANSITION_EASING.EASE_IN_OUT_CUBIC,
+      orthographicHalfHeight
+    });
+  }
+  if (runtime.camera.isOrthographicCamera && orthographicHalfHeight) {
+    setOrthographicCameraHalfHeight(runtime, orthographicHalfHeight, frameMetrics);
+  }
+  return applyPerspectiveSnapshot(runtime, snapshot);
+}
+
 function stepCameraTransition(runtime, timestamp) {
   const transition = runtime?.cameraTransition;
   if (!transition || !runtime?.THREE || !runtime?.camera || !runtime?.controls) {
@@ -1724,19 +1790,7 @@ function getActiveViewPlaneFaceId(runtime) {
   if (offset.lengthSq() < 1e-6) {
     return "";
   }
-  offset.normalize();
-
-  let bestId = "";
-  let bestScore = -Infinity;
-  for (const face of VIEW_PLANE_FACES) {
-    const direction = new runtime.THREE.Vector3(...face.direction).normalize();
-    const score = offset.dot(direction);
-    if (score > bestScore) {
-      bestScore = score;
-      bestId = face.id;
-    }
-  }
-  return bestScore >= VIEW_PLANE_ACTIVE_DOT_THRESHOLD ? bestId : "";
+  return closestViewOrientationId(offset.toArray(), VIEW_PLANE_FACES);
 }
 
 function disposeSceneObject(object) {
@@ -2847,6 +2901,54 @@ const CadViewer = forwardRef(function CadViewer({
     }
     return transitioned;
   };
+  const focusNormalToReference = useCallback((referenceId, {
+    animate = true,
+    fit = true
+  } = {}) => {
+    const runtime = runtimeRef.current;
+    const reference = selectorReferenceForId(activeSelectorRuntime, referenceId);
+    if (!runtime?.camera || !runtime?.controls || !reference) {
+      return false;
+    }
+    // 判斷相機在面的哪一側要以「被點面的中心」為基準;orbit target 可能停在
+    // 面的另一側(對著別的零件),用它會把法向翻反、相機轉到面的背面。
+    const faceCenter = normalToReferenceCenter(reference);
+    const sideOrigin = faceCenter
+      ? new runtime.THREE.Vector3(...faceCenter)
+      : runtime.controls.target;
+    const view = buildNormalToView(reference, {
+      cameraDirection: runtime.camera.position.clone().sub(sideOrigin).toArray(),
+      cameraUp: runtime.camera.up?.toArray?.() || WORLD_UP
+    });
+    if (!view) {
+      return false;
+    }
+    const focused = focusRuntimeNormalToView(
+      runtime,
+      view,
+      sceneScaleModeRef.current,
+      {
+        animate,
+        fit,
+        modelOffset: modelTransformRef.current.offset
+      }
+    );
+    if (!focused) {
+      return false;
+    }
+    defaultPerspectiveResettingRef.current = false;
+    setDefaultPerspectiveDetached(true);
+    if (!animate) {
+      syncCameraZoomPercent(runtime);
+      emitPerspectiveChange(runtime);
+      syncViewPlaneOrientation(runtime);
+    }
+    return true;
+  }, [
+    activeSelectorRuntime,
+    syncCameraZoomPercent,
+    syncViewPlaneOrientation
+  ]);
 
   useImperativeHandle(ref, () => ({
     async captureScreenshot({ filename = "cad-screenshot.png", mode = "download" } = {}) {
@@ -2927,9 +3029,13 @@ const CadViewer = forwardRef(function CadViewer({
     },
     focusViewPreset(faceId) {
       return activateViewPlaneFace(faceId);
+    },
+    normalToReference(referenceId, options = {}) {
+      return focusNormalToReference(referenceId, options);
     }
   }), [
     activeSelectorRuntime,
+    focusNormalToReference,
     meshData?.bounds,
     modelKey,
     normalizedSceneScaleMode,

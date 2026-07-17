@@ -2,7 +2,7 @@
 
 > 2026-07-16 在 text-to-cad repo 端對端實測通過(Codex 讀 spec → 自動建檔 →
 > 內容一字不差 → 未偷 commit)。本機:Windows 11、codex-cli 0.144.5
-> (standalone 安裝於 `C:\Users\Sam\AppData\Local\Programs\OpenAI\Codex`)、
+> (standalone 安裝於 `C:\Users\"根據使用者"\AppData\Local\Programs\OpenAI\Codex`)、
 > ChatGPT 訂閱登入。適用於任何專案,照抄「三、可直接貼的 CLAUDE.md 規則」即可。
 
 ## 一、分工概念

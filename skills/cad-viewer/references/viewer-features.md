@@ -14,7 +14,7 @@ Load this only when a task needs Viewer file-support details or UI control guida
 
 ## Controls
 
-- Navigation: left-drag to orbit, right/middle-drag to pan, wheel or pinch to zoom, and Arrow/WASD keys to orbit. Use the view sphere for top/bottom/front/back/left/right views; click its center for the default isometric view.
+- Navigation: left-drag to orbit, right/middle-drag to pan, wheel or pinch to zoom, and Arrow/WASD keys to orbit. Use the ViewCube faces, edges, and corners for 26 standard orientations, or use its home button for the default isometric view. On STEP topology, right-click a planar face and choose `Normal To` to center, fit, and view that face head-on without changing projection mode.
 - File browser: toggle the left CAD Viewer sidebar, search files/ids/paths, expand folders, select entries, or switch files from the breadcrumb menus.
 - Floating toolbar: `Select` copies STEP topology references, `Draw` opens annotation tools, `Select Pose` appears for robot target picking when available, `Open orbit preview` starts an auto-rotating preview, and the copy/download buttons capture screenshots.
 - Drawing tools: freehand, line, arrow, expand, rectangle, circle, fill, erase, undo, redo, and clear.
