@@ -15,8 +15,15 @@ export const STAGES_SKETCH = [
   ["演示", "PLAY"],
 ];
 
+// 零件庫模式 3 段(對齊 prompt.library 的收庫流程)
+export const STAGES_LIBRARY = [
+  ["選檔", "PICK"],
+  ["訪談", "INTERVIEW"],
+  ["收庫", "ARCHIVE"],
+];
+
 export default function StageStepper({ stageIdx, mode }) {
-  const stages = mode === "sketch" ? STAGES_SKETCH : STAGES;
+  const stages = mode === "sketch" ? STAGES_SKETCH : mode === "library" ? STAGES_LIBRARY : STAGES;
   return (
     <div className="stepper">
       {stages.map(([cn, en], i) => {

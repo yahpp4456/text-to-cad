@@ -10,11 +10,12 @@ const clampH = (h) => Math.max(H_MIN, Math.min(hMax(), h));
 
 export default function Composer({
   running,
-  mode, // "design" | "sketch":placeholder 換文案(「我這句會產出什麼」的提示)
+  mode, // "design" | "sketch" | "library":placeholder 換文案 + 附件收檔範圍(library 才收 STEP)
+  locked = false, // 零件庫硬閘:新對話未附 STP 前鎖定打字/送出(附件鈕/拖放仍開=解鎖的路)
   pickRefs = [],
-  pendingImages = [], // [{id,name,url,status:"uploading"|"ready"|"error",error?}] 附件縮圖 chips
+  pendingFiles = [], // [{id,kind:"image"|"step",name,url,status:"uploading"|"ready"|"error",error?}] 附件 chips
   onAttachFiles,
-  onRemoveImage,
+  onRemoveFile,
   prefill,
   onPrefillConsumed,
   onRemovePick,
@@ -30,10 +31,14 @@ export default function Composer({
   });
   const inputRef = useRef(null);
   const fileRef = useRef(null);
-  const uploading = pendingImages.some((p) => p.status === "uploading");
-  const hasImg = pendingImages.some((p) => p.status === "ready");
-  // 上傳中不可送(imageRefs 還沒拿到 rel);純圖無文字可送
-  const canSend = !running && !uploading && (draft.trim().length > 0 || hasImg);
+  const uploading = pendingFiles.some((p) => p.status === "uploading");
+  const hasFile = pendingFiles.some((p) => p.status === "ready");
+  // 上傳中不可送(refs 還沒拿到 rel);純附件無文字可送;硬閘鎖定時不可送
+  const canSend = !running && !uploading && !locked && (draft.trim().length > 0 || hasFile);
+  // library 模式才收 STEP(檔名判,拖放/貼上的 File.type 對 .step 常是空字串)
+  const acceptsStep = mode === "library";
+  const wantFile = (f) =>
+    f && (f.type.startsWith("image/") || (acceptsStep && /\.ste?p$/i.test(f.name || "")));
 
   // 點規格 chip → 預填草稿並聚焦,讓使用者接著打修正值。
   useEffect(() => {
@@ -91,13 +96,13 @@ export default function Composer({
     setDraft("");
   };
 
-  // 貼上圖片(Ctrl+V 截圖/複製的圖檔)→ 走同一條附件上傳路徑
+  // 貼上附件(Ctrl+V 截圖/複製的檔案)→ 走同一條附件上傳路徑
   const onPaste = (e) => {
     if (!onAttachFiles) return;
     const files = Array.from(e.clipboardData?.items || [])
       .filter((it) => it.kind === "file")
       .map((it) => it.getAsFile())
-      .filter((f) => f && f.type.startsWith("image/"));
+      .filter(wantFile);
     if (files.length) {
       e.preventDefault();
       onAttachFiles(files);
@@ -119,9 +124,7 @@ export default function Composer({
         onAttachFiles
           ? (e) => {
               e.preventDefault();
-              const files = Array.from(e.dataTransfer?.files || []).filter((f) =>
-                f.type.startsWith("image/"),
-              );
+              const files = Array.from(e.dataTransfer?.files || []).filter(wantFile);
               if (files.length) onAttachFiles(files);
             }
           : undefined
@@ -152,15 +155,21 @@ export default function Composer({
           )}
         </div>
       )}
-      {pendingImages.length > 0 && (
+      {pendingFiles.length > 0 && (
         <div className="img-chips">
-          {pendingImages.map((im) => (
-            <span className="img-chip" key={im.id} data-status={im.status}>
-              {im.url ? <img src={im.url} alt="" /> : <span className="img-ph" />}
+          {pendingFiles.map((im) => (
+            <span className="img-chip" key={im.id} data-status={im.status} data-kind={im.kind || "image"}>
+              {im.kind === "step" ? (
+                <span className="img-ph" aria-hidden="true">▤</span>
+              ) : im.url ? (
+                <img src={im.url} alt="" />
+              ) : (
+                <span className="img-ph" />
+              )}
               <span className="img-name" title={im.error || im.name}>
                 {im.status === "error" ? `⚠ ${im.name}` : im.name}
               </span>
-              <a className="pick-clear" onClick={() => onRemoveImage?.(im.id)}>
+              <a className="pick-clear" onClick={() => onRemoveFile?.(im.id)}>
                 ✕
               </a>
             </span>
@@ -174,7 +183,11 @@ export default function Composer({
               ref={fileRef}
               type="file"
               className="composer-file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
+              accept={
+                acceptsStep
+                  ? "image/png,image/jpeg,image/webp,image/gif,.step,.stp"
+                  : "image/png,image/jpeg,image/webp,image/gif"
+              }
               multiple
               style={{ display: "none" }}
               onChange={(e) => {
@@ -184,7 +197,7 @@ export default function Composer({
             />
             <a
               className="composer-btn attach"
-              title="附加圖片(也可直接貼上 / 拖放)"
+              title={acceptsStep ? "附加 STP / 圖片(也可直接貼上 / 拖放)" : "附加圖片(也可直接貼上 / 拖放)"}
               onClick={() => fileRef.current?.click()}
             >
               ⌲
@@ -196,13 +209,18 @@ export default function Composer({
           ref={inputRef}
           className="composer-input"
           value={draft}
+          disabled={locked}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKey}
           onPaste={onPaste}
           placeholder={
-            mode === "sketch"
-              ? "描述機構構想,幾秒搭出可玩草模（Enter 送出）…"
-              : "描述零件,或追加修改（Enter 送出）…"
+            locked
+              ? "先上傳 STP 才能開始:拖放到這裡,或點 ⌲ 選檔…"
+              : mode === "sketch"
+                ? "描述機構構想,幾秒搭出可玩草模（Enter 送出）…"
+                : mode === "library"
+                  ? "送出開始收庫訪談;可先補充型號/備註（Enter 送出）…"
+                  : "描述零件,或追加修改（Enter 送出）…"
           }
         />
         {running ? (

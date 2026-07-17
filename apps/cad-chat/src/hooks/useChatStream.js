@@ -36,7 +36,7 @@ export function useChatStream(dispatch, modeRef) {
         return;
       }
       busyRef.current = true;
-      const { text = "", pickRefs = [], params = null, imageRefs = null, canvas = null } = payload;
+      const { text = "", pickRefs = [], params = null, imageRefs = null, stepRefs = null, canvas = null } = payload;
       const sentWith = sessionIdRef.current; // 本次 POST 所用的 session(回聲採納守衛用)
       const ctrl = new AbortController();
       ctrlRef.current = ctrl;
@@ -57,9 +57,10 @@ export function useChatStream(dispatch, modeRef) {
                 }))
               : undefined,
             params: params || undefined,
-            // 已上傳圖片的輕量參照(uploads/xxx.png);位元組在 server workdir,
-            // 佇列/409 重試原封重送這個 payload 也只是重送 rel 字串(冪等)。
+            // 已上傳附件的輕量參照(uploads/xxx.png / xxx.step);位元組在 server
+            // workdir,佇列/409 重試原封重送這個 payload 也只是重送 rel 字串(冪等)。
             imageRefs: imageRefs?.length ? imageRefs : undefined,
+            stepRefs: stepRefs?.length ? stepRefs : undefined,
             // 當前畫布身分(name/file/source/projectDir):server 據此讓 agent 知道
             // 使用者正在看什麼(唯讀檢視否則零語境)。佇列重試原封重送冪等。
             canvas: canvas || undefined,

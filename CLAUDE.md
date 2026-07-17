@@ -90,6 +90,12 @@ Codex 的任何回報一律當原始素材,由 Claude 驗證後才採用。
   - **`</dev/null` 必加**:Claude Code 的 shell stdin 是非 TTY 管線,codex 會
     停在 `Reading additional input from stdin...` 永久等待。PowerShell 無
     `<` 重導,所以用 Bash 工具跑。
+  - **spec 檔必須 UTF-8 with BOM**:Codex 在 Windows 用 PowerShell 5.1
+    `Get-Content` 讀 spec,無 BOM 的 UTF-8 會被當 cp950 讀成亂碼(中文行為規格
+    全花、只剩 ASCII 程式碼區塊可讀)。Claude 的 Write 工具寫檔無 BOM——落 spec
+    後補 `printf '\xef\xbb\xbf'` 前綴再委派;指令裡註明「(UTF-8 with BOM)」
+    可再保險(它會 `-Encoding utf8` 讀)。中途發現讀成亂碼直接停損重派,
+    別賭它猜對。
   - **`-c 'windows.sandbox="unelevated"'` 必加**:config.toml 全域是
     `elevated`,但本機缺 `codex-windows-sandbox-setup.exe`,elevated 下所有
     本地指令起不來(codex doctor 卻回全綠,別信)。合法值只有

@@ -1,4 +1,5 @@
 // 頂層狀態(useReducer),鏡射設計稿 DCLogic.state。
+import { normalizeMode } from "../lib/chatModes.js";
 import { pendingClarifyFromItems } from "../lib/clarifyText.js";
 
 export const initialState = {
@@ -60,7 +61,7 @@ export function reducer(state, action) {
 
     // 模式切換(切換器/開機還原/伺服端 session 事件校正);非法值收斂 design。
     case "SET_MODE":
-      return { ...state, mode: action.mode === "sketch" ? "sketch" : "design" };
+      return { ...state, mode: normalizeMode(action.mode) };
 
     case "ADD_USER": {
       const { seq, id } = nextId(state);
@@ -388,8 +389,8 @@ export function reducer(state, action) {
       return {
         ...initialState,
         sessionId: s.sessionId || null,
-        // mode normalize:非 "sketch" 一律 design(舊快照無欄位 → design,向後相容)
-        mode: s.mode === "sketch" ? "sketch" : "design",
+        // mode normalize:白名單外一律 design(舊快照無欄位 → design,向後相容)
+        mode: normalizeMode(s.mode),
         _seq: Math.max(Math.trunc(Number(s._seq)) || 0, items.length),
         items,
         versions,

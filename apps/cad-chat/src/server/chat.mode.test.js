@@ -45,3 +45,34 @@ test("version>0 但無 sdk/lastName(理論殘態)→ 仍視為有歷史,不採�
   const r = resolveTurnMode({ mode: "sketch" }, { ...virgin(), version: 2 });
   assert.equal(r.error, "mode_mismatch");
 });
+
+test("library:處女 design session 可採納 library", () => {
+  const session = { mode: "design", sdkSessionId: null, lastName: null, version: 0 };
+  assert.deepEqual(resolveTurnMode({ mode: "library" }, session), {
+    ok: true,
+    mode: "library",
+    adopt: true,
+  });
+});
+
+test("library:有歷史的 library session 拒絕 design", () => {
+  const session = { mode: "library", sdkSessionId: "x" };
+  assert.deepEqual(resolveTurnMode({ mode: "design" }, session), {
+    ok: false,
+    error: "mode_mismatch",
+    mode: "library",
+  });
+});
+
+test("library:library session 收到相符 mode 通過", () => {
+  const session = { mode: "library", sdkSessionId: "x" };
+  assert.deepEqual(resolveTurnMode({ mode: "library" }, session), {
+    ok: true,
+    mode: "library",
+  });
+});
+
+test("library:mode 缺席時沿用 library", () => {
+  const session = { mode: "library", sdkSessionId: "x" };
+  assert.deepEqual(resolveTurnMode({}, session), { ok: true, mode: "library" });
+});

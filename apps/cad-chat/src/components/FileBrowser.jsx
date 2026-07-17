@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 
 import TypeBadge from "./TypeBadge.jsx";
 import { apiUrl } from "@/lib/apiBase";
+import { LIBRARY_FAMILIES } from "../lib/libraryFamilies.js";
 
 // models/ 檔案瀏覽器 overlay:開檔看圖(免 LLM)。
 // onOpenFile(res):/api/open 成功回應 → App dispatch ADD_VERSION+PRESENT。
@@ -186,11 +187,11 @@ export default function FileBrowser({ open, onClose, onOpenFile, onImportFile, o
                             value={libPick.family}
                             onChange={(ev) => setLibPick({ ...libPick, family: ev.target.value })}
                           >
-                            <option value="cylinder">cylinder</option>
-                            <option value="bearing">bearing</option>
-                            <option value="gripper">gripper</option>
-                            <option value="motor">motor</option>
-                            <option value="other">other</option>
+                            {LIBRARY_FAMILIES.map((f) => (
+                              <option value={f} key={f}>
+                                {f}
+                              </option>
+                            ))}
                           </select>
                           <a className="fb-action" onClick={submitLibrary}>
                             {busy === e.rel ? "處理中…" : "確定"}

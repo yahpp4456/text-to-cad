@@ -3,12 +3,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { isMode } from "../../lib/chatModes.js";
 import { resolveAuth } from "../config.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
 import { acquireBusy, getOrCreateSession, persistSession, releaseBusy } from "../sessions.mjs";
 import { condenseTraceback, scrubPaths } from "../cad/python.mjs";
 import { resolveInside } from "../cad/paths.mjs";
 import { MAX_IMAGE_BYTES, sniffImageType } from "../images.mjs";
+import { MAX_STEP_BYTES, sniffStepFile } from "../stepFiles.mjs";
 import { openSse } from "../sse.mjs";
 import { runTurn } from "../agent/runner.mjs";
 import {
@@ -108,8 +110,9 @@ export function chatMiddleware() {
 
     try {
       const img = readImageBlocks(body, session);
+      const steps = readStepRefs(body, session);
       const paramsOnly =
-        session.mode !== "sketch" && // 草模無 PARAMS 產生器,永不走決定性重生路(防禦)
+        session.mode === "design" && // 只有設計模式有 PARAMS 產生器(防禦)
         body.params &&
         Object.keys(body.params).length > 0 &&
         (!body.message || !String(body.message).trim()) &&
@@ -131,7 +134,7 @@ export function chatMiddleware() {
         const { ok } = await runTurn({
           session,
           emit,
-          message: buildUserText(body, session, img),
+          message: buildUserText(body, session, img, steps),
           imageBlocks: img.blocks,
         });
         sse.end({ ok, version: session.version });
@@ -168,7 +171,7 @@ export function chatMiddleware() {
 export function resolveTurnMode(body, session) {
   const req = body?.mode;
   if (req === undefined || req === null) return { ok: true, mode: session.mode };
-  if (req !== "design" && req !== "sketch") return { ok: false, error: "bad_mode" };
+  if (!isMode(req)) return { ok: false, error: "bad_mode" };
   if (req === session.mode) return { ok: true, mode: req };
   const virgin = !session.sdkSessionId && !session.lastName && !(session.version > 0);
   if (virgin) return { ok: true, mode: req, adopt: true };
@@ -207,7 +210,39 @@ export function readImageBlocks(body, session) {
   return { blocks, names, missing };
 }
 
-export function buildUserText(body, session, img) {
+// body.stepRefs(輕量 rel,如 "uploads/xxx.step")→ 驗證後只把「路徑清單」寫進
+// userText 註記(STEP 不進 content blocks——模型不需要位元組,library_preview /
+// library_add 吃路徑)。雙重沙箱鏡射 readImageBlocks:強制 uploads/ 前綴 +
+// resolveInside + 檔頭重嗅探;**非 library session 直接回空**(模式邊界,防多分頁
+// race 把 STEP 塞進設計/草模回合)。
+export function readStepRefs(body, session) {
+  if (session?.mode !== "library") return { names: [], missing: [] };
+  const refs = Array.isArray(body?.stepRefs) ? body.stepRefs.slice(0, 4) : [];
+  const names = [];
+  const missing = [];
+  for (const raw of refs) {
+    const rel = String(raw || "").replace(/\\/g, "/");
+    if (!rel.startsWith("uploads/")) continue;
+    let abs;
+    try {
+      abs = resolveInside(session.workdir, rel);
+    } catch {
+      continue;
+    }
+    let buf;
+    try {
+      buf = fs.readFileSync(abs);
+    } catch {
+      missing.push(rel);
+      continue;
+    }
+    if (!sniffStepFile(buf) || buf.length > MAX_STEP_BYTES) continue;
+    names.push(rel);
+  }
+  return { names, missing };
+}
+
+export function buildUserText(body, session, img, steps) {
   let t = String(body.message || "").trim();
   // 多選幾何參考(pickRefs[]);舊單選字串 pickRef 保留相容
   const refs = Array.isArray(body.pickRefs)
@@ -240,18 +275,31 @@ export function buildUserText(body, session, img) {
   if (img?.missing?.length) {
     t += `\n（附圖 ${img.missing.join("、")} 已遺失,未內嵌。）`;
   }
+  // 上傳 STEP 註記(僅 library session;readStepRefs 已驗證沙箱與檔頭):
+  // 給 agent 的是路徑不是位元組——library_preview/library_add 吃路徑。
+  if (steps?.names?.length) {
+    t += `\n（已上傳 STEP 檔 ${steps.names.length} 件:${steps.names.join("、")}——先用 library_preview 預覽並量測,訪談後用 library_add 收庫。）`;
+  }
+  if (steps?.missing?.length) {
+    t += `\n（上傳檔 ${steps.missing.join("、")} 已遺失。）`;
+  }
   // 當前畫布語境(安全網):使用者在唯讀檢視某外部檔案時,agent 否則完全不知道
   // 畫布上開著什麼(此 turn 的 session 通常沒 lastName)。只在 source="opened" 且
   // 「沒有 _rehydrateNote」時注入——後者是 open-project/自動帶入編輯的權威續接語境,
   // 有它就代表 session 已擁有該模型,不必再靠 canvas 提示(且避免升級瞬間的 stale
   // canvas 與新 session 語境打架)。
-  // (草模 turn 不注入:這段講 .py 產生器/檔案瀏覽器,對草模是錯誤語境)
+  // (草模 turn 不注入:這段講 .py 產生器/檔案瀏覽器,對草模是錯誤語境;
+  //  零件庫 turn 用收庫措辭——設計措辭講「建模新版本」對它也是錯誤語境)
   const cv = body?.canvas;
   if (cv?.source === "opened" && !session?._rehydrateNote && session?.mode !== "sketch") {
     const nm = String(cv.name || "").slice(0, 120);
     const file = String(cv.file || "").slice(0, 200);
     const pd = cv.projectDir ? String(cv.projectDir).slice(0, 200) : null;
-    if (pd) {
+    if (session?.mode === "library") {
+      if (file) {
+        t = `（使用者目前在畫布上檢視 ${file}。可 library_preview 重看,或依訪談流程 library_add 收庫。）\n${t}`;
+      }
+    } else if (pd) {
       t = `（使用者目前在畫布上開著專案「${nm}」,產生器在 models/${pd}/${nm}.py。要了解它先 Read 該 .py;若他要求修改或調參數,提醒他用檔案瀏覽器的「開啟」把它帶入可編輯工作區。）\n${t}`;
     } else if (file) {
       t = `（使用者目前在畫布上檢視 models/${file}(匯入/獨立檔,無產生器,無法參數化編輯)。可 Read 它回答問題,或另外建模新版本。）\n${t}`;

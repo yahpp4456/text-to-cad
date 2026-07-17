@@ -225,6 +225,28 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   (零 eval/derived 改動)**的設計決策:belt 帶體=靜態外公切線跑道環掛共同安裝體
   (輪心距恆定,不做每幀變形),別把它改成 derived;耦合一律「同 drive+scale」
   (皮帶同號 rA/rB、外嚙合齒輪對 −z1/z2),fixture `belt_drive.json` 有閉式測試釘住。
+- **零件庫模式(2026-07-17,第三聊天模式)**:mode 白名單單一真相源
+  `src/lib/chatModes.js`——**語意分工勿統一**:reducer/persist/hydrate 用
+  `normalizeMode`(垃圾收斂 design;chatStore.test 鎖)、events 校正與
+  `resolveTurnMode` 用 `isMode`(垃圾不 dispatch/回 bad_mode;events.test 鎖)。
+  加新 mode 的完整撞面=grep 舊三元式 `=== "sketch" ? "sketch" : "design"`(現應
+  0 命中,新增分支寫三態)。`library_preview` 契約=**只發 present**(`source:
+  "opened"`,不發 version/不動 lastName)——誤發 version 會把收庫拖進時間軸/
+  verified/匯出語意,L4 `smoke_library_live.py` 斷「零 version 事件」。
+  `stepRefs` 只在 library session 被消費(`readStepRefs` 模式邊界);
+  `/api/upload-step` 超限測試要照 smoke_upload 的「limit+100 bytes」手法
+  (整 MB 級尾巴 urllib 會 connection abort 讀不到 413)。動 mode 選路/守衛 →
+  L1 chat.mode/sessions.persist + L3 `smoke_library_mode.py` + smoke_sketch D 段
+  (「草模」字樣斷言在 `rejectNonDesignSession` 的措辭上,改訊息要保逐字);
+  動 prompt.library/tools.library → `prompt.library.test.js` + L4
+  `smoke_library_live.py`。**硬閘**=App `libraryLocked`(library+items 空+無
+  ready step 附件→composer 鎖;訪談開始後不鎖)。**LibraryShelf**(直接看庫,
+  不走 AI):縮圖=libThumbs.js 離屏 three(串行佇列單 WebGL context——並發開
+  context 會被瀏覽器踢;dispose 走 finally);「⇪ 設計」切模式後
+  `importFile(rel,{sessionId:null})` 必須顯式覆寫(閉包舊 sessionId 是零件庫
+  session,不覆寫必 400);收庫順產 GLB 是 fire-and-forget,煙測斷縮圖靠
+  `/api/library-glb` 補轉路(等 data: URL,timeout 放寬)。動 shelf/縮圖/端點 →
+  smoke_library_mode F 段 + library.test(list/delete)。
 
 - **per-user 資料隔離(2026-07-15,VM 部署啟用)**:反代注入 `X-Remote-User` →
   `req.cadchat={user,modelsRoot,sessionsRoot}`(`middleware/userContext.mjs`,鏈首位);

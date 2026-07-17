@@ -7,10 +7,12 @@ import StageStepper from "./components/StageStepper.jsx";
 import Conversation from "./components/conversation/Conversation.jsx";
 import Composer from "./components/conversation/Composer.jsx";
 import Canvas3D from "./components/canvas/Canvas3D.jsx";
+import LibraryShelf from "./components/canvas/LibraryShelf.jsx";
 import ParamsBar from "./components/canvas/ParamsBar.jsx";
 import SketchCanvas3D from "./components/canvas/SketchCanvas3D.jsx";
 import VersionTimeline from "./components/versions/VersionTimeline.jsx";
 import { useChatStream } from "./hooks/useChatStream.js";
+import { normalizeMode } from "./lib/chatModes.js";
 import { latestSpecItem, pendingLessonOffer } from "./lib/clarifyText.js";
 import { apiUrl } from "@/lib/apiBase";
 import { initialState, reducer } from "./state/chatStore.js";
@@ -167,8 +169,9 @@ export default function App() {
   const [exporting, setExporting] = useState(null); // "v2:stl" | null(匯出中鎖鈕)
   // 附件圖片(composer 暫態,刻意不進 reducer/localStorage 快照;選檔即上傳,
   // 送出時只帶輕量 rel)。status: uploading | ready | error。
-  const [pendingImages, setPendingImages] = useState([]);
-  const imgSeqRef = useRef(0);
+  // 附件佇列(圖片+STEP 共用):{id, kind:"image"|"step", name, status, rel, url}
+  const [pendingFiles, setPendingFiles] = useState([]);
+  const fileSeqRef = useRef(0);
 
   useEffect(() => {
     fetch(apiUrl("/api/health"))
@@ -181,9 +184,8 @@ export default function App() {
   // 兩者一致——快照存在即上次也在那個模式);之後每次變動回寫。
   useEffect(() => {
     try {
-      if (localStorage.getItem(MODE_KEY) === "sketch") {
-        dispatch({ type: "SET_MODE", mode: "sketch" });
-      }
+      const m = normalizeMode(localStorage.getItem(MODE_KEY));
+      if (m !== "design") dispatch({ type: "SET_MODE", mode: m });
     } catch {
       /* ignore */
     }
@@ -231,19 +233,22 @@ export default function App() {
   // Composer 走自身 UI 閘,不讀回傳值。
   const submitText = useCallback(
     async (text) => {
-      const ready = pendingImages.filter((p) => p.status === "ready");
+      const ready = pendingFiles.filter((p) => p.status === "ready");
+      const readyImgs = ready.filter((p) => p.kind !== "step");
+      const readySteps = ready.filter((p) => p.kind === "step");
       if ((!text || !text.trim()) && ready.length === 0) return false;
-      if (pendingImages.some((p) => p.status === "uploading")) return false; // Composer 已擋,雙保險
+      if (pendingFiles.some((p) => p.status === "uploading")) return false; // Composer 已擋,雙保險
       const pickRefs = state.pickRefs;
       const cv = state.canvas;
       dispatch({
         type: "ADD_USER",
-        text,
+        // STEP 附件無縮圖:進 transcript 的 text 前綴檔名讓紀錄可讀
+        text: readySteps.length ? `（附 STEP:${readySteps.map((p) => p.name).join("、")}）${text || ""}` : text,
         ref: pickRefs.map((r) => r.label || r.token).join("、"),
-        images: ready.map(({ url, name }) => ({ url, name })), // 縮圖進 transcript
+        images: readyImgs.map(({ url, name }) => ({ url, name })), // 縮圖進 transcript
       });
       dispatch({ type: "CLEAR_PICKREFS" });
-      setPendingImages([]);
+      setPendingFiles([]);
       // 自動帶入編輯:唯讀檢視某可編輯專案(有產生器)時,先升級成 session 再送——
       // 唯讀工作區本來就只有那個檢視版,CLEAR_WORKSPACE 換上同模型可編輯 v1 幾乎無縫。
       // guard `!state.sessionId`:升級後有 session,之後聊天走現狀不重複升級。
@@ -266,12 +271,13 @@ export default function App() {
       send({
         text,
         pickRefs,
-        imageRefs: ready.length ? ready.map((p) => p.rel) : undefined,
+        imageRefs: readyImgs.length ? readyImgs.map((p) => p.rel) : undefined,
+        stepRefs: readySteps.length ? readySteps.map((p) => p.rel) : undefined,
         canvas,
       });
       return true;
     },
-    [send, state.pickRefs, state.canvas, state.sessionId, state.versions, pendingImages],
+    [send, state.pickRefs, state.canvas, state.sessionId, state.versions, pendingFiles],
   );
 
   const applyParams = useCallback(() => {
@@ -296,9 +302,12 @@ export default function App() {
   }, []);
 
   // 匯入元件(UI 軌):複製進 session imported/ → 預填 composer 讓使用者決定何時請 AI 組裝。
+  // opts.sessionId 顯式覆寫(含 null=強制 server mint 新設計 session——LibraryShelf
+  // 「⇪ 設計」切模式後閉包裡的 state.sessionId 還是舊零件庫 session,不覆寫必 400)。
   const importFile = useCallback(
-    async (rel) => {
+    async (rel, opts = {}) => {
       if (state.running) return;
+      const sid = "sessionId" in opts ? opts.sessionId : state.sessionId;
       // 開跑先進一則訊息:①使用者看得到動靜(inspectFacts 最長 30s);②同步佔住
       // items,開機還原的探測若在匯入往返中回來,guard 才擋得住 RESTORE 蓋狀態。
       notify(`匯入 models/${rel},讀取尺寸中…`);
@@ -306,7 +315,7 @@ export default function App() {
         const r = await fetch(apiUrl("/api/import"), {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ sessionId: state.sessionId, file: rel }),
+          body: JSON.stringify({ sessionId: sid, file: rel }),
         });
         const j = await r.json();
         if (!j.ok) {
@@ -331,26 +340,33 @@ export default function App() {
     [state.running, state.sessionId, setSessionId, notify],
   );
 
-  // 附加圖片(附件鈕/貼上/拖放共用):選檔即上傳 → 縮圖 chip 用 /api/asset URL。
-  // 位元組只傳這一次;送訊息只帶 rel,佇列/409 重試不重傳。無 session 時 server
-  // 順手建並回傳(同 /api/import 模式,前端採納)。上限 4 張/訊息。
-  const attachImages = useCallback(
+  // 附加檔案(附件鈕/貼上/拖放共用):選檔即上傳 → chip(圖片有縮圖、STEP 無)。
+  // 圖片走 /api/upload-image;STEP 只在零件庫模式收、走 /api/upload-step。
+  // 位元組只傳這一次;送訊息只帶 rel(imageRefs/stepRefs),佇列/409 重試不重傳。
+  // 無 session 時 server 順手建並回傳(同 /api/import 模式,前端採納)。上限 4 件/訊息。
+  const attachFiles = useCallback(
     async (files) => {
-      const room = 4 - pendingImages.length;
+      const room = 4 - pendingFiles.length;
       for (const f of Array.from(files).slice(0, Math.max(0, room))) {
-        const id = `img${++imgSeqRef.current}`;
-        setPendingImages((prev) => [
+        const isStep = /\.ste?p$/i.test(f.name || "");
+        if (isStep && modeRef.current !== "library") continue; // 模式邊界(Composer 已濾,雙保險)
+        const kind = isStep ? "step" : "image";
+        const id = `f${++fileSeqRef.current}`;
+        setPendingFiles((prev) => [
           ...prev,
-          { id, name: f.name || "image", status: "uploading", rel: null, url: null },
+          { id, kind, name: f.name || kind, status: "uploading", rel: null, url: null },
         ]);
         try {
+          const endpoint = isStep ? "/api/upload-step" : "/api/upload-image";
           const r = await fetch(
             apiUrl(
-              `/api/upload-image?sessionId=${encodeURIComponent(state.sessionId || "")}&name=${encodeURIComponent(f.name || "image")}`,
+              `${endpoint}?sessionId=${encodeURIComponent(state.sessionId || "")}&name=${encodeURIComponent(f.name || kind)}`,
             ),
             {
               method: "POST",
-              headers: { "content-type": f.type || "application/octet-stream" },
+              headers: {
+                "content-type": isStep ? "application/octet-stream" : f.type || "application/octet-stream",
+              },
               body: f,
             },
           );
@@ -360,11 +376,15 @@ export default function App() {
             setSessionId(j.sessionId);
             dispatch({ type: "SET_SESSION", sessionId: j.sessionId });
           }
-          setPendingImages((prev) =>
-            prev.map((p) => (p.id === id ? { ...p, status: "ready", rel: j.rel, url: j.url } : p)),
+          setPendingFiles((prev) =>
+            prev.map((p) =>
+              p.id === id
+                ? { ...p, status: "ready", rel: j.rel, url: isStep ? null : j.url }
+                : p,
+            ),
           );
         } catch (err) {
-          setPendingImages((prev) =>
+          setPendingFiles((prev) =>
             prev.map((p) =>
               p.id === id ? { ...p, status: "error", error: String(err?.message || err) } : p,
             ),
@@ -372,7 +392,7 @@ export default function App() {
         }
       }
     },
-    [state.sessionId, setSessionId, pendingImages.length],
+    [state.sessionId, setSessionId, pendingFiles.length],
   );
 
   // 開既有專案:新 session + 伺服端同步重建,回應帶 version/present/params/motion。
@@ -808,7 +828,7 @@ export default function App() {
   // mode 由 reducer RESET 保留(新對話沿用當前模式)。
   const newChat = useCallback(() => {
     if (state.running) return;
-    setPendingImages([]); // 圖屬於舊 session(rel 對新 session 無效);遲到的上傳回應 no-op
+    setPendingFiles([]); // 附件屬於舊 session(rel 對新 session 無效);遲到的上傳回應 no-op
     resetSession();
     dispatch({ type: "RESET" });
     try {
@@ -822,7 +842,7 @@ export default function App() {
     }
   }, [state.running, resetSession]);
 
-  // 模式切換(草模↔設計):mode 是 session 出生時的恆定屬性——已有內容就出
+  // 模式切換(草模/設計/零件庫):mode 是 session 出生時的恆定屬性——已有內容就出
   // 樣式化確認框(非原生 confirm)後開新對話;還沒開聊(含只上傳過圖的處女
   // session)直接切,首則訊息會讓 server 採納新 mode(resolveTurnMode 的處女例外)。
   const switchMode = useCallback(
@@ -833,12 +853,12 @@ export default function App() {
         dispatch({ type: "SET_MODE", mode: next });
         return;
       }
-      const name = next === "sketch" ? "草模" : "設計";
+      const name = next === "sketch" ? "草模" : next === "library" ? "零件庫" : "設計";
       setConfirmBox({
         eyebrow: `SWITCH MODE · 切換到「${name}」`,
         body: "切換模式會開一個新對話:目前的對話與畫布會清空,已產出的檔案仍保留在磁碟。",
         actionLabel: `切換到「${name}」`,
-        accent: next === "sketch" ? "var(--sketch)" : "var(--design)",
+        accent: next === "sketch" ? "var(--sketch)" : next === "library" ? "var(--part)" : "var(--design)",
         onConfirm: () => {
           newChat();
           dispatch({ type: "SET_MODE", mode: next });
@@ -890,9 +910,9 @@ export default function App() {
   );
 
   // 可另存 = 這條 session 產過東西(開檔看圖的 o* 版本不算,那本來就在 models/ 裡;
-  // 草模 v1 不支援另存——glbUrl 空本來就 false,mode 守衛是雙保險)
+  // 草模/零件庫不支援另存——只有設計模式有 session 產物專案)
   const canSave = !!(
-    state.mode !== "sketch" &&
+    state.mode === "design" &&
     state.sessionId &&
     state.canvas.glbUrl &&
     state.canvas.source !== "opened"
@@ -980,8 +1000,14 @@ export default function App() {
           return;
         }
         const hasGenVersions = (snap.versions || []).some((v) => v.source !== "opened");
-        // 草模 session 的產物訊號是 hasSketch(session-info 另回);設計走 hasGenerator
-        const artifactAlive = snap.mode === "sketch" ? info.hasSketch : info.hasGenerator;
+        // 草模 session 的產物訊號是 hasSketch(session-info 另回);設計走 hasGenerator;
+        // 零件庫無建模產物(versions 恆空,hasGenVersions=false 本就繞過)→ 恆 true 防禦
+        const artifactAlive =
+          snap.mode === "sketch"
+            ? info.hasSketch
+            : snap.mode === "library"
+              ? true
+              : info.hasGenerator;
         if (info.exists && (!hasGenVersions || artifactAlive)) {
           dispatch({ type: "RESTORE", snapshot: snap });
           setSessionId(snap.sessionId);
@@ -1014,6 +1040,45 @@ export default function App() {
   const clarifyPending = state.clarify != null;
   const needAuth = health && !health.agentReady;
   const sketchMode = state.mode === "sketch";
+  const designMode = state.mode === "design"; // 時間軸動作/ParamsBar 只屬於設計模式
+  // 零件庫硬閘:新對話(還沒有任何訊息)未附上 STP 前鎖定輸入框——訪談開始後
+  // 不再鎖(否則沒法回答 AI 的追問)。附件鈕/拖放/空狀態上傳區是解鎖的路。
+  const libraryLocked =
+    state.mode === "library" &&
+    state.items.length === 0 &&
+    !pendingFiles.some((p) => p.kind === "step" && p.status === "ready");
+
+  // LibraryShelf 卡片動作:預覽=載進畫布(單純檢視,不進時間軸——與 library_preview
+  // 工具同語意);⇪ 設計=確認切設計模式(開新對話)後強制 mint 新 session 匯入。
+  const shelfPreview = useCallback((p, glbUrl) => {
+    if (!glbUrl) return;
+    dispatch({
+      type: "PRESENT",
+      glbUrl,
+      name: p.slug,
+      code: p.slug,
+      ver: "",
+      fileType: "part",
+      source: "opened",
+    });
+  }, []);
+  const shelfImportToDesign = useCallback(
+    (p) => {
+      if (state.running) return;
+      setConfirmBox({
+        eyebrow: "USE PART · 用這件零件",
+        body: `切到「設計」模式開新對話,並把「${p.label}」匯入場景——匯入後描述要怎麼配上你的設計幾何即可。`,
+        actionLabel: "切換並匯入",
+        accent: "var(--part)",
+        onConfirm: async () => {
+          newChat();
+          dispatch({ type: "SET_MODE", mode: "design" });
+          await importFile(p.rel, { sessionId: null }); // 強制新設計 session(舊閉包是零件庫 session)
+        },
+      });
+    },
+    [state.running, newChat, importFile],
+  );
   // 需要使用者作答的介面一律在視圖(聊天卡=被動紀錄):
   // 最新 spec 卡 → 視圖 SpecPanel(規格修正);最舊未答 lesson_offer → 視圖是/否面板。
   const liveSpec = useMemo(() => latestSpecItem(state.items), [state.items]);
@@ -1081,15 +1146,17 @@ export default function App() {
             mode={state.mode}
             specLiveId={specLiveId}
             onSubmitText={submitText}
+            onAttachFiles={attachFiles}
             handlers={handlers}
           />
           <Composer
             running={state.running}
             mode={state.mode}
+            locked={libraryLocked}
             pickRefs={state.pickRefs}
-            pendingImages={pendingImages}
-            onAttachFiles={attachImages}
-            onRemoveImage={(id) => setPendingImages((prev) => prev.filter((p) => p.id !== id))}
+            pendingFiles={pendingFiles}
+            onAttachFiles={attachFiles}
+            onRemoveFile={(id) => setPendingFiles((prev) => prev.filter((p) => p.id !== id))}
             prefill={state.prefill}
             onPrefillConsumed={() => dispatch({ type: "CLEAR_PREFILL" })}
             onRemovePick={(token) => dispatch({ type: "REMOVE_PICKREF", token })}
@@ -1099,6 +1166,13 @@ export default function App() {
           />
         </div>
         <div className="right-col">
+          {state.mode === "library" && (
+            <LibraryShelf
+              onPreview={shelfPreview}
+              onImportToDesign={shelfImportToDesign}
+              refreshSignal={state.running}
+            />
+          )}
           {sketchMode ? (
             // 草模世界:SketchCanvas3D(內含 DofBar 底欄)取代 Canvas3D+ParamsBar;
             // 面標記/物件屬性/匯出提示/運動示意 chip 天然不存在(獨立元件)
@@ -1162,12 +1236,14 @@ export default function App() {
                 onParam={(k, v) => dispatch({ type: "SET_PARAM_VALUE", key: k, value: v })}
                 onApplyParams={applyParams}
               />
-              <ParamsBar
-                params={state.params}
-                disabled={state.canvas.status !== "ready" || state.running}
-                onParam={(k, v) => dispatch({ type: "SET_PARAM_VALUE", key: k, value: v })}
-                onApply={applyParams}
-              />
+              {designMode && (
+                <ParamsBar
+                  params={state.params}
+                  disabled={state.canvas.status !== "ready" || state.running}
+                  onParam={(k, v) => dispatch({ type: "SET_PARAM_VALUE", key: k, value: v })}
+                  onApply={applyParams}
+                />
+              )}
             </>
           )}
           <VersionTimeline
@@ -1175,11 +1251,11 @@ export default function App() {
             activeVer={state.activeVer}
             onSelect={(id) => dispatch({ type: "SELECT_VERSION", id })}
             onRevert={revertVersion}
-            onExport={!sketchMode && state.sessionId ? exportVersion : null}
-            onDownloadStep={!sketchMode && state.sessionId ? downloadStep : null}
-            onValidate={!sketchMode && state.sessionId ? validateVersion : null}
+            onExport={designMode && state.sessionId ? exportVersion : null}
+            onDownloadStep={designMode && state.sessionId ? downloadStep : null}
+            onValidate={designMode && state.sessionId ? validateVersion : null}
             onExportParts={
-              !sketchMode && state.sessionId && state.canvas.type === "assembly"
+              designMode && state.sessionId && state.canvas.type === "assembly"
                 ? () => exportParts(null, "step")
                 : null
             }

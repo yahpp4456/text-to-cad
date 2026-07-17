@@ -257,3 +257,23 @@ test("probeSessionOnDisk:不存在 / 存在含產物 / 非法 id;絕不建目錄
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("library session mint→persist→重掛仍保留 library mode", async () => {
+  const id = freshId("modeLibrary");
+  const dir = path.join(SESSIONS_ROOT, id);
+  try {
+    const session = getOrCreateSession(id, { mode: "library" });
+    assert.equal(session.mode, "library");
+
+    persistSession(session);
+    const meta = JSON.parse(fs.readFileSync(path.join(dir, "session.json"), "utf8"));
+    assert.equal(meta.mode, "library");
+
+    // cache-busted module 模擬重啟後 registry 清空。
+    const freshSessions = await import(`./sessions.mjs?library-hydrate=${id}`);
+    const hydrated = freshSessions.getOrCreateSession(id);
+    assert.equal(hydrated.mode, "library");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

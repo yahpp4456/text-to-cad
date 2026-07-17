@@ -57,7 +57,7 @@ async function handleImport(body, res, ctx = {}) {
     sendJson(res, 409, { ok: false, error: "session 忙碌中(等目前回合結束)" });
     return;
   }
-  if (rejectSketchSession(session, res, "匯入 STEP")) return;
+  if (rejectNonDesignSession(session, res, "匯入 STEP")) return;
   const imp = importStepIntoSession(session, body?.file);
   if (!imp.ok) {
     sendJson(res, 200, { ok: false, error: imp.error });
@@ -361,13 +361,17 @@ function makeExportScratch(session, rawVer) {
 // 取既有 session(絕不 mint):getOrCreateSession 對格式合法但已 GC/不存在的 id 會
 // mkdirSync 一個全新空目錄——壞請求(stale localStorage 的死 id)不該在磁碟留垃圾,
 // 空目錄還會讓 session-info 對死 id 誤回 exists:true。probeSessionOnDisk 唯讀。
-// 草模 session 的顯式 400 拒絕:這些端點對草模無意義(無 STEP/產生器)。
+// 非設計 session 的顯式 400 拒絕:這些端點只對設計模式有意義(草模無 STEP/產生器;
+// 零件庫是收藏管理,收庫產物在 models/parts-library/ 而非 session 工作區)。
 // 不靠 resolveExportBase 的「STEP 不存在」404 兜底——顯式拒絕才誠實、才可測。
-function rejectSketchSession(session, res, what) {
-  if (session?.mode !== "sketch") return false;
+// 訊息措辭:草模保留「草模模式沒有…」逐字(smoke_sketch D 段斷言),library 對應
+// 「零件庫模式沒有…」。
+function rejectNonDesignSession(session, res, what) {
+  if (!session?.mode || session.mode === "design") return false;
+  const label = session.mode === "sketch" ? "草模" : "零件庫";
   sendJson(res, 400, {
     ok: false,
-    error: `草模模式沒有${what}(切到「設計」模式產出真 CAD 後才可用)`,
+    error: `${label}模式沒有${what}(切到「設計」模式產出真 CAD 後才可用)`,
   });
   return true;
 }
@@ -504,7 +508,7 @@ async function handleExport(body, res, ctx = {}) {
   }
   const session = requireExistingSession(body, res, ctx);
   if (!session) return;
-  if (rejectSketchSession(session, res, "匯出")) return;
+  if (rejectNonDesignSession(session, res, "匯出")) return;
   if (session.busy) {
     sendJson(res, 409, { ok: false, error: "session 忙碌中(等目前回合結束)" });
     return;
@@ -625,7 +629,7 @@ async function handleExportParts(body, res, ctx = {}) {
   }
   const session = requireExistingSession(body, res, ctx);
   if (!session) return;
-  if (rejectSketchSession(session, res, "拆件匯出")) return;
+  if (rejectNonDesignSession(session, res, "拆件匯出")) return;
   if (session.busy) {
     sendJson(res, 409, { ok: false, error: "session 忙碌中(等目前回合結束)" });
     return;
@@ -714,7 +718,7 @@ function handleSaveProject(body, res, ctx = {}) {
     return;
   }
   const session = getOrCreateSession(sid, { user: ctx.user });
-  if (rejectSketchSession(session, res, "另存專案")) return;
+  if (rejectNonDesignSession(session, res, "另存專案")) return;
   if (!session.lastName) {
     sendJson(res, 400, { ok: false, error: "目前沒有可保存的產物(先讓 AI 產出模型)" });
     return;
@@ -755,7 +759,7 @@ function handleSaveProject(body, res, ctx = {}) {
 async function handleValidate(body, res, ctx = {}) {
   const session = requireExistingSession(body, res, ctx);
   if (!session) return;
-  if (rejectSketchSession(session, res, "精算")) return;
+  if (rejectNonDesignSession(session, res, "精算")) return;
   if (!session.lastName) {
     sendJson(res, 400, { ok: false, error: "目前沒有可驗證的產物(先讓 AI 產出模型)" });
     return;
@@ -817,7 +821,7 @@ async function handleValidate(body, res, ctx = {}) {
 async function handleValidateVer(body, res, ctx = {}) {
   const session = requireExistingSession(body, res, ctx);
   if (!session) return;
-  if (rejectSketchSession(session, res, "匯出前驗證")) return;
+  if (rejectNonDesignSession(session, res, "匯出前驗證")) return;
   if (session.busy) {
     sendJson(res, 409, { ok: false, error: "session 忙碌中(等目前回合結束)" });
     return;

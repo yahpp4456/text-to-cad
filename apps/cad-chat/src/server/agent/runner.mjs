@@ -13,9 +13,11 @@ import { scrubPaths } from "../cad/python.mjs";
 import { getLessonsDigest, recordTurnError } from "../lessons.mjs";
 import { persistSession } from "../sessions.mjs";
 import { buildSystemPrompt } from "./prompt.mjs";
+import { buildLibrarySystemPrompt } from "./prompt.library.mjs";
 import { buildSketchSystemPrompt } from "./prompt.sketch.mjs";
 import { makeToolGuard } from "./guards.mjs";
 import { buildCadchatServer } from "./tools.mjs";
+import { LIBRARY_MCP_TOOLS, buildLibraryServer } from "./tools.library.mjs";
 import { SKETCH_MCP_TOOLS, buildSketchServer } from "./tools.sketch.mjs";
 
 const MCP_TOOLS = [
@@ -41,6 +43,9 @@ const ALLOWED = ["Read", "Glob", "Grep", ...MCP_TOOLS];
 // 草模模式:純 MCP 白名單(不含 Read/Glob/Grep——schema 契約整份內嵌 prompt,
 // 沒有值得讀的參考檔,保留只會誘導漂回 CAD 思維)。
 const SKETCH_ALLOWED = [...SKETCH_MCP_TOOLS];
+
+// 零件庫模式:MCP 6 工具 + Read/Glob/Grep(查庫要列/讀 parts-library/*/meta.json)。
+const LIBRARY_ALLOWED = ["Read", "Glob", "Grep", ...LIBRARY_MCP_TOOLS];
 
 // CLI harness 層的非同步/編排工具不經過 canUseTool(實測 Agent 子代理與 ScheduleWakeup
 // 直接放行),必須用 disallowedTools 從工具清單整個移除。cad-chat 的契約是
@@ -70,15 +75,19 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
   session._clarifyPending = false; // 使用者的新訊息 = 已回答上回合的提問
 
   // 模式選路:prompt / 工具集 / 白名單三路一起換(session.mode 是 mint 時的恆定屬性)。
-  const isSketch = session.mode === "sketch";
+  const mode = session.mode; // mint/hydrate 已 normalizeMode,恆為白名單值
+  const isSketch = mode === "sketch";
   const mcp = isSketch
     ? buildSketchServer({ session, emit, signal: abort.signal })
-    : buildCadchatServer({ session, emit, signal: abort.signal });
-  const allowed = isSketch ? SKETCH_ALLOWED : ALLOWED;
+    : mode === "library"
+      ? buildLibraryServer({ session, emit, signal: abort.signal })
+      : buildCadchatServer({ session, emit, signal: abort.signal });
+  const allowed = isSketch ? SKETCH_ALLOWED : mode === "library" ? LIBRARY_ALLOWED : ALLOWED;
   // 累積教訓摘要:每 turn 重算一次(讀一個小 JSON;失敗回 "" 絕不擋 turn),
   // buildSystemPrompt 讀 session._lessonsDigest 注入「# 累積教訓」段。
-  // 草模不注入:現有教訓全是 build123d/幾何驗證語彙,對草模是純 token 浪費+契約污染。
-  session._lessonsDigest = isSketch ? "" : getLessonsDigest();
+  // 只有設計模式注入:現有教訓全是 build123d/幾何驗證語彙,對草模/零件庫是
+  // 純 token 浪費+契約污染。
+  session._lessonsDigest = mode === "design" ? getLessonsDigest() : "";
 
   // prompt 恆走 streaming input(單一程式路徑):SDK 的字串 prompt 會被傳輸層硬編成
   // 純 text block,永遠帶不了 image content block;這裡自組同形狀的 user message
@@ -113,13 +122,17 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
-        append: isSketch ? buildSketchSystemPrompt(session) : buildSystemPrompt(session),
+        append: isSketch
+          ? buildSketchSystemPrompt(session)
+          : mode === "library"
+            ? buildLibrarySystemPrompt(session)
+            : buildSystemPrompt(session),
       },
       mcpServers: { cadchat: mcp },
       allowedTools: allowed,
       disallowedTools: DISALLOWED,
       permissionMode: "default",
-      canUseTool: makeToolGuard(allowed, { sketch: isSketch }),
+      canUseTool: makeToolGuard(allowed, { mode }),
       abortController: abort,
       // 串流 partial messages:沒有它,從送出到第一段完整文字之間(推理+寫產生器
       // 原始碼可達數十秒)前端完全沒有回饋。
@@ -210,6 +223,7 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
           session.sdkSessionId = null;
           session._resumedFromDisk = false;
           session._resumeFailedOnce = false;
+          // library session 的 lastName 恆 null(preview 不動產物欄位)→ 天然跳過
           if (session.lastName) {
             session._rehydrateNote = isSketch
               ? `（先前的對話紀錄無法續接,本訊息以新對話接續既有草模 ${session.lastName}。` +

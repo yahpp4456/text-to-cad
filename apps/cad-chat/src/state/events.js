@@ -1,4 +1,5 @@
 // 把 SSE 事件映射成 store actions。
+import { isMode } from "../lib/chatModes.js";
 import { unescapeNewlines } from "../lib/clarifyText.js";
 
 // busy 事件的 what(工具名) → 進行中活動列的友善文字。
@@ -33,7 +34,7 @@ export function handleEvent(dispatch, type, data = {}) {
       dispatch({ type: "SET_SESSION", sessionId: data.sessionId });
       // 伺服端 session 的 mode 是權威真相(per-session 恆定)→ 校正前端切換器
       // (mode_mismatch 400 之外的溫和同步路;無欄位=舊 server,不動)。
-      if (data.mode === "sketch" || data.mode === "design") {
+      if (isMode(data.mode)) {
         dispatch({ type: "SET_MODE", mode: data.mode });
       }
       break;
@@ -162,6 +163,7 @@ export function handleEvent(dispatch, type, data = {}) {
         code: data.code,
         ver: data.ver,
         fileType: data.type || "",
+        source: data.source || undefined, // library_preview 帶 "opened";其餘 SSE present 不帶(fallback generated)
         projectDir: data.projectDir ?? null,
         flatGlbUrl: data.flatGlbUrl ?? null,
         flatLinesUrl: data.flatLinesUrl ?? null,

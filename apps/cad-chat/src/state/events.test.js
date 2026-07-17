@@ -161,3 +161,8 @@ test("present 事件:sceneUrl 透傳;artifact 事件:sketch 摘要欄位(title/d
   assert.equal(art.item.dofs.length, 1);
   assert.equal(art.item.joints.revolute, 1);
 });
+
+test("session 事件:library mode dispatch SET_MODE", () => {
+  const actions = collect("session", { sessionId: "s_library", mode: "library" });
+  assert.deepEqual(actions[1], { type: "SET_MODE", mode: "library" });
+});

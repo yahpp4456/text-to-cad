@@ -34,6 +34,7 @@ ORDER = [
     "smoke_sweep_overlay.py",
     "smoke_sweep_window.py",
     "smoke_library.py",
+    "smoke_library_mode.py",
     "smoke_sketch.py",
     "smoke_versions.py",
     "smoke_restore.py",
@@ -53,6 +54,7 @@ LLM_GATED = [
     "smoke_sketch_live.py",
     "smoke_sketch_clarify_live.py",
     "smoke_sweep_live.py",
+    "smoke_library_live.py",
 ]
 
 if not server_alive():

@@ -318,6 +318,138 @@
   flex-direction: column;
   gap: 9px;
 }
+/* 零件庫空狀態上傳區(硬閘:先上傳 STP 才會開始) */
+.lib-dropzone {
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 34px 20px;
+  border: 2px dashed color-mix(in srgb, var(--part) 55%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--part) 5%, transparent);
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+.lib-dropzone:hover {
+  border-color: var(--part);
+  background: color-mix(in srgb, var(--part) 10%, transparent);
+}
+.lib-dz-icon {
+  font-size: 26px;
+  color: var(--part);
+  line-height: 1;
+}
+.lib-dz-title {
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--ink);
+}
+.lib-dz-sub {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+.composer-input:disabled {
+  background: transparent;
+  cursor: not-allowed;
+}
+/* 零件庫貨架(零件庫模式,畫布上方常駐、可收合) */
+.lib-shelf {
+  flex: none;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+}
+.lib-shelf-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+}
+.lib-shelf-eyebrow {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 2.5px;
+  color: var(--text-muted);
+}
+.lib-shelf-count {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.lib-shelf-toggle {
+  cursor: pointer;
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.lib-shelf-toggle:hover {
+  color: var(--part);
+}
+.lib-shelf-track {
+  display: flex;
+  gap: 10px;
+  padding: 0 16px 12px;
+  overflow-x: auto;
+}
+.lib-shelf-empty {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 8px 0 4px;
+}
+.lib-card {
+  flex: none;
+  width: 132px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-sub);
+}
+.lib-card-thumb {
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  height: 92px;
+  border-radius: 7px;
+  background: #fff;
+  overflow: hidden;
+}
+.lib-card-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+}
+.lib-card-ph {
+  font-size: 30px;
+  color: var(--line);
+}
+.lib-card-label {
+  font-weight: 700;
+  font-size: 11.5px;
+  color: var(--ink);
+  line-height: 1.3;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.lib-card-meta {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.lib-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+.lib-card-actions .lib-del:hover {
+  border-color: #c0392b;
+  color: #c0392b;
+}
 .empty-examples-eyebrow {
   font-family: var(--font-eyebrow);
   font-weight: 600;
@@ -3349,9 +3481,19 @@
 .mode-seg[data-on="true"][data-mode="sketch"] {
   background: var(--sketch);
 }
+.mode-seg[data-on="true"][data-mode="library"] {
+  background: var(--part);
+}
 .mode-seg[data-on="true"] .mode-cn,
 .mode-seg[data-on="true"] .mode-en {
   color: #fff;
+}
+/* 分隔線:創作組(草模/設計)vs 管理組(零件庫) */
+.mode-divider {
+  align-self: stretch;
+  width: 1px;
+  margin: 3px 4px;
+  background: var(--line);
 }
 
 /* 草模世界的「下一句話」提示:composer 上緣琥珀 hairline */

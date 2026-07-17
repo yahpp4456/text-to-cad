@@ -440,3 +440,22 @@ test("RESTORE:mode normalize(舊快照無欄位 → design);canvas 只有 sceneU
   assert.equal(sk.canvas.status, "loading"); // 回灌走重載
   assert.equal(sk.versions[0].sceneUrl, "su1");
 });
+
+test("SET_MODE:library 正常切換", () => {
+  const s = reducer(initialState, { type: "SET_MODE", mode: "library" });
+  assert.equal(s.mode, "library");
+});
+
+test("RESET:保留 library mode", () => {
+  const library = reducer(initialState, { type: "SET_MODE", mode: "library" });
+  const reset = reducer(library, { type: "RESET" });
+  assert.equal(reset.mode, "library");
+});
+
+test("RESTORE:library snapshot 還原 library mode", () => {
+  const s = reducer(initialState, {
+    type: "RESTORE",
+    snapshot: { sessionId: "s_library", mode: "library" },
+  });
+  assert.equal(s.mode, "library");
+});

@@ -238,6 +238,74 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
   零 present——「必問」的模型判斷驗證點)。
   **注意 L1 glob**:`src/lib/*.test.js` 掃不到子目錄,要加 `src/lib/sketch/*.test.js`。
 
+## 零件庫模式(PARTS LIBRARY,2026-07-17)
+
+「**零件庫**」是第三種聊天模式(切換器與「草模|設計」間有**分隔線**、綠色
+`--part`;創作組 vs 管理組):把原廠 STP **拖進聊天** → agent `library_preview`
+轉 GLB 呈現 3D 外形+量測 bbox/面數 → `emit_spec`+`emit_clarify` **訪談一次問齊**
+(名稱/型號、family、廠牌來源、備註)→ `library_add` 收進
+`models/parts-library/<slug>/`(`<slug>.step` 忠實外形+`meta.json`)。
+取代 FileBrowser「收入庫」鈕深埋四步的舊路(該鈕仍在,低頻備用)。
+
+- **硬閘:先上傳才會開始**:零件庫模式的新對話(尚無訊息)未附 STP 前
+  composer 鎖定(placeholder 提示、送出鈕不亮);空狀態=大型上傳區
+  `LibraryDropzone`(拖放/點擊選檔,取代範例列)。附上 STP → 解鎖;訪談開始後
+  (items 非空)不再鎖——使用者要能回答 AI 的追問。閘門推導在 App
+  `libraryLocked`(mode/items/pendingFiles 三條件)。
+- **LibraryShelf 直接看庫(不走 AI 問答)**:零件庫模式畫布上方常駐、可收合的
+  卡片貨架(`components/canvas/LibraryShelf.jsx`)——每卡=**離屏 three 縮圖**
+  (`src/lib/libThumbs.js`:GLB→`renderModel.capturePng()` dataURL,串行佇列單
+  context、快取 key=glbUrl 含 mtime buster)+ label/family/bbox +三動作:
+  「預覽」(PRESENT 進畫布,source:"opened" 不進時間軸)、「⇪ 設計」(確認切
+  設計模式開新對話 → `/api/import` 強制 mint 新 session + prefill——注意閉包裡
+  的舊 sessionId 是零件庫 session,`importFile(rel, {sessionId:null})` 顯式覆寫)、
+  「刪」(inline 二次確認)。縮圖鏈:收庫兩路(endpoint+agent 工具)成功後
+  fire-and-forget `ensureStepGlb` 順產庫內 GLB sidecar;缺 GLB 的卡由
+  `POST /api/library-glb` 按需補轉(序列,防 spawn 突刺)。
+- **瀏覽端點**:`GET /api/library-list`(meta+GLB 存在性,addedAt 降冪)、
+  `POST /api/library-glb {slug}`(補轉)、`POST /api/library-delete {slug}`
+  (整目錄移除;slug 過 librarySlug+resolveInside 沙箱)。
+
+- **mode 白名單單一真相源**:`src/lib/chatModes.js`(`MODES=["design","sketch",
+  "library"]`;`normalizeMode`=垃圾收斂 design 供 reducer/persist/hydrate、
+  `isMode`=嚴格判別供 events 校正/`resolveTurnMode`——兩語意分別被
+  chatStore.test 與 events.test 鎖死,勿統一)。全庫已無散落的
+  `=== "sketch" ? "sketch" : "design"` 三元式(那會把新 mode 靜默壓成 design)。
+- **STP 上傳鏈**:`POST /api/upload-step`(`middleware/upload.mjs`;
+  octet-stream、25MB 上限含排水語意、magic 檔頭 `ISO-10303-21` 嗅探=
+  `src/server/stepFiles.mjs`)→ 落 session `uploads/` → `/api/chat` body 帶
+  `stepRefs`(`readStepRefs` 雙沙箱+重嗅探,**非 library session 直接丟棄**)→
+  `buildUserText` 只注入路徑註記(STEP 不進 content blocks)。Composer 的
+  accept/貼上/拖放只在 library 模式收 `.step/.stp`(App `attachFiles` 雙保險);
+  附件佇列泛化為 `pendingFiles`(`kind:"image"|"step"`,step chip ▤ 無縮圖)。
+- **工具集**(`agent/tools.library.mjs`;prompt=`agent/prompt.library.mjs`):
+  共用 emit 4 工具 + `library_preview`(轉檔管線重用 `cad/stepPreview.mjs`
+  ——從 files.mjs 抽出的 `ensureStepGlb`/`inspectFactsAbs` choke point;
+  **只發 present 事件**,`source:"opened"`、不發 version/不動 lastName——
+  收庫不進時間軸)+ `library_add`(重用 `addLibraryPart`;`resolveLibrarySource`
+  只准 `uploads/` 與 models/ 相對路徑,**絕對路徑拒收**;CJK slug 全滅防呆
+  =淨化退 "part" 時回 error 要英數 slug)。白名單 `LIBRARY_ALLOWED` =
+  Read/Glob/Grep(查庫)+ 6 MCP 工具;lessons digest 不注入(同草模)。
+  family 分類單一真相源 `src/lib/libraryFamilies.js`(9 類;FileBrowser 下拉、
+  z.enum、prompt 分類表同源)。
+- **端點行為**:library session 打 export/export-parts/validate/validate-ver/
+  import/save-project → 顯式 400(`rejectNonDesignSession`,訊息含「零件庫」;
+  草模訊息字樣「草模」不變)。hydrate 產物守衛第三分支:library 無建模產物
+  (lastName 恆 null),artifact=null 跳過檢查。
+- **前端**:StageStepper 3 段(選檔→訪談→收庫);空狀態/範例/placeholder 專屬
+  文案;畫布=Canvas3D **無 ParamsBar**(預覽 `source:"opened"` 讓拆件匯出閘
+  天然關);時間軸動作鈕全走 `designMode` 閘。跨重整:RESTORE 走 library
+  守衛(versions 恆空天然放行),畫布 glbUrl 回灌。
+- **測試**:L1 `chatModes.test.js`/`stepFiles.sniff.test.js`/
+  `prompt.library.test.js`(白名單 deepEqual+prompt 字面鎖+FAMILY_DESC 鍵集合)
+  + chat.mode/chatStore/events/sessions.persist/library.test 各 library 案例
+  (含 listLibraryParts/deleteLibraryPart);
+  L3 `smoke_library_mode.py`(護欄/upload 正負案/切換器/硬閘鎖與解鎖/附件流/
+  LibraryShelf 縮圖·預覽·刪除/跨重整);
+  L4 `smoke_library_live.py`(四回合:preview+必問+零 version → 收庫落盤 →
+  查庫回答 → **庫件匯入新設計 session 配安裝底板組裝**——產生器引用 imported/
+  的磁碟證據)。
+
 ## MOTION 運動宣告(linear + revolute + couple)
 
 產生器模組層宣告(與 `INTENDED_CONTACT` 同慣例),**一份真相三個消費者**:

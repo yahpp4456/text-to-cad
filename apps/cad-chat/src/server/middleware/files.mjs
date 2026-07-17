@@ -6,17 +6,19 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { BASE_PATH, DATA_ROOT, MODELS_FIXTURES_ROOT, MODELS_ROOT } from "../config.mjs";
+import { BASE_PATH, MODELS_FIXTURES_ROOT, MODELS_ROOT } from "../config.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
-import { LIBRARY_DIR, addLibraryPart } from "../cad/library.mjs";
+import {
+  LIBRARY_DIR,
+  addLibraryPart,
+  deleteLibraryPart,
+  librarySlug,
+  listLibraryParts,
+} from "../cad/library.mjs";
 import { pathIsInside, resolveInside, resolveModelRead } from "../cad/paths.mjs";
 import { resolveImportSource } from "../cad/pipeline.mjs";
-import { scrubPaths, spawnPython } from "../cad/python.mjs";
-
-const STEP_DIR = "skills/cad/scripts/step";
-const INSPECT_DIR = "skills/cad/scripts/inspect";
-const OPEN_TIMEOUT_MS = 120_000; // 裸 STEP 轉 GLB 上限(大檔 tessellation 可能要一陣子)
-const LIBRARY_INSPECT_TIMEOUT_MS = 30_000; // 收庫 bbox 量測上限(best-effort,逾時=null)
+import { scrubPaths } from "../cad/python.mjs";
+import { ensureStepGlb, inspectFactsAbs } from "../cad/stepPreview.mjs";
 
 // 使用者傳入的 models 相對路徑正規化(容忍 models/ 前綴與反斜線)。
 function normalizeRel(p) {
@@ -187,47 +189,14 @@ async function handleOpen(body, res, ctx = {}) {
   const glbRel = relDir && relDir !== "." ? `${relDir}/${glbName}` : glbName;
   const mfType = typeFromManifest(dir, stem);
 
-  // 重轉條件:GLB 缺席,或 STEP 比 GLB 新「超過偏斜窗」(外部改寫 STEP 而舊 GLB
-  // 還在——只看缺席會拿舊 GLB 的 mtime buster,靜默呈現舊幾何)。偏斜窗必要:
-  // git/LFS checkout 同批寫檔時 dotfile GLB 排序在前先落地,STEP 毫秒級較新,
-  // 嚴格比較會把每個剛 hydrate 的 fixture 誤判 stale(重跑 tessellation,無
-  // manifest 的還退到 kind_required)。真正的外部改寫與再開啟至少分鐘級。
-  const REGEN_SKEW_MS = 10_000;
-  let needRegen = !fs.existsSync(glbAbs);
-  if (!needRegen) {
-    try {
-      needRegen = fs.statSync(glbAbs).mtimeMs + REGEN_SKEW_MS < fs.statSync(abs).mtimeMs;
-    } catch {
-      needRegen = true;
-    }
-  }
-  if (needRegen) {
-    // 裸 STEP:scripts/step 對直接 STEP 目標必須帶 --kind(part|assembly);
-    // 有組合件 manifest 就不再問(manifest 權威),否則要求前端二選一。
-    const kind = body?.kind === "assembly" || body?.kind === "part" ? body.kind : mfType;
-    if (!kind) {
-      sendJson(res, 200, { ok: false, error: "kind_required" });
-      return;
-    }
-    // 目標在可寫資料根內 → cwd(DATA_ROOT)相對;唯讀 fixtures 層(packaged 跨根)
-    // → 絕對路徑輸入(cadpy CLI 只拒絕對「輸出」option,輸入目標可絕對)。dev 同根
-    // 恆走相對(= 舊 repoRel 行為)。
-    const target = pathIsInside(abs, DATA_ROOT)
-      ? path.relative(DATA_ROOT, abs).split(path.sep).join("/")
-      : abs;
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), OPEN_TIMEOUT_MS);
-    const { code, stderr } = await spawnPython(STEP_DIR, [target, "--kind", kind, "--force"], {
-      signal: ac.signal,
-    });
-    clearTimeout(timer);
-    if (code !== 0 || !fs.existsSync(glbAbs)) {
-      sendJson(res, 200, {
-        ok: false,
-        error: `轉檔失敗:${(stderr || "").trim().slice(-300) || `exit ${code}`}`,
-      });
-      return;
-    }
+  // 裸 STEP:scripts/step 對直接 STEP 目標必須帶 --kind(part|assembly);
+  // 有組合件 manifest 就不再問(manifest 權威),否則要求前端二選一。
+  // 轉檔/重轉判定(偏斜窗)在 stepPreview.mjs 的 ensureStepGlb(choke point)。
+  const kind = body?.kind === "assembly" || body?.kind === "part" ? body.kind : mfType;
+  const conv = await ensureStepGlb(abs, { kind });
+  if (!conv.ok) {
+    sendJson(res, 200, { ok: false, error: conv.error });
+    return;
   }
 
   sendJson(res, 200, {
@@ -261,30 +230,8 @@ async function handleLibraryAdd(body, res, ctx = {}) {
     sendJson(res, src.error === "路徑超出 models/" ? 403 : 400, src);
     return;
   }
-  // bbox/faceCount best-effort(同 handleOpen 的跨根 target 解析:可寫層走
-  // DATA_ROOT 相對、fixtures 層走絕對輸入)
-  let bbox = null;
-  try {
-    const target = pathIsInside(src.srcAbs, DATA_ROOT)
-      ? path.relative(DATA_ROOT, src.srcAbs).split(path.sep).join("/")
-      : src.srcAbs;
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), LIBRARY_INSPECT_TIMEOUT_MS);
-    const r = await spawnPython(INSPECT_DIR, ["refs", target, "--facts", "--format", "json"], {
-      signal: ac.signal,
-    });
-    clearTimeout(timer);
-    const json = JSON.parse(r.stdout);
-    const tok = json.tokens?.[0] || {};
-    bbox = {
-      size: Array.isArray(tok.entryFacts?.size)
-        ? tok.entryFacts.size.map((v) => Math.round(v * 100) / 100)
-        : null,
-      faceCount: tok.summary?.faceCount ?? null,
-    };
-  } catch {
-    bbox = null;
-  }
+  // bbox/faceCount best-effort(跨根 target 解析與逾時在 stepPreview.mjs)
+  const bbox = await inspectFactsAbs(src.srcAbs);
   let result;
   try {
     result = addLibraryPart({
@@ -301,6 +248,16 @@ async function handleLibraryAdd(body, res, ctx = {}) {
   } catch (err) {
     sendJson(res, 500, { ok: false, error: scrubPaths(String(err?.message || err)) });
     return;
+  }
+  // 收庫成功順產庫內 GLB sidecar(LibraryShelf 縮圖用)。fire-and-forget:
+  // 不擋回應、失敗不擋收庫——shelf 對缺 GLB 的卡會走 /api/library-glb 按需補轉。
+  if (result.ok) {
+    try {
+      const stepAbs = resolveInside(modelsRoot, result.rel);
+      void ensureStepGlb(stepAbs, { kind: "part" }).catch(() => {});
+    } catch {
+      /* 沙箱解析失敗就交給 lazy 補轉 */
+    }
   }
   sendJson(res, 200, result.ok ? { ...result, bboxMm: result.meta.bboxMm } : result);
 }
@@ -342,6 +299,73 @@ export function filesMiddleware() {
       return;
     }
 
+    // 零件庫瀏覽三端點(LibraryShelf 用;免 LLM)
+    if (url.pathname === "/api/library-list" && req.method === "GET") {
+      try {
+        const modelsRoot = req.cadchat?.modelsRoot || MODELS_ROOT;
+        sendJson(res, 200, { ok: true, parts: listLibraryParts(modelsRoot) });
+      } catch (err) {
+        sendJson(res, 500, { ok: false, error: scrubPaths(String(err?.message || err)) });
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/library-glb" && req.method === "POST") {
+      readJsonBody(req)
+        .then((body) => handleLibraryGlb(body, res, req.cadchat))
+        .catch((err) => sendJson(res, 400, { ok: false, error: scrubPaths(String(err?.message || err)) }));
+      return;
+    }
+
+    if (url.pathname === "/api/library-delete" && req.method === "POST") {
+      readJsonBody(req)
+        .then((body) => {
+          const modelsRoot = req.cadchat?.modelsRoot || MODELS_ROOT;
+          try {
+            sendJson(res, 200, deleteLibraryPart(modelsRoot, body?.slug));
+          } catch (err) {
+            sendJson(res, 500, { ok: false, error: scrubPaths(String(err?.message || err)) });
+          }
+        })
+        .catch((err) => sendJson(res, 400, { ok: false, error: scrubPaths(String(err?.message || err)) }));
+      return;
+    }
+
     next();
   };
+}
+
+// 庫件 GLB 按需補轉(既有庫件收庫時代早於「順產 GLB」,或轉檔曾失敗):
+// slug 淨化+沙箱後對庫內 STEP 跑 ensureStepGlb,回 glbRel+mtime(前端組 asset URL)。
+async function handleLibraryGlb(body, res, ctx = {}) {
+  const modelsRoot = ctx.modelsRoot || MODELS_ROOT;
+  const clean = librarySlug(body?.slug);
+  let stepAbs;
+  try {
+    stepAbs = resolveInside(modelsRoot, `${LIBRARY_DIR}/${clean}/${clean}.step`);
+  } catch {
+    sendJson(res, 403, { ok: false, error: "slug 越界" });
+    return;
+  }
+  if (!fs.existsSync(stepAbs)) {
+    sendJson(res, 404, { ok: false, error: "庫件不存在" });
+    return;
+  }
+  const conv = await ensureStepGlb(stepAbs, { kind: "part" });
+  if (!conv.ok) {
+    sendJson(res, 200, { ok: false, error: conv.error });
+    return;
+  }
+  let mtime = 0;
+  try {
+    mtime = Math.round(fs.statSync(conv.glbAbs).mtimeMs);
+  } catch {
+    /* stat 失敗降級 0(無 buster) */
+  }
+  sendJson(res, 200, {
+    ok: true,
+    slug: clean,
+    glbRel: `${LIBRARY_DIR}/${clean}/.${clean}.step.glb`,
+    glbMtime: mtime,
+  });
 }
