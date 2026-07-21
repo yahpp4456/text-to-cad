@@ -304,6 +304,9 @@ export default function App() {
   // 匯入元件(UI 軌):複製進 session imported/ → 預填 composer 讓使用者決定何時請 AI 組裝。
   // opts.sessionId 顯式覆寫(含 null=強制 server mint 新設計 session——LibraryShelf
   // 「⇪ 設計」切模式後閉包裡的 state.sessionId 還是舊零件庫 session,不覆寫必 400)。
+  // opts.present={glbUrl,name}:匯入成功後把零件 GLB 上畫布(零件庫軌帶;檔案瀏覽器
+  // 軌沒有現成 GLB 不帶=行為不變)——沒有這個,匯入後畫布空白+訊息停在「讀取尺寸
+  // 中…」,看起來像當掉(2026-07-21 調查結論)。
   const importFile = useCallback(
     async (rel, opts = {}) => {
       if (state.running) return;
@@ -333,6 +336,20 @@ export default function App() {
           type: "SET_PREFILL",
           text: `已匯入 ${j.rel}${size},請把它組進目前的模型:先討論擺放位置與結合方式,確認後再動手。`,
         });
+        if (opts.present?.glbUrl) {
+          // 同 library_preview 契約:只發 present(source:"opened"),不進時間軸
+          dispatch({
+            type: "PRESENT",
+            glbUrl: opts.present.glbUrl,
+            name: opts.present.name || j.label,
+            code: opts.present.name || j.label,
+            ver: "",
+            fileType: "part",
+            source: "opened",
+          });
+        }
+        // 完成回饋:沒有這則,「讀取尺寸中…」是聊天裡最後一句話,像卡死
+        notify(`✓ 已匯入 ${j.label || j.rel}${size},組裝指令已放進輸入框,按送出即開始組裝。`);
       } catch {
         notify("無法連線到本機伺服器", true);
       }
@@ -1063,7 +1080,7 @@ export default function App() {
     });
   }, []);
   const shelfImportToDesign = useCallback(
-    (p) => {
+    (p, glbUrl) => {
       if (state.running) return;
       setConfirmBox({
         eyebrow: "USE PART · 用這件零件",
@@ -1073,7 +1090,10 @@ export default function App() {
         onConfirm: async () => {
           newChat();
           dispatch({ type: "SET_MODE", mode: "design" });
-          await importFile(p.rel, { sessionId: null }); // 強制新設計 session(舊閉包是零件庫 session)
+          await importFile(p.rel, {
+            sessionId: null, // 強制新設計 session(舊閉包是零件庫 session)
+            present: glbUrl ? { glbUrl, name: p.slug } : undefined, // 匯入即上畫布
+          });
         },
       });
     },

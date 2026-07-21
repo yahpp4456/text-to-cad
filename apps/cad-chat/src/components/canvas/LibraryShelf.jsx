@@ -47,6 +47,21 @@ export default function LibraryShelf({ onPreview, onImportToDesign, refreshSigna
     [ensureGlbUrl, onPreview],
   );
 
+  // ⇪ 設計:同預覽鏈拿 GLB URL 一併帶出,匯入成功後可直接上畫布;
+  // 轉檔失敗傳 null——匯入照走,只是少了畫布回饋(匯入本體不因縮圖鏈壞而擋)。
+  const importToDesign = useCallback(
+    async (p) => {
+      let glbUrl = null;
+      try {
+        glbUrl = await ensureGlbUrl(p);
+      } catch {
+        /* 同上:無害 */
+      }
+      onImportToDesign?.(p, glbUrl);
+    },
+    [ensureGlbUrl, onImportToDesign],
+  );
+
   const refresh = useCallback(async () => {
     try {
       const r = await fetch(apiUrl("/api/library-list"));
@@ -212,7 +227,7 @@ export default function LibraryShelf({ onPreview, onImportToDesign, refreshSigna
                   <a className="fb-action" onClick={() => preview(p)}>
                     預覽
                   </a>
-                  <a className="fb-action" title="切到設計模式並匯入場景" onClick={() => onImportToDesign?.(p)}>
+                  <a className="fb-action" title="切到設計模式並匯入場景" onClick={() => importToDesign(p)}>
                     ⇪ 設計
                   </a>
                 </div>
