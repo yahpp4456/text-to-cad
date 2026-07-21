@@ -44,6 +44,10 @@ tmp/
 
 # cad-chat 對話 session scratch(本機自用,不提交)
 models/.cadchat/
+# 零件庫煙測產物(smoke_library*.py 建的 smoke_lib_api / smoke_lib_ui /
+# smoke_shelf_victim / smoke_cdm2_live 等):各測 finally 會清,但中斷或
+# 停損時會殘留,曾誤入版控。真零件不用 smoke_ 前綴,要收就 git add -f。
+models/parts-library/smoke_*/
 apps/cad-chat/.env.local
 ref/mechanism_engineering_suite/
 # 手冊建置的機器狀態(base/authMode)與一次性人工複核輸出,不進版控
