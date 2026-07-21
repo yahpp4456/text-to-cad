@@ -1,15 +1,20 @@
 import React, { useEffect, useMemo, useRef } from "react";
 
 // 零件庫空狀態的上傳區(硬閘:先上傳 STP 才會開始;點擊選檔+拖放二路)
-function LibraryDropzone({ onAttachFiles }) {
+// disabled(DEMO):上傳區照常渲染但整塊禁用(點擊/拖放 no-op),副標換成
+// 不可用原因——藏掉整區會讓展示者以為零件庫沒有收庫功能。
+function LibraryDropzone({ onAttachFiles, disabled = false, disabledTip }) {
   const fileRef = useRef(null);
   return (
     <div
       className="lib-dropzone"
-      onClick={() => fileRef.current?.click()}
-      onDragOver={(e) => e.preventDefault()}
+      data-disabled={disabled || undefined}
+      title={disabled ? disabledTip : undefined}
+      onClick={disabled ? undefined : () => fileRef.current?.click()}
+      onDragOver={disabled ? undefined : (e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();
+        if (disabled) return;
         const files = Array.from(e.dataTransfer?.files || []).filter((f) =>
           /\.ste?p$/i.test(f.name || ""),
         );
@@ -30,7 +35,9 @@ function LibraryDropzone({ onAttachFiles }) {
       <span className="lib-dz-icon">⬆</span>
       <span className="lib-dz-title">拖放 STP 到這裡,或點擊選檔</span>
       <span className="lib-dz-sub">
-        上傳後 AI 會呈現外形、量測尺寸,訪談幾個基本欄位就收進零件庫。
+        {disabled
+          ? disabledTip
+          : "上傳後 AI 會呈現外形、量測尺寸,訪談幾個基本欄位就收進零件庫。"}
       </span>
     </div>
   );
@@ -65,6 +72,8 @@ export default function Conversation({
   specLiveId,
   onSubmitText,
   onAttachFiles, // 零件庫空狀態上傳區用(其他模式不渲染)
+  attachDisabled = false, // DEMO:上傳區禁用但照常渲染
+  attachDisabledTip,
   handlers,
 }) {
   const scrollRef = useRef(null);
@@ -129,8 +138,12 @@ export default function Conversation({
             </div>
             {mode === "library" ? (
               // 硬閘:先上傳 STP 才會開始(範例列讓位給上傳區)。
-              // onAttachFiles 缺席(DEMO 帳號)= 連上傳區都不出:唯讀瀏覽。
-              onAttachFiles ? <LibraryDropzone onAttachFiles={onAttachFiles} /> : null
+              // DEMO:上傳區照出但禁用(見 LibraryDropzone 註解)。
+              <LibraryDropzone
+                onAttachFiles={onAttachFiles}
+                disabled={attachDisabled}
+                disabledTip={attachDisabledTip}
+              />
             ) : (
               <div className="empty-examples">
                 <span className="empty-examples-eyebrow">範例 · 點擊開始</span>

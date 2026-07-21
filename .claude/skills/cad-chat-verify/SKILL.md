@@ -277,6 +277,19 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   恆為**正斜線**(`split(path.sep).join("/")`,Windows 也是),asset/files 的
   路徑參數先 `replace(/\\/g,"/")` 再比對——per-user 的 `users/<u>/models/…` 形
   比對與測試斷言都依賴這個。
+- **DEMO 帳號禁用態(2026-07-21 二版)**:受限入口一律**渲染但禁用**,不是藏——
+  `data-disabled={demo || undefined}` + `title={DEMO_TIP}`(單一真相源
+  `src/lib/demo.js`,與 demoGuard 403 訊息逐字一致)+ onClick 守衛。**禁用態 CSS
+  絕不可設 `pointer-events:none`**(hover 被吃掉 → tooltip 永不浮出,整個設計失效;
+  `.mode-switch` 是有設的反例,別照抄)。例外三個:「＋ 新對話」與零件庫「預覽」
+  (純唯讀)照常可用;**教訓是/否面板直接不出**(要求作答的面板出現卻不能答=死路,
+  與按鈕語意不同)。demo 身分靠反代 `X-Remote-User`,**瀏覽器直連恆非 demo** →
+  UI 煙測必須用 Playwright `new_context(extra_http_headers=...)`,且要
+  `wait_for_function` 等 `/api/health` 的 demo 旗到位再斷言(旗未回前入口短暫可用)。
+  貨架卡片斷言前要 seed `REPO/users/demo/models/parts-library/<slug>/meta.json`
+  (**per-user 根是 `<repo>/users/<u>/models`,不是 `models/users/…`**);注入
+  `ADD_ITEM` 後 session 有內容,切模式會跳確認框 → 先 `page.reload()` 清場。
+  動這條路 → `smoke_demo.py` + `demoGuard.middleware.test.js`。
 - **prompt 語言契約(2026-07-15)**:design/sketch 兩份 prompt 的「# 語氣與語言」段
   規定「英文思考、使用者輸出一律繁中」——改 prompt 措辭別動掉這段(design 模式曾因
   無語言指示被英文工具輸出帶跑);驗證=真生成一回合目測回覆語言(L4 輕量)。

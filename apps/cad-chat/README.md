@@ -173,20 +173,36 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
 ### DEMO 帳號(2026-07-21,展示身分)
 
 `CADCHAT_DEMO_USERS`(逗號分隔,未設預設 `demo`)指定的帳號是**唯讀展示身分**:
-設計/草模對話照常,但「開啟檔案、另存專案、教訓」整組入口不出現,零件庫只能切
-過去看貨架(無 預覽/⇪ 設計/管理/上傳,缺 GLB 的卡維持占位不補轉)。
+設計/草模對話照常,受限功能的入口**照常渲染但禁用**(反灰 + hover 出「DEMO 帳號
+僅供展示,這個功能未開放」),而不是藏起來——藏會讓展示者以為產品沒有這些功能。
 
+- **UX 契約(2026-07-21 二版)**:禁用態一律沿用 repo 既有慣例
+  `data-disabled={demo || undefined}` + `title={DEMO_TIP}` + onClick 守衛。文案單一
+  真相源 `src/lib/demo.js` 的 `DEMO_TIP`,與 demoGuard 的 403 訊息**逐字一致**
+  (使用者可能先看 tooltip、後看 403)。禁用態的 CSS **不得設
+  `pointer-events:none`**——那會連 hover 都吃掉,tooltip 永遠不浮出,而「說明為什麼
+  不能用」正是這一版的重點。
+- **禁用清單**:Header 開啟檔案/教訓/另存專案、零件庫貨架的 管理 與 ⇪ 設計、
+  composer 附件鈕(拖放/貼上一併 no-op)、零件庫空狀態上傳區(整區反灰,副標換成
+  原因)、零件庫 composer(placeholder 換成原因)。
+- **三個例外**:①「＋ 新對話」對 demo 開放;②零件庫「預覽」開放(純唯讀,
+  `/api/asset` 本就放行,否則 demo 連貨都看不到);③**教訓是/否面板直接不出**
+  ——它是「要求使用者作答」的面板,出現卻不能答=死路,與按鈕類語意不同。
 - **server 底線**:`middleware/demoGuard.mjs`(鏈次位,緊接 userContext)對
   files/open/open-project/save-project/lessons 全家/library-add/-delete/-glb/
   upload-step/import 回 403;library-list、asset、chat/interrupt/export/validate
   刻意放行。`users.mjs` 的 `isDemoUser(user, env)` 是唯一判準
   (`req.cadchat.demo`,dev/無 header 的 user=null 恆非 demo)。
-- **前端**:`/api/health` 回 `demo` 旗;App 據此藏 Header 三鈕、鎖零件庫
-  composer(含 STEP 附件與空狀態上傳區)、LibraryShelf 走 `readOnly`、
-  不出教訓是/否面板。藏入口只是 UX,安全邊界在 demoGuard。
+- **前端**:`/api/health` 回 `demo` 旗;App 據此傳 `demo`/`attachDisabled`/
+  `readOnly` 給各元件。health 未回前 demo=false(入口短暫可用,點了也被 403 擋)
+  ——UI 煙測要先 `wait_for_function` 等旗到位再斷言。前端禁用只是 UX,安全邊界在
+  demoGuard。
 - **啟用**(VM):webauth 加一行 `demo:<密碼>` 即可(名字就叫 demo 免設 env);
   要別的名字/多個就在 `/etc/cadchat/env` 設 `CADCHAT_DEMO_USERS`。
-- **測試**:L1 `demoGuard.middleware.test.js`(擋單/放行/前綴不誤傷/env 解析)。
+- **測試**:L1 `demoGuard.middleware.test.js`(擋單/放行/前綴不誤傷/env 解析);
+  L3 `smoke_demo.py`(29 斷言:禁用態 + 點了真的沒反應 + 預覽/新對話例外 + 教訓
+  面板不出 + 非 demo 對照組)。demo 身分靠 header,煙測用 Playwright context 的
+  `extra_http_headers` 模擬;貨架斷言要先 seed `users/demo/models/parts-library/`。
 
 ## 草模模式(MOTION SKETCH,2026-07-14)
 

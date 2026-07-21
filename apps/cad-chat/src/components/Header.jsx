@@ -1,9 +1,14 @@
 import React from "react";
 
+import { DEMO_TIP } from "../lib/demo.js";
 import ModeSwitch from "./ModeSwitch.jsx";
 import TypeBadge from "./TypeBadge.jsx";
 
+// demo(展示身分):另存專案/開啟檔案/教訓三鈕**照常渲染但禁用**(不是藏)——
+// 讓展示者看得到產品有這些功能,只是這個身分不開放。安全邊界仍在 server 的
+// demoGuard(403),這裡純 UX。「＋ 新對話」對 demo 開放,不受影響。
 export default function Header({
+  demo = false,
   phase,
   hasVersions,
   canvasType,
@@ -44,17 +49,32 @@ export default function Header({
           </a>
         )}
         {onSaveProject && (
-          <a className="hdr-btn" onClick={onSaveProject} title="把目前產物存成 models/ 下的具名專案">
+          <a
+            className="hdr-btn"
+            data-disabled={demo || undefined}
+            onClick={demo ? undefined : onSaveProject}
+            title={demo ? DEMO_TIP : "把目前產物存成 models/ 下的具名專案"}
+          >
             ⤓ 另存專案
           </a>
         )}
         {onOpenFiles && (
-          <a className="hdr-btn" onClick={onOpenFiles}>
+          <a
+            className="hdr-btn"
+            data-disabled={demo || undefined}
+            onClick={demo ? undefined : onOpenFiles}
+            title={demo ? DEMO_TIP : undefined}
+          >
             ⌸ 開啟檔案
           </a>
         )}
         {onOpenLessons && (
-          <a className="hdr-btn" onClick={onOpenLessons} title="歷史失敗蒸餾成的教訓(自我演化)">
+          <a
+            className="hdr-btn"
+            data-disabled={demo || undefined}
+            onClick={demo ? undefined : onOpenLessons}
+            title={demo ? DEMO_TIP : "歷史失敗蒸餾成的教訓(自我演化)"}
+          >
             📚 教訓
           </a>
         )}

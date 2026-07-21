@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { apiUrl } from "@/lib/apiBase";
+import { DEMO_TIP } from "../../lib/demo.js";
 import { thumbFor } from "../../lib/libThumbs.js";
 
 // 零件庫貨架(僅零件庫模式,畫布上方常駐、可收合):直接展開看庫、含 3D 縮圖,
@@ -9,8 +10,9 @@ import { thumbFor } from "../../lib/libThumbs.js";
 // 讓位)→「刪除 N 件」二段確認 → 逐件打既有單 slug API,刪完自動退出。
 // 縮圖鏈:library-list 回 glbRel(收庫時順產);缺 GLB 的卡序列呼叫 /api/library-glb
 // 補轉,拿到 GLB 後 libThumbs 離屏渲染 dataURL。
-// readOnly(DEMO 帳號):貨架只能看——藏 預覽/⇪ 設計/管理,縮圖只用現成 GLB
-// (不打 /api/library-glb 補轉,該端點對 demo 也是 403;缺圖卡維持 ⬡ 占位)。
+// readOnly(DEMO 帳號):**預覽開放**(純唯讀,/api/asset 對 demo 放行)、⇪ 設計與
+// 管理照常渲染但禁用+提示(不是藏);縮圖只用現成 GLB(不打 /api/library-glb
+// 補轉,該端點對 demo 是 403;缺圖卡維持 ⬡ 占位)。
 export default function LibraryShelf({ onPreview, onImportToDesign, refreshSignal, readOnly = false }) {
   const [parts, setParts] = useState(null); // null=載入中
   const [open, setOpen] = useState(true);
@@ -190,9 +192,13 @@ export default function LibraryShelf({ onPreview, onImportToDesign, refreshSigna
             </a>
           </>
         ) : (
-          !readOnly &&
           parts?.length > 0 && (
-            <a className="fb-action lib-del" title="進入批次刪除模式" onClick={() => setManage(true)}>
+            <a
+              className="fb-action lib-del"
+              data-disabled={readOnly || undefined}
+              title={readOnly ? DEMO_TIP : "進入批次刪除模式"}
+              onClick={readOnly ? undefined : () => setManage(true)}
+            >
               管理
             </a>
           )
@@ -217,8 +223,8 @@ export default function LibraryShelf({ onPreview, onImportToDesign, refreshSigna
             >
               <a
                 className="lib-card-thumb"
-                title={readOnly ? "DEMO 帳號僅供瀏覽" : manage ? "選取/取消選取" : "載入 3D 預覽"}
-                onClick={readOnly ? undefined : () => (manage ? toggleSelect(p.slug) : preview(p))}
+                title={manage ? "選取/取消選取" : "載入 3D 預覽"}
+                onClick={() => (manage ? toggleSelect(p.slug) : preview(p))}
               >
                 {thumbs[p.slug] ? <img src={thumbs[p.slug]} alt="" /> : <span className="lib-card-ph">⬡</span>}
                 {manage && selected.has(p.slug) && <span className="lib-card-check">✓</span>}
@@ -230,12 +236,19 @@ export default function LibraryShelf({ onPreview, onImportToDesign, refreshSigna
                 {p.family}
                 {p.bboxMm ? ` · ${p.bboxMm.map((n) => Math.round(n)).join("×")}mm` : ""}
               </span>
-              {!manage && !readOnly && (
+              {!manage && (
                 <div className="lib-card-actions">
+                  {/* 預覽=純唯讀載入畫布(/api/asset 對 demo 本就放行):readOnly 也開放,
+                      否則 demo 只能看縮圖,「看得到貨」這件事就沒了。 */}
                   <a className="fb-action" onClick={() => preview(p)}>
                     預覽
                   </a>
-                  <a className="fb-action" title="切到設計模式並匯入場景" onClick={() => importToDesign(p)}>
+                  <a
+                    className="fb-action"
+                    data-disabled={readOnly || undefined}
+                    title={readOnly ? DEMO_TIP : "切到設計模式並匯入場景"}
+                    onClick={readOnly ? undefined : () => importToDesign(p)}
+                  >
                     ⇪ 設計
                   </a>
                 </div>

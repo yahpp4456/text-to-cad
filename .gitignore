@@ -48,6 +48,10 @@ models/.cadchat/
 # smoke_shelf_victim / smoke_cdm2_live 等):各測 finally 會清,但中斷或
 # 停損時會殘留,曾誤入版控。真零件不用 smoke_ 前綴,要收就 git add -f。
 models/parts-library/smoke_*/
+# cad-chat per-user 資料根:dev 恆等式 DATA_ROOT=repo root,帶 X-Remote-User
+# 的請求(smoke_users/smoke_demo、demo-proxy 手動檢視)會把 per-user 資料落在
+# repo 根 users/ 下;煙測 finally 會清,但硬中止會殘留。永遠不進版控。
+users/
 apps/cad-chat/.env.local
 ref/mechanism_engineering_suite/
 # 手冊建置的機器狀態(base/authMode)與一次性人工複核輸出,不進版控

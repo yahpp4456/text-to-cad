@@ -12,6 +12,9 @@ export default function Composer({
   running,
   mode, // "design" | "sketch" | "library":placeholder 換文案 + 附件收檔範圍(library 才收 STEP)
   locked = false, // 零件庫硬閘:新對話未附 STP 前鎖定打字/送出(附件鈕/拖放仍開=解鎖的路)
+  lockedHint, // 鎖定時的 placeholder 覆寫(DEMO:硬閘不是「先上傳就能開始」而是不開放)
+  attachDisabled = false, // DEMO:附件鈕照常渲染但禁用(拖放/貼上一併 no-op)
+  attachDisabledTip,
   pickRefs = [],
   pendingFiles = [], // [{id,kind:"image"|"step",name,url,status:"uploading"|"ready"|"error",error?}] 附件 chips
   onAttachFiles,
@@ -97,8 +100,11 @@ export default function Composer({
   };
 
   // 貼上附件(Ctrl+V 截圖/複製的檔案)→ 走同一條附件上傳路徑
+  // 附件三路(點鈕/拖放/貼上)共用同一開關:禁用時全部 no-op,鈕仍在畫面上。
+  const canAttach = !!onAttachFiles && !attachDisabled;
+
   const onPaste = (e) => {
-    if (!onAttachFiles) return;
+    if (!canAttach) return;
     const files = Array.from(e.clipboardData?.items || [])
       .filter((it) => it.kind === "file")
       .map((it) => it.getAsFile())
@@ -119,9 +125,9 @@ export default function Composer({
   return (
     <div
       className="composer"
-      onDragOver={onAttachFiles ? (e) => e.preventDefault() : undefined}
+      onDragOver={canAttach ? (e) => e.preventDefault() : undefined}
       onDrop={
-        onAttachFiles
+        canAttach
           ? (e) => {
               e.preventDefault();
               const files = Array.from(e.dataTransfer?.files || []).filter(wantFile);
@@ -197,8 +203,15 @@ export default function Composer({
             />
             <a
               className="composer-btn attach"
-              title={acceptsStep ? "附加 STP / 圖片(也可直接貼上 / 拖放)" : "附加圖片(也可直接貼上 / 拖放)"}
-              onClick={() => fileRef.current?.click()}
+              data-disabled={attachDisabled || undefined}
+              title={
+                attachDisabled
+                  ? attachDisabledTip
+                  : acceptsStep
+                    ? "附加 STP / 圖片(也可直接貼上 / 拖放)"
+                    : "附加圖片(也可直接貼上 / 拖放)"
+              }
+              onClick={attachDisabled ? undefined : () => fileRef.current?.click()}
             >
               ⌲
             </a>
@@ -215,7 +228,7 @@ export default function Composer({
           onPaste={onPaste}
           placeholder={
             locked
-              ? "先上傳 STP 才能開始:拖放到這裡,或點 ⌲ 選檔…"
+              ? lockedHint || "先上傳 STP 才能開始:拖放到這裡,或點 ⌲ 選檔…"
               : mode === "sketch"
                 ? "描述機構構想,幾秒搭出可玩草模（Enter 送出）…"
                 : mode === "library"

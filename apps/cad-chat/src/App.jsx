@@ -14,6 +14,7 @@ import VersionTimeline from "./components/versions/VersionTimeline.jsx";
 import { useChatStream } from "./hooks/useChatStream.js";
 import { normalizeMode } from "./lib/chatModes.js";
 import { latestSpecItem, pendingLessonOffer } from "./lib/clarifyText.js";
+import { DEMO_TIP } from "./lib/demo.js";
 import { apiUrl } from "@/lib/apiBase";
 import { initialState, reducer } from "./state/chatStore.js";
 
@@ -180,9 +181,12 @@ export default function App() {
       .catch(() => setHealth({ agentReady: false, warnings: ["無法連線到本機伺服器。"] }));
   }, []);
   // DEMO 帳號(server 依 X-Remote-User 判定,經 /api/health 回旗):展示身分——
-  // 藏 開啟檔案/教訓/另存專案,零件庫只能切過去看(shelf 唯讀、composer 鎖、
-  // 不收 STEP 附件)。server 端 demoGuard 對應端點回 403,前端藏入口只是 UX,
-  // 不是安全邊界。health 未回前 demo=false:入口短暫可見,點了也被 403 擋。
+  // 開啟檔案/教訓/另存專案、零件庫寫入動作與附件上傳一律**照常渲染但禁用**
+  // (hover 出 DEMO_TIP),而不是藏起來:藏會讓展示者以為產品沒這些功能。
+  // 例外是教訓是/否面板——那是「要求使用者作答」的面板,出現卻不能答=死路,
+  // 所以 demo 直接不出(見 liveLessonOffer)。零件庫「預覽」純唯讀故放行。
+  // server 端 demoGuard 對應端點回 403;前端禁用只是 UX,不是安全邊界。
+  // health 未回前 demo=false:入口短暫可用,點了也被 403 擋。
   const demo = !!health?.demo;
 
   // 模式偏好:開機還原切換器位置(session 快照的 RESTORE 之後會以快照 mode 蓋過,
@@ -1135,10 +1139,11 @@ export default function App() {
         canvasPartCount={state.versions.find((v) => v.id === state.activeVer)?.partCount}
         mode={state.mode}
         onSwitchMode={switchMode}
-        onOpenFiles={demo ? null : () => setBrowserOpen(true)}
-        onSaveProject={!demo && canSave ? () => setSaveOpen(true) : null}
+        demo={demo}
+        onOpenFiles={() => setBrowserOpen(true)}
+        onSaveProject={canSave ? () => setSaveOpen(true) : null}
         onNewChat={newChat}
-        onOpenLessons={demo ? null : () => setLessonsOpen(true)}
+        onOpenLessons={() => setLessonsOpen(true)}
         running={state.running}
       />
       <LessonsPanel open={lessonsOpen} onClose={() => setLessonsOpen(false)} />
@@ -1177,13 +1182,18 @@ export default function App() {
             mode={state.mode}
             specLiveId={specLiveId}
             onSubmitText={submitText}
-            onAttachFiles={demo ? null : attachFiles}
+            onAttachFiles={attachFiles}
+            attachDisabled={demo}
+            attachDisabledTip={DEMO_TIP}
             handlers={handlers}
           />
           <Composer
             running={state.running}
             mode={state.mode}
             locked={libraryLocked}
+            lockedHint={demo ? DEMO_TIP : undefined}
+            attachDisabled={demo}
+            attachDisabledTip={DEMO_TIP}
             pickRefs={state.pickRefs}
             pendingFiles={pendingFiles}
             onAttachFiles={attachFiles}

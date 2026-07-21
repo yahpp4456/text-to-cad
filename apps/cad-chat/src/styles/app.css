@@ -336,6 +336,16 @@
   border-color: var(--part);
   background: color-mix(in srgb, var(--part) 10%, transparent);
 }
+/* DEMO:整區禁用但照常渲染。刻意不設 pointer-events:none——那會連 hover 都吃掉,
+   title tooltip 永遠不浮出,而「說明為什麼不能用」正是禁用態的重點。 */
+.lib-dropzone[data-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+.lib-dropzone[data-disabled="true"]:hover {
+  border-color: color-mix(in srgb, var(--part) 55%, transparent);
+  background: color-mix(in srgb, var(--part) 5%, transparent);
+}
 .lib-dz-icon {
   font-size: 26px;
   color: var(--part);
@@ -1807,6 +1817,15 @@
 .composer-btn.attach:hover {
   color: var(--ink);
   border-color: var(--ink);
+}
+/* DEMO:附件鈕禁用(hover 仍要能出 title,故不設 pointer-events:none) */
+.composer-btn.attach[data-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+.composer-btn.attach[data-disabled="true"]:hover {
+  color: var(--text-muted);
+  border-color: #d8deea;
 }
 .composer-btn.send[data-active="true"] {
   background: var(--ink);

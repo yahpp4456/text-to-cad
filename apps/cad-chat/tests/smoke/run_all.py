@@ -43,6 +43,7 @@ ORDER = [
     "smoke_lessons.py",
     "smoke_lesson_offer.py",
     "smoke_users.py",
+    "smoke_demo.py",  # 身分相關,排在 smoke_users 之後(同樣自帶 X-Remote-User)
 ]
 # 消耗訂閱/API 回合
 LLM_GATED = [
