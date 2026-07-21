@@ -9,7 +9,9 @@ import { thumbFor } from "../../lib/libThumbs.js";
 // 讓位)→「刪除 N 件」二段確認 → 逐件打既有單 slug API,刪完自動退出。
 // 縮圖鏈:library-list 回 glbRel(收庫時順產);缺 GLB 的卡序列呼叫 /api/library-glb
 // 補轉,拿到 GLB 後 libThumbs 離屏渲染 dataURL。
-export default function LibraryShelf({ onPreview, onImportToDesign, refreshSignal }) {
+// readOnly(DEMO 帳號):貨架只能看——藏 預覽/⇪ 設計/管理,縮圖只用現成 GLB
+// (不打 /api/library-glb 補轉,該端點對 demo 也是 403;缺圖卡維持 ⬡ 占位)。
+export default function LibraryShelf({ onPreview, onImportToDesign, refreshSignal, readOnly = false }) {
   const [parts, setParts] = useState(null); // null=載入中
   const [open, setOpen] = useState(true);
   const [thumbs, setThumbs] = useState({}); // slug -> dataURL
@@ -103,7 +105,8 @@ export default function LibraryShelf({ onPreview, onImportToDesign, refreshSigna
       for (const p of parts) {
         if (cancelled || thumbs[p.slug]) continue;
         try {
-          const url = await ensureGlbUrl(p);
+          const url = readOnly ? glbUrlOf(p) : await ensureGlbUrl(p);
+          if (!url) continue; // readOnly 且無現成 GLB:不補轉,維持占位
           const dataUrl = await thumbFor(url);
           if (!cancelled) setThumbs((prev) => ({ ...prev, [p.slug]: dataUrl }));
         } catch {
@@ -114,7 +117,7 @@ export default function LibraryShelf({ onPreview, onImportToDesign, refreshSigna
     return () => {
       cancelled = true;
     };
-  }, [parts]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [parts, readOnly]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const exitManage = () => {
     setManage(false);
@@ -187,6 +190,7 @@ export default function LibraryShelf({ onPreview, onImportToDesign, refreshSigna
             </a>
           </>
         ) : (
+          !readOnly &&
           parts?.length > 0 && (
             <a className="fb-action lib-del" title="進入批次刪除模式" onClick={() => setManage(true)}>
               管理
@@ -199,7 +203,11 @@ export default function LibraryShelf({ onPreview, onImportToDesign, refreshSigna
       </div>
       {open && (
         <div className="lib-shelf-track">
-          {parts?.length === 0 && <span className="lib-shelf-empty">庫是空的——丟一顆 STP 開始收。</span>}
+          {parts?.length === 0 && (
+            <span className="lib-shelf-empty">
+              {readOnly ? "庫是空的。" : "庫是空的——丟一顆 STP 開始收。"}
+            </span>
+          )}
           {(parts || []).map((p) => (
             <div
               className="lib-card"
@@ -209,8 +217,8 @@ export default function LibraryShelf({ onPreview, onImportToDesign, refreshSigna
             >
               <a
                 className="lib-card-thumb"
-                title={manage ? "選取/取消選取" : "載入 3D 預覽"}
-                onClick={() => (manage ? toggleSelect(p.slug) : preview(p))}
+                title={readOnly ? "DEMO 帳號僅供瀏覽" : manage ? "選取/取消選取" : "載入 3D 預覽"}
+                onClick={readOnly ? undefined : () => (manage ? toggleSelect(p.slug) : preview(p))}
               >
                 {thumbs[p.slug] ? <img src={thumbs[p.slug]} alt="" /> : <span className="lib-card-ph">⬡</span>}
                 {manage && selected.has(p.slug) && <span className="lib-card-check">✓</span>}
@@ -222,7 +230,7 @@ export default function LibraryShelf({ onPreview, onImportToDesign, refreshSigna
                 {p.family}
                 {p.bboxMm ? ` · ${p.bboxMm.map((n) => Math.round(n)).join("×")}mm` : ""}
               </span>
-              {!manage && (
+              {!manage && !readOnly && (
                 <div className="lib-card-actions">
                   <a className="fb-action" onClick={() => preview(p)}>
                     預覽

@@ -15,3 +15,15 @@ export function rootsFor(user, { dataRoot = DATA_ROOT } = {}) {
   const modelsRoot = path.join(dataRoot, "users", user, "models");
   return { modelsRoot, sessionsRoot: path.join(modelsRoot, ".cadchat") };
 }
+
+// DEMO 帳號(展示身分):CADCHAT_DEMO_USERS 逗號分隔清單,未設時預設 "demo"。
+// per-request 讀 env(對齊本檔「非 module-load 常數」的定位,單測可注入)。
+// dev/直連的 user=null 恆非 demo——demo 是「有身分但受限」,不是匿名。
+export function isDemoUser(user, env = process.env) {
+  if (!user) return false;
+  return String(env.CADCHAT_DEMO_USERS ?? "demo")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .includes(user);
+}

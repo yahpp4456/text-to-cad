@@ -19,6 +19,7 @@ export function healthMiddleware() {
       authMode: auth.authMode,
       model: resolveModel() || "(CLI 預設)",
       warnings: auth.warnings,
+      demo: !!req.cadchat?.demo, // 前端據此藏 開啟檔案/教訓/另存專案 與零件庫互動
     });
   };
 }

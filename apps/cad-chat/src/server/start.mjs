@@ -20,6 +20,7 @@ import {
 import { sendText } from "./httpUtil.mjs";
 import { gcAllSessions } from "./sessions.mjs";
 import { userContextMiddleware } from "./middleware/userContext.mjs";
+import { demoGuardMiddleware } from "./middleware/demoGuard.mjs";
 import { healthMiddleware } from "./middleware/health.mjs";
 import { assetMiddleware } from "./middleware/asset.mjs";
 import { filesMiddleware } from "./middleware/files.mjs";
@@ -56,6 +57,7 @@ export async function startServer({ dev = false, port } = {}) {
 
   const middlewares = [
     userContextMiddleware(), // 首位:所有 API 依賴 req.cadchat(user 資料根)
+    demoGuardMiddleware(), // 緊接身分之後:demo 帳號的端點底線(health 不在擋單)
     healthMiddleware(),
     assetMiddleware(),
     filesMiddleware(),

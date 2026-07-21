@@ -179,6 +179,11 @@ export default function App() {
       .then(setHealth)
       .catch(() => setHealth({ agentReady: false, warnings: ["無法連線到本機伺服器。"] }));
   }, []);
+  // DEMO 帳號(server 依 X-Remote-User 判定,經 /api/health 回旗):展示身分——
+  // 藏 開啟檔案/教訓/另存專案,零件庫只能切過去看(shelf 唯讀、composer 鎖、
+  // 不收 STEP 附件)。server 端 demoGuard 對應端點回 403,前端藏入口只是 UX,
+  // 不是安全邊界。health 未回前 demo=false:入口短暫可見,點了也被 403 擋。
+  const demo = !!health?.demo;
 
   // 模式偏好:開機還原切換器位置(session 快照的 RESTORE 之後會以快照 mode 蓋過,
   // 兩者一致——快照存在即上次也在那個模式);之後每次變動回寫。
@@ -366,7 +371,7 @@ export default function App() {
       const room = 4 - pendingFiles.length;
       for (const f of Array.from(files).slice(0, Math.max(0, room))) {
         const isStep = /\.ste?p$/i.test(f.name || "");
-        if (isStep && modeRef.current !== "library") continue; // 模式邊界(Composer 已濾,雙保險)
+        if (isStep && (modeRef.current !== "library" || demo)) continue; // 模式邊界+demo 唯讀(Composer 已濾,雙保險)
         const kind = isStep ? "step" : "image";
         const id = `f${++fileSeqRef.current}`;
         setPendingFiles((prev) => [
@@ -409,7 +414,7 @@ export default function App() {
         }
       }
     },
-    [state.sessionId, setSessionId, pendingFiles.length],
+    [state.sessionId, setSessionId, pendingFiles.length, demo],
   );
 
   // 開既有專案:新 session + 伺服端同步重建,回應帶 version/present/params/motion。
@@ -1060,10 +1065,12 @@ export default function App() {
   const designMode = state.mode === "design"; // 時間軸動作/ParamsBar 只屬於設計模式
   // 零件庫硬閘:新對話(還沒有任何訊息)未附上 STP 前鎖定輸入框——訪談開始後
   // 不再鎖(否則沒法回答 AI 的追問)。附件鈕/拖放/空狀態上傳區是解鎖的路。
+  // demo 例外:零件庫全程鎖(demo 不能收庫訪談,upload-step 端點也被擋)。
   const libraryLocked =
     state.mode === "library" &&
-    state.items.length === 0 &&
-    !pendingFiles.some((p) => p.kind === "step" && p.status === "ready");
+    (demo ||
+      (state.items.length === 0 &&
+        !pendingFiles.some((p) => p.kind === "step" && p.status === "ready")));
 
   // LibraryShelf 卡片動作:預覽=載進畫布(單純檢視,不進時間軸——與 library_preview
   // 工具同語意);⇪ 設計=確認切設計模式(開新對話)後強制 mint 新 session 匯入。
@@ -1102,7 +1109,11 @@ export default function App() {
   // 需要使用者作答的介面一律在視圖(聊天卡=被動紀錄):
   // 最新 spec 卡 → 視圖 SpecPanel(規格修正);最舊未答 lesson_offer → 視圖是/否面板。
   const liveSpec = useMemo(() => latestSpecItem(state.items), [state.items]);
-  const liveLessonOffer = useMemo(() => pendingLessonOffer(state.items), [state.items]);
+  // demo 不出教訓是/否面板:按「是」的 /api/lessons/record 會被 demoGuard 403
+  const liveLessonOffer = useMemo(
+    () => (demo ? null : pendingLessonOffer(state.items)),
+    [state.items, demo],
+  );
   // 聊天最新 spec 卡的「請在右側操作」指路:specs 空的 clarify(單步精靈)待答時
   // 右側沒有任何規格編輯面 → 指路要熄,否則主動誤導。
   const specLiveId =
@@ -1124,10 +1135,10 @@ export default function App() {
         canvasPartCount={state.versions.find((v) => v.id === state.activeVer)?.partCount}
         mode={state.mode}
         onSwitchMode={switchMode}
-        onOpenFiles={() => setBrowserOpen(true)}
-        onSaveProject={canSave ? () => setSaveOpen(true) : null}
+        onOpenFiles={demo ? null : () => setBrowserOpen(true)}
+        onSaveProject={!demo && canSave ? () => setSaveOpen(true) : null}
         onNewChat={newChat}
-        onOpenLessons={() => setLessonsOpen(true)}
+        onOpenLessons={demo ? null : () => setLessonsOpen(true)}
         running={state.running}
       />
       <LessonsPanel open={lessonsOpen} onClose={() => setLessonsOpen(false)} />
@@ -1166,7 +1177,7 @@ export default function App() {
             mode={state.mode}
             specLiveId={specLiveId}
             onSubmitText={submitText}
-            onAttachFiles={attachFiles}
+            onAttachFiles={demo ? null : attachFiles}
             handlers={handlers}
           />
           <Composer
@@ -1191,6 +1202,7 @@ export default function App() {
               onPreview={shelfPreview}
               onImportToDesign={shelfImportToDesign}
               refreshSignal={state.running}
+              readOnly={demo}
             />
           )}
           {sketchMode ? (

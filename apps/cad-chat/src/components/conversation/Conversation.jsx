@@ -128,8 +128,9 @@ export default function Conversation({
               </span>
             </div>
             {mode === "library" ? (
-              // 硬閘:先上傳 STP 才會開始(範例列讓位給上傳區)
-              <LibraryDropzone onAttachFiles={onAttachFiles} />
+              // 硬閘:先上傳 STP 才會開始(範例列讓位給上傳區)。
+              // onAttachFiles 缺席(DEMO 帳號)= 連上傳區都不出:唯讀瀏覽。
+              onAttachFiles ? <LibraryDropzone onAttachFiles={onAttachFiles} /> : null
             ) : (
               <div className="empty-examples">
                 <span className="empty-examples-eyebrow">範例 · 點擊開始</span>

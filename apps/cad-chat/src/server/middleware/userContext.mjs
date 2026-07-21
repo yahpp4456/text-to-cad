@@ -4,7 +4,7 @@
 // header 缺席 = dev/直連 → user=null → legacy 全域根(零回歸)。
 // 有值但不合白名單 → 403(絕不靜默併入 legacy 空間)。
 import { sendJson } from "../httpUtil.mjs";
-import { USER_RE, rootsFor } from "../users.mjs";
+import { USER_RE, isDemoUser, rootsFor } from "../users.mjs";
 
 export function userContextMiddleware() {
   return function userContext(req, res, next) {
@@ -14,7 +14,7 @@ export function userContextMiddleware() {
       return;
     }
     const user = raw || null;
-    req.cadchat = { user, ...rootsFor(user) };
+    req.cadchat = { user, demo: isDemoUser(user), ...rootsFor(user) };
     next();
   };
 }

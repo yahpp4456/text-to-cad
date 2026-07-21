@@ -170,6 +170,24 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
   但 server 發的 asset URL 在有 header 時會帶 `users/<u>/…` 前綴——寫新煙測若自帶
   `X-Remote-User`,磁碟斷言要對到 `DATA_ROOT/users/<u>/` 下。
 
+### DEMO 帳號(2026-07-21,展示身分)
+
+`CADCHAT_DEMO_USERS`(逗號分隔,未設預設 `demo`)指定的帳號是**唯讀展示身分**:
+設計/草模對話照常,但「開啟檔案、另存專案、教訓」整組入口不出現,零件庫只能切
+過去看貨架(無 預覽/⇪ 設計/管理/上傳,缺 GLB 的卡維持占位不補轉)。
+
+- **server 底線**:`middleware/demoGuard.mjs`(鏈次位,緊接 userContext)對
+  files/open/open-project/save-project/lessons 全家/library-add/-delete/-glb/
+  upload-step/import 回 403;library-list、asset、chat/interrupt/export/validate
+  刻意放行。`users.mjs` 的 `isDemoUser(user, env)` 是唯一判準
+  (`req.cadchat.demo`,dev/無 header 的 user=null 恆非 demo)。
+- **前端**:`/api/health` 回 `demo` 旗;App 據此藏 Header 三鈕、鎖零件庫
+  composer(含 STEP 附件與空狀態上傳區)、LibraryShelf 走 `readOnly`、
+  不出教訓是/否面板。藏入口只是 UX,安全邊界在 demoGuard。
+- **啟用**(VM):webauth 加一行 `demo:<密碼>` 即可(名字就叫 demo 免設 env);
+  要別的名字/多個就在 `/etc/cadchat/env` 設 `CADCHAT_DEMO_USERS`。
+- **測試**:L1 `demoGuard.middleware.test.js`(擋單/放行/前綴不誤傷/env 解析)。
+
 ## 草模模式(MOTION SKETCH,2026-07-14)
 
 「**草模**」是與現行「**設計**」並列的第二種聊天模式(Header 正中央切換器):
