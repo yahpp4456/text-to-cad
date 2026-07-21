@@ -4,9 +4,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { isMode } from "../../lib/chatModes.js";
-import { resolveAuth } from "../config.mjs";
+import { demoReady, resolveAuth, resolveDemoQuota } from "../config.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
 import { acquireBusy, getOrCreateSession, persistSession, releaseBusy } from "../sessions.mjs";
+import { consumeTurn } from "../quota.mjs";
 import { condenseTraceback, scrubPaths } from "../cad/python.mjs";
 import { resolveInside } from "../cad/paths.mjs";
 import { MAX_IMAGE_BYTES, sniffImageType } from "../images.mjs";
@@ -81,14 +82,47 @@ export function chatMiddleware() {
       sendJson(res, 409, { error: "session busy" });
       return;
     }
+
+    // ── DEMO 分流 + 每訪客配額(在 acquireBusy/recorder/SSE 之前,超額不需清理鎖)──
+    // 先算是否為真 LLM 回合:paramsOnly 決定性重生是純 Python、無憑證、無 LLM,永遠
+    // 免費放行(即使 demo key 未設),不佔配額。img/steps/paramsOnly 上提到此處後
+    // 由下方 try 共用(不重算)。
+    const demo = !!req.cadchat?.demo;
+    const img = readImageBlocks(body, session);
+    const steps = readStepRefs(body, session);
+    const paramsOnly =
+      session.mode === "design" && // 只有設計模式有 PARAMS 產生器(防禦)
+      body.params &&
+      Object.keys(body.params).length > 0 &&
+      (!body.message || !String(body.message).trim()) &&
+      img.blocks.length === 0; // 帶圖訊息絕不走決定性重生路(圖必須進 agent)
+    const willRunLlm = !(paramsOnly && session.lastName);
+    if (demo && willRunLlm) {
+      // ToS fail-closed:demo key 未設 → 不可用,絕不 fallback 到訂閱 OAuth。
+      if (!demoReady()) {
+        sendJson(res, 503, { error: "demo_unavailable" });
+        return;
+      }
+      const q = consumeTurn(req.cadchat.user, { limit: resolveDemoQuota() });
+      if (!q.ok) {
+        sendJson(res, 429, { error: "demo_quota_exceeded", limit: q.limit, used: q.used });
+        return;
+      }
+    }
+
     // busy 鎖領 token:interrupt 提早放行後新 turn 可能先 begin,本 turn 的
     // finally 只准釋放自己領的鎖(見 sessions.mjs acquireBusy 註解)。
     const busyToken = acquireBusy(session);
     // 教訓案例:本 turn 的紅色先進記憶體 buffer,finally 一次落盤(涵蓋 agent 與參數重生兩路)。
     // 持有 rec 引用:interrupt 提早放行 busy 後新 turn 可能先 begin,舊 turn 的 finally
     // 只准 flush 自己的 buffer(lessons.mjs 以身份比對防呆)。
+    // DEMO 回合不進教訓管線(recordBuildFailure/recordCheckFailure 因 _lessonRec 為 null
+    // 自動 no-op;見 finally 的 flush/distill gate)——避免陌生人失敗經全域訂閱 OAuth
+    // 蒸餾的 ToS 側通道(re-review R1)。
     const imgCount = Array.isArray(body.imageRefs) ? body.imageRefs.length : 0;
-    const lessonRec = beginTurnRecorder(session, {
+    const lessonRec = demo
+      ? null
+      : beginTurnRecorder(session, {
       userText:
         (String(body.message || "").trim() ||
           (body.params ? `(參數重生 ${JSON.stringify(body.params)})` : "")) +
@@ -109,15 +143,7 @@ export function chatMiddleware() {
     });
 
     try {
-      const img = readImageBlocks(body, session);
-      const steps = readStepRefs(body, session);
-      const paramsOnly =
-        session.mode === "design" && // 只有設計模式有 PARAMS 產生器(防禦)
-        body.params &&
-        Object.keys(body.params).length > 0 &&
-        (!body.message || !String(body.message).trim()) &&
-        img.blocks.length === 0; // 帶圖訊息絕不走決定性重生路(圖必須進 agent)
-
+      // img / steps / paramsOnly 已於上方(demo 配額閘前)算好,此處直接沿用。
       if (paramsOnly && session.lastName) {
         // 掛 abort controller:瀏覽器斷線 / interrupt 時要能殺掉重生的 Python 子程序。
         const abort = new AbortController();
@@ -150,11 +176,14 @@ export function chatMiddleware() {
         session.emit = null;
       }
       persistSession(session); // turn 尾統一落盤(涵蓋 imports/lastPartCount 等變動)
-      flushTurnRecorder(session, { rec: lessonRec }); // 教訓案例落盤(no-throw;只刷本 turn 的 buffer)
-      // 蒸餾 fire-and-forget:絕不阻塞回應;single-flight 與門檻在 maybeDistill 內把關
-      setImmediate(() => {
-        maybeDistill().catch(() => {});
-      });
+      // DEMO 回合不 flush 教訓、不觸發蒸餾(ToS 側通道防護,re-review R1)。
+      if (!demo) {
+        flushTurnRecorder(session, { rec: lessonRec }); // 教訓案例落盤(no-throw;只刷本 turn 的 buffer)
+        // 蒸餾 fire-and-forget:絕不阻塞回應;single-flight 與門檻在 maybeDistill 內把關
+        setImmediate(() => {
+          maybeDistill().catch(() => {});
+        });
+      }
     }
   };
 }

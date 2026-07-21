@@ -3,12 +3,13 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 
 import {
   REPO_ROOT,
-  agentEnv,
+  agentEnvFor,
   resolveClaudeCliExe,
   resolveEffort,
-  resolveModel,
+  resolveModelFor,
   resolveThinking,
 } from "../config.mjs";
+import { isDemoUser } from "../users.mjs";
 import { scrubPaths } from "../cad/python.mjs";
 import { getLessonsDigest, recordTurnError } from "../lessons.mjs";
 import { persistSession } from "../sessions.mjs";
@@ -74,6 +75,10 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
   session._paramsEmitted = false;
   session._clarifyPending = false; // 使用者的新訊息 = 已回答上回合的提問
 
+  // per-user 分流 context:demo 身分走自備 API key + 便宜模型(絕不用訂閱 OAuth);
+  // 非 demo → resolveModelFor/agentEnvFor 完全等同 resolveModel()/agentEnv()(零回歸)。
+  const demoCtx = { user: session.user, demo: isDemoUser(session.user) };
+
   // 模式選路:prompt / 工具集 / 白名單三路一起換(session.mode 是 mint 時的恆定屬性)。
   const mode = session.mode; // mint/hydrate 已 normalizeMode,恆為白名單值
   const isSketch = mode === "sketch";
@@ -103,7 +108,7 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
     };
   }
 
-  const model = resolveModel();
+  const model = resolveModelFor(demoCtx);
   // packaged:釘死 SDK spawn 的 claude CLI(asar → .unpacked 改寫);dev 回 null
   // → 不傳,SDK 內建解析(行為與舊版完全一致)。
   const claudeCli = resolveClaudeCliExe();
@@ -137,7 +142,7 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
       // 串流 partial messages:沒有它,從送出到第一段完整文字之間(推理+寫產生器
       // 原始碼可達數十秒)前端完全沒有回饋。
       includePartialMessages: true,
-      env: agentEnv(),
+      env: agentEnvFor(demoCtx),
     },
   });
   session._query = q;

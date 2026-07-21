@@ -198,6 +198,66 @@ export function agentEnv(env = process.env) {
   return cloned;
 }
 
+// ── DEMO per-user 分流(展示身分走自備 API key + 便宜模型;絕不用訂閱 OAuth)──
+// Anthropic 條款禁止把訂閱憑證轉供第三方使用者;開放給一般人的 DEMO 一律走
+// CADCHAT_DEMO_API_KEY(按量計費)。未設 → demoReady() false → chat.mjs fail-closed
+// 回 demo_unavailable,**絕不 fallback 到 OAuth**。
+export function resolveDemoApiKey(env = process.env) {
+  return String(env.CADCHAT_DEMO_API_KEY || "").trim();
+}
+export function resolveDemoModel(env = process.env) {
+  const m = String(env.CADCHAT_DEMO_MODEL || "").trim();
+  return m || null;
+}
+// 開發逃生門:CADCHAT_DEMO_ALLOW_OAUTH=1 時,允許 demo 暫時走全域憑證(通常是訂閱
+// OAuth),供本人在「尚未對外開放」階段開發/驗證 demo 路徑。**預設關**。
+// ⚠ 對外開放(Phase 3 把 Caddy /cad 切到新代理)前必須關掉並設 CADCHAT_DEMO_API_KEY
+// ——訂閱憑證依 Anthropic 條款不可轉供第三方,此旗標只在「僅本人可達」時安全。
+export function demoAllowOauth(env = process.env) {
+  const raw = String(env.CADCHAT_DEMO_ALLOW_OAUTH ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+export function demoReady(env = process.env) {
+  return resolveDemoApiKey(env).length > 0 || demoAllowOauth(env);
+}
+
+// 每 DEMO 訪客每 session 的 LLM 回合配額。仿 resolveMaxSnapshots:預設 10,0 = 不限。
+export function resolveDemoQuota(env = process.env) {
+  const raw = String(env.CADCHAT_DEMO_QUOTA || "").trim();
+  if (!raw) return 10;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : 10;
+}
+
+// 已知合法 model id(驗證 CADCHAT_DEMO_MODEL 不是 typo——SDK 對不支援的 model 會
+// 靜默降級,typo 會偷偷用別的 model 卻仍按 demo 計費+扣配額)。
+const KNOWN_MODEL_RE = /^claude-(fable|mythos|opus|sonnet|haiku)[\w.-]*$/i;
+export function isKnownModelId(id) {
+  return typeof id === "string" && KNOWN_MODEL_RE.test(id.trim());
+}
+
+// ctx = { user, demo }。demo → 回 demo 模型;否則 = 現行全域行為(純等式,零回歸)。
+export function resolveModelFor(ctx, env = process.env) {
+  return ctx?.demo ? resolveDemoModel(env) : resolveModel(env);
+}
+
+// ctx = { user, demo }。非 demo → 完全等同 agentEnv()(純等式)。demo → 強制 API
+// key 模式(注入 CADCHAT_DEMO_API_KEY、刪 OAuth),與 agentEnv 做同樣的 env 清理。
+export function agentEnvFor(ctx, env = process.env) {
+  if (!ctx?.demo) return agentEnv(env);
+  const key = resolveDemoApiKey(env);
+  // 開發逃生門:無 demo key 但顯式允許 → demo 暫走全域憑證(= agentEnv,通常 OAuth)。
+  // 有 demo key 時一律忽略此旗標(key 勝出,安全)。
+  if (!key && demoAllowOauth(env)) return agentEnv(env);
+  const cloned = { ...env, ANTHROPIC_API_KEY: key };
+  delete cloned.CLAUDE_CODE_OAUTH_TOKEN; // 有 demo key(或都沒有)時 demo 絕不走訂閱
+  delete cloned.ELECTRON_RUN_AS_NODE;
+  if (PACKAGED && !cloned.CLAUDE_CONFIG_DIR) {
+    cloned.CLAUDE_CONFIG_DIR = path.join(DATA_ROOT, ".claude");
+  }
+  return cloned;
+}
+
 // Agent SDK spawn 的 claude CLI 執行檔路徑。dev 回 null(交給 SDK 內建解析,行為
 // 不變);CADCHAT_CLAUDE_CLI 顯式覆寫;packaged(server 程式跑在 app.asar 內)把
 // platform optional dep 解析出的路徑改寫到 app.asar.unpacked——原生 exe 無法從

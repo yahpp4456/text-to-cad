@@ -10,15 +10,22 @@ import {
   APP_ROOT,
   DIST_ROOT,
   HOST,
+  isKnownModelId,
   loadBakedEnv,
   loadDotEnvLocal,
+  demoAllowOauth,
+  demoReady,
   resolveAuth,
+  resolveDemoApiKey,
+  resolveDemoModel,
+  resolveDemoQuota,
   resolveGcDays,
   resolveModel,
   resolvePort,
 } from "./config.mjs";
 import { sendText } from "./httpUtil.mjs";
-import { gcAllSessions } from "./sessions.mjs";
+import { gcAllSessions, gcDemoUsers } from "./sessions.mjs";
+import { DEMO_MINT_PREFIX, isDemoUser } from "./users.mjs";
 import { userContextMiddleware } from "./middleware/userContext.mjs";
 import { demoGuardMiddleware } from "./middleware/demoGuard.mjs";
 import { healthMiddleware } from "./middleware/health.mjs";
@@ -54,6 +61,16 @@ export async function startServer({ dev = false, port } = {}) {
   const wantPort = Number.isFinite(port) ? port : resolvePort();
   const gcDays = resolveGcDays();
   const gcRemoved = gcAllSessions({ maxAgeDays: gcDays });
+  const gcDemoRemoved = gcDemoUsers({ maxAgeDays: gcDays });
+
+  // 安全不變量斷言(re-review R5):proxy 鑄造前綴 demo-<id> 必須恆被判為 demo,否則
+  // 陌生訪客會被當一般使用者走訂閱 OAuth = 條款違規。硬編不變量理應恆真;若被改壞
+  // 則拒啟動,絕不帶著破口上線。
+  if (!isDemoUser(`${DEMO_MINT_PREFIX}probe00000000`)) {
+    throw new Error(
+      "啟動自檢失敗:DEMO 鑄造前綴未被判為 demo(isDemoUser 不變量被破壞)——拒絕啟動以免訂閱憑證外洩給第三方。",
+    );
+  }
 
   const middlewares = [
     userContextMiddleware(), // 首位:所有 API 依賴 req.cadchat(user 資料根)
@@ -142,9 +159,29 @@ export async function startServer({ dev = false, port } = {}) {
     gcDays > 0
       ? `session GC:清掉 ${gcRemoved.length} 個超過 ${gcDays} 天的 session${
           gcRemoved.length ? `(${gcRemoved.slice(0, 4).join(", ")}${gcRemoved.length > 4 ? "…" : ""})` : ""
-        }`
+        };demo 身分 ${gcDemoRemoved.length} 個`
       : "session GC:已停用(CADCHAT_GC_DAYS=0)",
   );
+
+  // DEMO 狀態(per-user 分流):demo 走 CADCHAT_DEMO_API_KEY + CADCHAT_DEMO_MODEL,
+  // 未設 → demo fail-closed(chat 回 demo_unavailable),絕不 fallback 訂閱。
+  const demoModel = resolveDemoModel();
+  const demoQuota = resolveDemoQuota();
+  const demoQuotaStr = demoQuota > 0 ? `${demoQuota} 回合/訪客` : "不限";
+  if (resolveDemoApiKey().length > 0) {
+    console.log(`DEMO:已啟用(API key ✓,模型 ${demoModel || "(未設 CADCHAT_DEMO_MODEL)"},配額 ${demoQuotaStr})`);
+    if (!demoModel) {
+      console.log("  ⚠ 未設 CADCHAT_DEMO_MODEL — demo 會用帳號預設模型(可能偏貴),建議明設便宜模型。");
+    } else if (!isKnownModelId(demoModel)) {
+      console.log(`  ⚠ CADCHAT_DEMO_MODEL="${demoModel}" 非已知 model id — SDK 可能靜默降級卻仍計費,請核對拼字。`);
+    }
+  } else if (demoAllowOauth()) {
+    console.log(`DEMO:已啟用【開發模式】——⚠ demo 正用全域憑證(可能是訂閱 OAuth),配額 ${demoQuotaStr}。`);
+    console.log("  ⚠⚠ 僅在『尚未對外開放、只有本人可達』時安全。對外開放(Caddy /cad flip)前務必:設 CADCHAT_DEMO_API_KEY + 移除 CADCHAT_DEMO_ALLOW_OAUTH。訂閱憑證不可轉供第三方(Anthropic 條款)。");
+  } else {
+    console.log("DEMO:未啟用(未設 CADCHAT_DEMO_API_KEY、也未開 CADCHAT_DEMO_ALLOW_OAUTH → demo 身分一律 demo_unavailable,不走訂閱)。");
+  }
+
   for (const w of auth.warnings) console.log(`  ⚠ ${w}`);
 
   return {

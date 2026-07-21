@@ -253,3 +253,64 @@ export function gcAllSessions({
   }
   return removed;
 }
+
+// DEMO 訪客整棵身分目錄回收:與 gcSessions 不同(那只刪 .cadchat/<id> session 子目錄),
+// 這裡刪整個 users/demo-<id>/(scratch + quota.json 一併)——配額壽命 = 身分壽命。
+// 以「目錄名 ^demo-」為準(非 isDemoUser 的 env 判定,避免 env 誤設漏掃);絕不碰非
+// demo- 使用者。「動過」時間 = user 目錄本身與其 models/.cadchat 下(session 目錄 +
+// 平檔,再深一層 session 目錄內檔案)的最新 mtime。maxAgeDays 0/負/非數 → 停用。
+// 只在啟動時跑(記憶體 registry 尚空,不撞活 session)。回傳刪除的 demo 使用者名清單。
+const DEMO_DIR_RE = /^demo-[a-z0-9_-]+$/i;
+export function gcDemoUsers({ maxAgeDays, now = Date.now(), dataRoot = DATA_ROOT } = {}) {
+  if (!Number.isFinite(maxAgeDays) || maxAgeDays <= 0) return [];
+  const cutoff = now - maxAgeDays * 24 * 60 * 60 * 1000;
+  let ents = [];
+  try {
+    ents = fs.readdirSync(path.join(dataRoot, "users"), { withFileTypes: true });
+  } catch {
+    return []; // 尚無 users/ 目錄
+  }
+  const removed = [];
+  for (const ent of ents) {
+    if (!ent.isDirectory() || !DEMO_DIR_RE.test(ent.name)) continue;
+    const userDir = path.join(dataRoot, "users", ent.name);
+    try {
+      let newest = fs.statSync(userDir).mtimeMs;
+      const cadchat = path.join(userDir, "models", ".cadchat");
+      let children = [];
+      try {
+        children = fs.readdirSync(cadchat);
+      } catch {
+        /* 尚無 .cadchat */
+      }
+      for (const child of children) {
+        const cp = path.join(cadchat, child);
+        try {
+          const m = fs.statSync(cp).mtimeMs;
+          if (m > newest) newest = m;
+          try {
+            for (const gc of fs.readdirSync(cp)) {
+              try {
+                const gm = fs.statSync(path.join(cp, gc)).mtimeMs;
+                if (gm > newest) newest = gm;
+              } catch {
+                /* 檔案消失中 */
+              }
+            }
+          } catch {
+            /* child 非目錄(如 quota.json) */
+          }
+        } catch {
+          /* 消失中 */
+        }
+      }
+      if (newest < cutoff) {
+        fs.rmSync(userDir, { recursive: true, force: true });
+        removed.push(ent.name);
+      }
+    } catch {
+      /* 單一目錄失敗不擋其他 */
+    }
+  }
+  return removed;
+}

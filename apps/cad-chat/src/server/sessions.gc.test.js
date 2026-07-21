@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { gcAllSessions, gcSessions } from "./sessions.mjs";
+import { gcAllSessions, gcDemoUsers, gcSessions } from "./sessions.mjs";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -125,4 +125,69 @@ test("gcAllSessions:lessons.json 等平面檔存活(只刪目錄)", () => {
   assert.deepEqual(removed, ["s_old"]);
   assert.equal(fs.existsSync(lessons), true);
   fs.rmSync(dataRoot, { recursive: true, force: true });
+});
+
+// ── gcDemoUsers:整棵 users/demo-<id>/ 回收(配額壽命 = 身分壽命)──
+
+// 造一個 demo 訪客身分目錄(含 .cadchat/<sess>/part.py + quota.json),整棵設老 mtime。
+function makeDemoUser(dataRoot, name, ageMs, now, { freshChild = false } = {}) {
+  const cadchat = path.join(dataRoot, "users", name, "models", ".cadchat");
+  const sess = path.join(cadchat, "s_1");
+  fs.mkdirSync(sess, { recursive: true });
+  fs.writeFileSync(path.join(sess, "part.py"), "PARAMS = {}\n");
+  fs.writeFileSync(path.join(cadchat, "quota.json"), '{"count":3}');
+  const old = new Date(now - ageMs);
+  // 由深到淺設 mtime(先檔案後目錄,避免寫入把父目錄 mtime 推新)
+  for (const p of [
+    path.join(sess, "part.py"),
+    path.join(cadchat, "quota.json"),
+    sess,
+    cadchat,
+    path.join(dataRoot, "users", name, "models"),
+    path.join(dataRoot, "users", name),
+  ]) {
+    fs.utimesSync(p, old, old);
+  }
+  if (freshChild) {
+    fs.writeFileSync(path.join(sess, "fresh.step"), "ISO-10303-21;\n"); // 現在時間 → 有動過
+  }
+  return path.join(dataRoot, "users", name);
+}
+
+test("gcDemoUsers:過期 demo 身分整棵刪、未過期留、非 demo- 不碰", () => {
+  const dataRoot = makeRoot();
+  const now = Date.now();
+  makeDemoUser(dataRoot, "demo-old00001", 10 * DAY, now);
+  makeDemoUser(dataRoot, "demo-new00002", 2 * DAY, now);
+  // 深層仍有新活動 → 保留
+  makeDemoUser(dataRoot, "demo-act00003", 30 * DAY, now, { freshChild: true });
+  // 非 demo- 使用者:即使老,gcDemoUsers 絕不碰
+  const testUser = path.join(dataRoot, "users", "test", "models", ".cadchat", "s_1");
+  fs.mkdirSync(testUser, { recursive: true });
+  fs.writeFileSync(path.join(testUser, "part.py"), "x");
+  const old = new Date(now - 90 * DAY);
+  fs.utimesSync(path.join(testUser, "part.py"), old, old);
+  fs.utimesSync(path.join(dataRoot, "users", "test"), old, old);
+
+  const removed = gcDemoUsers({ maxAgeDays: 7, now, dataRoot });
+  assert.deepEqual(removed, ["demo-old00001"]);
+  assert.equal(fs.existsSync(path.join(dataRoot, "users", "demo-old00001")), false);
+  assert.equal(fs.existsSync(path.join(dataRoot, "users", "demo-new00002")), true);
+  assert.equal(fs.existsSync(path.join(dataRoot, "users", "demo-act00003")), true);
+  assert.equal(fs.existsSync(path.join(dataRoot, "users", "test")), true); // 非 demo- 不碰
+  fs.rmSync(dataRoot, { recursive: true, force: true });
+});
+
+test("gcDemoUsers:停用(0/負/NaN)、users/ 缺席都安全回空", () => {
+  const dataRoot = makeRoot();
+  const now = Date.now();
+  makeDemoUser(dataRoot, "demo-x0000001", 90 * DAY, now);
+  assert.deepEqual(gcDemoUsers({ maxAgeDays: 0, now, dataRoot }), []);
+  assert.deepEqual(gcDemoUsers({ maxAgeDays: -1, now, dataRoot }), []);
+  assert.deepEqual(gcDemoUsers({ maxAgeDays: Number.NaN, now, dataRoot }), []);
+  assert.equal(fs.existsSync(path.join(dataRoot, "users", "demo-x0000001")), true);
+  const empty = makeRoot();
+  assert.deepEqual(gcDemoUsers({ maxAgeDays: 7, now, dataRoot: empty }), []);
+  fs.rmSync(dataRoot, { recursive: true, force: true });
+  fs.rmSync(empty, { recursive: true, force: true });
 });

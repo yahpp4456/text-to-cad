@@ -81,7 +81,13 @@ export function useChatStream(dispatch, modeRef) {
               ? j.warnings?.[0] || "agent 尚未就緒(請設定訂閱 token)。"
               : j.error === "session busy"
                 ? "session 忙碌中(可能被另一個分頁占用),請稍候再試。"
-                : `伺服器錯誤 HTTP ${res.status}`;
+                : j.error === "demo_quota_exceeded"
+                  ? `展示額度已用完(共 ${j.limit ?? ""} 回合)。參數滑桿仍可即時調整;要繼續對話請重新登入或改用完整帳號。`
+                  : j.error === "demo_unavailable"
+                    ? "展示模式暫時無法使用,請稍後再試。"
+                    : j.error === "demo_session_expired"
+                      ? "展示登入已逾時,請重新整理頁面重新登入。"
+                      : `伺服器錯誤 HTTP ${res.status}`;
           handleEvent(dispatch, "error", { message: msg });
           return;
         }
