@@ -36,6 +36,7 @@ ORDER = [
     "smoke_sweep_window.py",
     "smoke_library.py",
     "smoke_library_mode.py",
+    "smoke_library_submit.py",
     "smoke_sketch.py",
     "smoke_versions.py",
     "smoke_restore.py",

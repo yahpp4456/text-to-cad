@@ -91,7 +91,7 @@ export default function Composer({
 
   const submit = () => {
     const text = draft.trim();
-    if ((!text && !hasImg) || running || uploading) return;
+    if ((!text && !hasFile) || running || uploading || locked) return;
     onSubmit(text);
     setDraft("");
   };
