@@ -174,6 +174,80 @@ test("登入 rate-limit:同 Caddy-IP 超過上限 → 429(偽造 XFF 前段無�
   assert.equal(s3, 429, "第3次(同 Caddy IP)應被限額");
 });
 
+test("團隊入口彩蛋頁(TEAM_LOGIN 預設關)→ 顯示「你是希茲克利夫?」不出 Basic", async () => {
+  const res = await fetch(`${B}/cad/__demo/basic`, { redirect: "manual" });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("www-authenticate"), null); // 不觸發 Basic 提示
+  const body = await res.text();
+  assert.match(body, /你是希茲克利夫/);
+});
+
+test("團隊 Basic 猜密碼 rate-limit(header 路徑,超過上限 → 429)", async () => {
+  const bad = () =>
+    fetch(`${B}/cad/api/ping`, {
+      headers: { authorization: basic("test", "GUESS"), "x-forwarded-for": "6.6.6.6, 1.9.9.9" },
+    });
+  const s1 = (await bad()).status;
+  const s2 = (await bad()).status;
+  const s3 = (await bad()).status;
+  assert.equal(s1, 401);
+  assert.equal(s2, 401);
+  assert.equal(s3, 429, "同 Caddy-IP 第3次無效 Basic 應被限額");
+});
+
+test("在線人數上限:達上限 → 503,不再發 cookie", async () => {
+  _internal.resetDemoSessions();
+  const prev = process.env.CADCHAT_DEMO_MAX_USERS;
+  process.env.CADCHAT_DEMO_MAX_USERS = "2";
+  // 每次登入用不同 Caddy-IP,避開 per-IP 登入 rate-limit(=2);在線名額(demoSeen)是全域的。
+  const login = (ip) =>
+    fetch(`${B}/cad/__demo/login`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", "x-forwarded-for": `9.9.9.9, ${ip}` },
+      body: `password=${encodeURIComponent(DEMO_PW)}`,
+      redirect: "manual",
+    });
+  try {
+    assert.equal((await login("3.3.3.1")).status, 302);
+    assert.equal((await login("3.3.3.2")).status, 302);
+    const third = await login("3.3.3.3");
+    assert.equal(third.status, 503);
+    assert.match(await third.text(), /在線人數已滿|上限/);
+    assert.equal(_internal.demoOnlineCount(), 2);
+  } finally {
+    if (prev === undefined) delete process.env.CADCHAT_DEMO_MAX_USERS;
+    else process.env.CADCHAT_DEMO_MAX_USERS = prev;
+    _internal.resetDemoSessions();
+  }
+});
+
+test("在線人數 status:本機直連回 JSON,帶 XFF(公開)→ 404", async () => {
+  const local = await fetch(`${B}/cad/__demo/status`); // fetch 不加 XFF
+  assert.equal(local.status, 200);
+  const j = await local.json();
+  assert.equal(typeof j.online, "number");
+  assert.equal(typeof j.max, "number");
+  const pub = await fetch(`${B}/cad/__demo/status`, { headers: { "x-forwarded-for": "1.2.3.4" } });
+  assert.equal(pub.status, 404);
+});
+
+test("行動裝置封鎖(desktop-only 預設開):手機擋、桌面放行", async () => {
+  const iphone =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1";
+  const m1 = await fetch(`${B}/cad/`, { headers: { "user-agent": iphone, accept: "text/html" }, redirect: "manual" });
+  assert.equal(m1.status, 200);
+  assert.match(await m1.text(), /請用電腦開啟/);
+  const m2 = await fetch(`${B}/cad/api/health`, { headers: { "user-agent": iphone } });
+  assert.equal(m2.status, 403);
+  assert.equal((await m2.json()).error, "desktop_only");
+  const d = await fetch(`${B}/cad/`, {
+    headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0", accept: "text/html" },
+    redirect: "manual",
+  });
+  assert.notEqual(d.status, 403);
+  assert.match(String(d.headers.get("location") || ""), /__demo\/login/);
+});
+
 test("啟動自檢:webauth 含 demo- 帳號 → 拒絕啟動", () => {
   fs.writeFileSync(webauthFile, "test:secretpw\ndemo-evil:pw\n");
   assert.throws(() => startProxy(), /保留前綴|demo-/);

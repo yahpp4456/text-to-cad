@@ -1,6 +1,7 @@
 // 附加在 claude_code preset 之後的系統提示,定義「對話式 CAD」的操作契約。
 export function buildSystemPrompt(session) {
-  const wd = session.workdirRel;
+  // 絕對路徑(workdirAbs):agent cwd=RUNTIME_ROOT,相對路徑在雙根部署會 Read 失敗。
+  const wd = session.workdirAbs || session.workdirRel;
   // 條件段:只在 session 有對應狀態時注入(控制提示長度)。
   const rehydrate = session.rehydratedFrom
     ? `\n\n# 接續既有專案\n本對話由既有專案 ${session.lastName || "?"}.py 接續(rehydrate 自 models/${session.rehydratedFrom})。修改前先 Read ${wd}/${session.lastName || "?"}.py;沿用其 PARAMS/INTENDED_CONTACT/MOTION 結構,用 cad_build(edits) 精修,不要整份重寫。`

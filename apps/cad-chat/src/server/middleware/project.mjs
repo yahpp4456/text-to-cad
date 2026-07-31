@@ -159,7 +159,7 @@ async function handleOpenProject(body, res, ctx = {}) {
   persistSession(session);
   // rehydrate 後首個 agent turn 的一次性接續提示(chat.mjs 取用後清空)
   session._rehydrateNote =
-    `（本對話接續既有專案 ${name}(來源 models/${clean})。產生器已在 ${session.workdirRel}/${name}.py,` +
+    `（本對話接續既有專案 ${name}(來源 models/${clean})。產生器已在 ${session.workdirAbs}/${name}.py,` +
     `修改前先 Read 它,沿用其 PARAMS/INTENDED_CONTACT/MOTION 結構,用 cad_build(edits) 精修。）`;
 
   // 同步重建:防 cadpy 版本漂移的舊 GLB,並重寫 manifest / 取回 motion

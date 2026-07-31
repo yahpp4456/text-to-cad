@@ -1183,7 +1183,7 @@ export default function App() {
             specLiveId={specLiveId}
             onSubmitText={submitText}
             onAttachFiles={attachFiles}
-            attachDisabled={demo}
+            attachDisabled={demo && state.mode === "library"}
             attachDisabledTip={DEMO_TIP}
             handlers={handlers}
           />
@@ -1192,7 +1192,7 @@ export default function App() {
             mode={state.mode}
             locked={libraryLocked}
             lockedHint={demo ? DEMO_TIP : undefined}
-            attachDisabled={demo}
+            attachDisabled={demo && state.mode === "library"}
             attachDisabledTip={DEMO_TIP}
             pickRefs={state.pickRefs}
             pendingFiles={pendingFiles}

@@ -37,6 +37,10 @@ export function getOrCreateSession(sessionId, opts = {}) {
       .relative(DATA_ROOT, workdir)
       .split(path.sep)
       .join("/");
+    // 給 agent 提示用的絕對(正斜線)路徑:agent 的 cwd 是 RUNTIME_ROOT(runner.mjs),
+    // 雙根部署(CADCHAT_DATA_ROOT≠RUNTIME_ROOT)時 workdirRel 會被解析到錯的根、
+    // Read 全數 File does not exist——提示面(prompt/rehydrate note)一律用這個。
+    const workdirAbs = workdir.split(path.sep).join("/");
     const session = {
       sessionId: id,
       user, // 擁有者(null = legacy);asset/專案解析以 modelsRoot 為準
@@ -44,6 +48,7 @@ export function getOrCreateSession(sessionId, opts = {}) {
       sdkSessionId: null, // 由 SDK init 訊息填入,之後 resume
       workdir,
       workdirRel,
+      workdirAbs,
       // 模式是 session 出生時的恆定屬性(不同模式不混一條 transcript);
       // 只在 mint 時採納 opts.mode,既有 session 忽略之(呼叫端向後相容)。
       mode: normalizeMode(opts.mode),

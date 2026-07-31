@@ -234,7 +234,7 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
               ? `（先前的對話紀錄無法續接,本訊息以新對話接續既有草模 ${session.lastName}。` +
                 `使用者畫布上已有上一版草模;依其需求重新設計場景,用 sketch_present 整份重送。）`
               : `（先前的對話紀錄無法續接,本訊息以新對話接續既有產物 ${session.lastName}。` +
-                `產生器已在 ${session.workdirRel}/${session.lastName}.py,修改前先 Read 它,` +
+                `產生器已在 ${session.workdirAbs}/${session.lastName}.py,修改前先 Read 它,` +
                 `沿用其 PARAMS/INTENDED_CONTACT/MOTION 結構,用 cad_build(edits) 精修。）`;
           }
           persistSession(session);
