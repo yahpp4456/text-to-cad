@@ -38,8 +38,8 @@ export default function Composer({
   const hasFile = pendingFiles.some((p) => p.status === "ready");
   // 上傳中不可送(refs 還沒拿到 rel);純附件無文字可送;硬閘鎖定時不可送
   const canSend = !running && !uploading && !locked && (draft.trim().length > 0 || hasFile);
-  // library 模式才收 STEP(檔名判,拖放/貼上的 File.type 對 .step 常是空字串)
-  const acceptsStep = mode === "library";
+  // library/cable 模式才收 STEP(檔名判,拖放/貼上的 File.type 對 .step 常是空字串)
+  const acceptsStep = mode === "library" || mode === "cable";
   const wantFile = (f) =>
     f && (f.type.startsWith("image/") || (acceptsStep && /\.ste?p$/i.test(f.name || "")));
 
@@ -233,7 +233,9 @@ export default function Composer({
                 ? "描述機構構想,幾秒搭出可玩草模（Enter 送出）…"
                 : mode === "library"
                   ? "送出開始收庫訪談;可先補充型號/備註（Enter 送出）…"
-                  : "描述零件,或追加修改（Enter 送出）…"
+                  : mode === "cable"
+                    ? "上傳客戶 STEP/工程圖,或口述電纜清單與長寬高（Enter 送出）…"
+                    : "描述零件,或追加修改（Enter 送出）…"
           }
         />
         {running ? (

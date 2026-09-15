@@ -5,7 +5,7 @@ import path from "node:path";
 
 import { BASE_PATH, resolveMaxSnapshots } from "../config.mjs";
 import { persistSession } from "../sessions.mjs";
-import { resolveModelRead } from "./paths.mjs";
+import { resolveInside, resolveModelRead } from "./paths.mjs";
 import { scrubPaths, spawnPython } from "./python.mjs";
 
 const STEP_DIR = "skills/cad/scripts/step";
@@ -130,6 +130,76 @@ export async function buildOrRollback(session, name, prevSrc, { signal, build = 
   return { step, rolledBack };
 }
 
+// 結構重生:整塊改寫 `CABLE_SPEC` + `PARAMS` + `PARAM_RANGES`(規格表單改「層數 /
+// 帶型」時走這條;只改數值仍走 rewriteParams)。與 rewriteParams 的三個關鍵差異:
+//   ① PARAMS **整塊替換,不與磁碟現值 merge** —— 層數變少時 merge 會留下舊的 L 鍵,
+//      paramDefsFromGenerator 對每個數值鍵都出滑桿 → 幽靈滑桿(拉了也沒用);
+//   ② PARAM_RANGES 是純文字 regex 解析、Python 端不能由 N 算 —— 必須一起重寫
+//      (L1..LN 各一列、head_h 下限 = 層數 × 線架高);
+//   ③ CABLE_SPEC 用多行 JSON(收尾 `}` 頂第 0 欄,與 readFlatJsonDecl 的文法一致)。
+// 回 {ok, prevSrc}(prevSrc = 改寫前整檔,build 失敗回滾用)或 {ok:false, error}。
+export function rewriteSpec(session, name, { spec, params, ranges } = {}) {
+  if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
+    return { ok: false, error: "spec 必須是物件" };
+  }
+  const layers = Number(spec.layers);
+  if (!Number.isInteger(layers) || layers < 1 || layers > 12) {
+    return { ok: false, error: `spec.layers 必須是 1–12 的整數(got ${spec.layers})` };
+  }
+  if (!Array.isArray(spec.bands) || !spec.bands.length) {
+    return { ok: false, error: "spec.bands 不能是空的" };
+  }
+  const lvls = new Set(spec.bands.map((b) => Number(b?.level)));
+  for (let i = 0; i < layers; i++) {
+    if (!lvls.has(i)) return { ok: false, error: `spec.bands 缺 level ${i} 的帶(層數 ${layers})` };
+  }
+  const bad = Object.entries(params || {}).filter(([, v]) => !Number.isFinite(Number(v)));
+  if (bad.length) {
+    return { ok: false, error: `參數必須是數值:${bad.map(([k]) => k).join(", ")}` };
+  }
+  const file = genPyPath(session, name);
+  let src;
+  try {
+    src = fs.readFileSync(file, "utf8");
+  } catch {
+    return { ok: false, error: `找不到產生器 ${name}.py` };
+  }
+  const specRe = /^CABLE_SPEC\s*=\s*\{[\s\S]*?^\}[ \t]*$/m;
+  if (!specRe.test(src)) return { ok: false, error: "產生器沒有可改寫的 CABLE_SPEC 區塊" };
+  const paramsRe = /PARAMS\s*=\s*\{[^{}]*\}/;
+  if (!paramsRe.test(src)) return { ok: false, error: "產生器沒有可改寫的 PARAMS 區塊" };
+
+  // CABLE_SPEC:多行 JSON(bands 一行一筆,人讀得懂 diff)
+  const specLines = [
+    "CABLE_SPEC = {",
+    `  "layers": ${layers},`,
+    `  "riser_module": ${Number(spec.riser_module) || 0},`,
+    ...(spec.measured ? [`  "measured": ${JSON.stringify(spec.measured)},`] : []),
+    '  "bands": [',
+    ...spec.bands.map(
+      (b, i) => `    ${JSON.stringify(b)}${i === spec.bands.length - 1 ? "" : ","}`,
+    ),
+    "  ]",
+    "}",
+  ];
+  let out = src.replace(specRe, specLines.join("\n"));
+  // PARAMS:整塊替換(不 merge);mm 值一律帶小數點(float-ness,見 toPyDict)
+  const floatKeys = new Set(Object.keys(params || {}));
+  out = out.replace(paramsRe, `PARAMS = ${toPyDict(params || {}, floatKeys)}`);
+  // PARAM_RANGES:給定就整塊重寫(層數變了必須跟著,否則新 L 鍵沒有固定範圍、
+  // head_h 下限還停在舊層數)
+  if (ranges && typeof ranges === "object") {
+    const body = Object.entries(ranges)
+      .map(([k, r]) => `    ${JSON.stringify(k)}: [${r.min}, ${r.max}, ${r.step}]`)
+      .join(",\n");
+    const rangesRe = /PARAM_RANGES\s*=\s*\{[^{}]*\}/;
+    const block = `PARAM_RANGES = {\n${body},\n}`;
+    out = rangesRe.test(out) ? out.replace(rangesRe, block) : out;
+  }
+  fs.writeFileSync(file, out, "utf8");
+  return { ok: true, prevSrc: src };
+}
+
 // 最小段精修:對既有產生器套用 find/replace 清單(字面比對;find 必須唯一命中)。
 // retry 修復用——LLM 不必重送整份原始碼。
 export function applyEdits(session, name, edits) {
@@ -188,8 +258,27 @@ export function resolveImportSource(modelsRelFile, { modelsRoot } = {}) {
 
 export function importStepIntoSession(session, modelsRelFile) {
   // 來源解析以 session 擁有者的 models 根為準(agent 的 cad_import 工具也經此,
-  // user session 只能匯本人層 + 共用 fixtures)。
-  const src0 = resolveImportSource(modelsRelFile, { modelsRoot: session.modelsRoot });
+  // user session 只能匯本人層 + 共用 fixtures)。另收 "uploads/…":session 內
+  // 上傳件(cable 模式的客戶參考 STEP;HTTP /api/import 在 handleImport 先走
+  // models-only 的 resolveImportSource,不經此分支)。
+  const cleanRel = String(modelsRelFile || "").replace(/\\/g, "/");
+  let src0;
+  if (/^uploads\//.test(cleanRel)) {
+    try {
+      const abs = resolveInside(session.workdir, cleanRel);
+      if (!/\.ste?p$/i.test(abs)) {
+        src0 = { ok: false, error: "只能匯入 .step/.stp 檔" };
+      } else if (!fs.statSync(abs).isFile()) {
+        src0 = { ok: false, error: "不是檔案" };
+      } else {
+        src0 = { ok: true, srcAbs: abs };
+      }
+    } catch {
+      src0 = { ok: false, error: "上傳檔不存在或路徑超出工作區" };
+    }
+  } else {
+    src0 = resolveImportSource(cleanRel, { modelsRoot: session.modelsRoot });
+  }
   if (!src0.ok) return src0;
   const srcAbs = src0.srcAbs;
 
@@ -612,8 +701,106 @@ export function paramValuesFromGenerator(session, name) {
   return values;
 }
 
+// 產生器可選宣告的固定滑桿範圍(單層 dict,值為 [min, max, step] 或
+// (min, max, step)):`PARAM_RANGES = {"length": [260, 2000, 5], ...}`。
+// 有宣告的鍵用「固定範圍」,不受當前值影響——範本要能大幅調參(不被啟發式
+// 的「當前值×2.5」上限困住)就靠這個。未宣告的鍵仍走啟發式 fallback。
+export function paramRangesFromGenerator(session, name) {
+  let src;
+  try {
+    src = fs.readFileSync(genPyPath(session, name), "utf8");
+  } catch {
+    return {};
+  }
+  const m = src.match(/PARAM_RANGES\s*=\s*\{([^{}]*)\}/);
+  if (!m) return {};
+  const ranges = {};
+  const num = "-?\\d+(?:\\.\\d+)?";
+  const entry = new RegExp(
+    `["']([^"']+)["']\\s*:\\s*[\\[(]\\s*(${num})\\s*,\\s*(${num})\\s*,\\s*(${num})\\s*[\\])]`,
+    "g",
+  );
+  let e;
+  while ((e = entry.exec(m[1])) !== null) {
+    const min = Number(e[2]);
+    const max = Number(e[3]);
+    const step = Number(e[4]);
+    if (Number.isFinite(min) && Number.isFinite(max) && max > min && step > 0) {
+      ranges[e[1]] = { min, max, step };
+    }
+  }
+  return ranges;
+}
+
+// 選主產生器:指定 > 唯一 .py > 有同名 .asm.json > 檔案最大。回 stem|null。
+// (open-project 與工作台範本掃描共用;讀不到目錄 → null,呼叫端當「不是專案」。)
+export function pickGenerator(dir, requested) {
+  let pys;
+  try {
+    pys = fs.readdirSync(dir).filter((f) => f.endsWith(".py"));
+  } catch {
+    return null;
+  }
+  if (!pys.length) return null;
+  if (requested) {
+    const want = `${sanitizeName(requested)}.py`;
+    if (pys.includes(want)) return want.slice(0, -3);
+  }
+  if (pys.length === 1) return pys[0].slice(0, -3);
+  const withManifest = pys.find((f) => fs.existsSync(path.join(dir, `${f.slice(0, -3)}.asm.json`)));
+  if (withManifest) return withManifest.slice(0, -3);
+  const largest = pys
+    .map((f) => ({ f, size: fs.statSync(path.join(dir, f)).size }))
+    .sort((a, b) => b.size - a.size)[0];
+  return largest.f.slice(0, -3);
+}
+
+// 產生器可選宣告的「**JSON 相容 dict 區塊**」(TEMPLATE_META 範本中繼 /
+// CABLE_SPEC 電纜結構規格 / PARAM_LABELS 欄位中文標籤)。文法(寫進範本 docstring):
+//   KEY = { …JSON… }      單行,或
+//   KEY = {               多行,**收尾的 `}` 必須頂到第 0 欄**
+//     "family": "cable",
+//   }
+// 刻意用 JSON.parse 而非手刻 regex:PARAM_RANGES 那支只吃數值三元組,而這些宣告含
+// 中文字串、巢狀陣列、括號與逗號,regex 切 key/value 必誤切。JSON 相容的代價是
+// **不得出現 Python 的 True/False/None**(布林用 1/0、「不覆寫」用 0)——Python 端
+// 照樣是合法 dict 字面量,兩邊讀同一份、零複本。
+// 解析不到/壞掉 → null(該範本不列進工作台清單,不是壞 build,絕不 throw)。
+export function readFlatJsonDecl(session, name, key = "TEMPLATE_META") {
+  let src;
+  try {
+    src = fs.readFileSync(genPyPath(session, name), "utf8");
+  } catch {
+    return null;
+  }
+  // 先試單行,再試「多行 + 第 0 欄收尾 }」(非貪婪,取第一個頂欄 })
+  const m =
+    src.match(new RegExp(`^${key}\\s*=\\s*(\\{.*\\})[ \\t]*$`, "m")) ||
+    src.match(new RegExp(`^${key}\\s*=\\s*(\\{[\\s\\S]*?^\\})[ \\t]*$`, "m"));
+  if (!m) return null;
+  try {
+    const obj = JSON.parse(m[1]);
+    return obj && typeof obj === "object" && !Array.isArray(obj) ? obj : null;
+  } catch {
+    return null;
+  }
+}
+
+export function readCableSpec(session, name) {
+  return readFlatJsonDecl(session, name, "CABLE_SPEC");
+}
+
+export function readTemplateMeta(session, name) {
+  return readFlatJsonDecl(session, name, "TEMPLATE_META");
+}
+
+export function readParamLabels(session, name) {
+  return readFlatJsonDecl(session, name, "PARAM_LABELS");
+}
+
 // 從產生器的 PARAMS dict 解析滑桿定義(決定性 fallback:agent 沒呼叫 emit_params
-// 時仍要有滑桿可拉)。範圍用啟發式:整數小值當顆數(step 1),其餘 0.4x~2.5x。
+// 時仍要有滑桿可拉)。範圍優先讀 PARAM_RANGES(固定),否則用啟發式:整數小值
+// 當顆數(step 1),其餘 0.4x~2.5x。
 export function paramDefsFromGenerator(session, name) {
   let src;
   try {
@@ -623,6 +810,7 @@ export function paramDefsFromGenerator(session, name) {
   }
   const m = src.match(/PARAMS\s*=\s*\{([^{}]*)\}/);
   if (!m) return [];
+  const ranges = paramRangesFromGenerator(session, name);
   const defs = [];
   const entry = /["']([^"']+)["']\s*:\s*(-?\d+(?:\.\d+)?)/g;
   let e;
@@ -631,9 +819,17 @@ export function paramDefsFromGenerator(session, name) {
     const value = Number(e[2]);
     // 0 或負值無法推範圍(會算出 min>max 的壞滑桿),留給 agent 的 emit_params。
     // (folded 已不再是 PARAMS 參數——攤平改由 3D 視圖即時切換鈕,見 flat_glb/gen_flat。)
-    if (!Number.isFinite(value) || value <= 0) continue;
+    // 例外:有 PARAM_RANGES 明宣告的鍵放行(值可為 0/負,範圍不靠值推)。
+    if ((!Number.isFinite(value) || value <= 0) && !ranges[key]) continue;
+    const isInt = Number.isInteger(value) && value > 0 && value <= 20 && !e[2].includes(".");
     let def;
-    if (Number.isInteger(value) && value > 0 && value <= 20 && !e[2].includes(".")) {
+    if (ranges[key]) {
+      // 固定範圍(範本專用):min/max/step 由產生器宣告,與當前值無關。
+      const r = ranges[key];
+      def = { key, label: key, min: r.min, max: r.max, step: r.step, value };
+      if (isInt) def.int = true;
+      else def.unit = "mm";
+    } else if (isInt) {
       // int:true → NumberField 鎖整數(唯一判準;step==1 的 mm 參數不得掛)
       def = { key, label: key, min: 1, max: Math.max(value * 3, 12), step: 1, value, int: true };
     } else {

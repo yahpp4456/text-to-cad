@@ -10,6 +10,14 @@ export const initialState = {
   mode: "design",
   phase: "idle", // idle | running | done
   running: false,
+  // 同步伺服端工作(開專案/回退=Python 重建+驗證,大型件 1–2 分鐘)的等待指示:
+  // {text, since}|null。非 running(不鎖 composer 語意),只驅動 live-row/畫布進度條
+  // 讓使用者知道還活著;暫態,RESTORE/RESET 不還原。
+  pending: null,
+  // 無塵電纜規格表單(工作台選了範本/案件後的草稿)。放 store 不放元件本地:
+  // clarify 待答時視圖面板會整個讓位卸載,本地 state 一卸即丟草稿。
+  // 暫態——RESTORE 不還原(跨重整重選一次範本即可,不為草稿加快照 schema)。
+  cableForm: null,
   stageIdx: -1, // 驅動 StageStepper(D)
   items: [], // 對話 transcript
   // verified 由 server versionStamp 發(三態:undefined=未知,舊快照/opened 檔)
@@ -430,6 +438,29 @@ export function reducer(state, action) {
 
     // 「新對話」:回到初始狀態(對話/版本/畫布/參數/選取/運動/選擇題全清)。
     // mode 保留:正在草模腦暴的人開新對話,多半還要草模(切模式走 SET_MODE)。
+    // 開表單(form=null 關閉);PATCH_CABLE_FORM 淺層合併(values/unsure/note/error)
+    case "SET_CABLE_FORM":
+      return { ...state, cableForm: action.form || null };
+
+    case "PATCH_CABLE_FORM":
+      if (!state.cableForm) return state;
+      return { ...state, cableForm: { ...state.cableForm, ...(action.patch || {}) } };
+
+    case "SET_CABLE_FORM_VALUE": {
+      if (!state.cableForm) return state;
+      const values = { ...state.cableForm.values, [action.key]: action.value };
+      return { ...state, cableForm: { ...state.cableForm, values, error: null } };
+    }
+
+    case "SET_PENDING":
+      // 設:{text, since};清:null。since 由呼叫端給(reducer 保持純函數)。
+      return {
+        ...state,
+        pending: action.pending
+          ? { text: String(action.pending.text || "處理中…"), since: Number(action.pending.since) || 0 }
+          : null,
+      };
+
     case "RESET":
       return { ...initialState, mode: state.mode };
 

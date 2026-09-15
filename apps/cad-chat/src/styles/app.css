@@ -58,6 +58,9 @@
 .bar-design {
   background: var(--design);
 }
+.bar-cable {
+  background: var(--cable);
+}
 .bar-emit {
   background: var(--emit);
 }
@@ -387,6 +390,23 @@
 .lib-shelf-count {
   font-size: 11px;
   color: var(--text-dim);
+}
+/* 工作台頁籤(範本 | 案件):貨架標頭內的小分段 */
+.cable-tab {
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  clip-path: var(--chamfer-pill);
+}
+.cable-tab:hover {
+  color: var(--cable);
+}
+.cable-tab[data-on="true"] {
+  color: #fff;
+  background: var(--cable);
 }
 .lib-shelf-toggle {
   cursor: pointer;
@@ -3138,6 +3158,20 @@
   color: var(--text-dim);
   letter-spacing: 0.3px;
 }
+/* 空畫布狀態裡的脈衝點(inline 文字流,非 flex 容器 → 要 inline-block 才有尺寸) */
+.canvas-empty-text .live-dot {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+/* 同步重建(開專案/回退)的等待計時:等寬數字免跳動;跳秒 = 還活著 */
+.live-elapsed {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+  margin-left: 2px;
+}
 @keyframes live-pulse {
   0%, 100% { opacity: 0.25; transform: scale(0.8); }
   50% { opacity: 1; transform: scale(1); }
@@ -3808,6 +3842,9 @@
 .mode-seg[data-on="true"][data-mode="sketch"] {
   background: var(--sketch);
 }
+.mode-seg[data-on="true"][data-mode="cable"] {
+  background: var(--cable);
+}
 .mode-seg[data-on="true"][data-mode="library"] {
   background: var(--part);
 }
@@ -4139,4 +4176,249 @@
 }
 .canvas-offer .lesson-offer-body {
   padding: 2px 0 8px;
+}
+
+/* ── 無塵電纜規格表單(浮動視窗;沿用 .sweep-window 外框,版位/內容自訂)── */
+.cable-window {
+  top: 16px;
+  right: 16px;
+  left: auto;
+  bottom: 16px;
+  width: min(620px, calc(100% - 32px));
+}
+.cablewin-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  padding: 12px 16px;
+  overflow-y: auto;
+}
+.cablewin-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.cable-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cable-field-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.cable-field-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.cable-field-key {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.cable-field-note {
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+.cable-fixed {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--panel-sub);
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+.cable-fixed-row {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.cable-fixed-k {
+  flex: none;
+  width: 68px;
+  color: var(--text-dim);
+}
+.cable-fixed-v {
+  color: var(--ink);
+  min-width: 0;
+}
+.cable-derived {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cable-derived-chip {
+  font-size: 10.5px;
+  color: var(--cable);
+  border: 1px solid color-mix(in oklab, var(--cable) 40%, transparent);
+  background: color-mix(in oklab, var(--cable) 8%, #fff);
+  padding: 2px 8px;
+  clip-path: var(--chamfer-pill);
+}
+.cable-unsure {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  cursor: pointer;
+}
+.cable-note {
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+.cable-error {
+  flex: none;
+  margin: 0 16px 8px;
+  padding: 7px 10px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #a5321f;
+  background: #fdf1ee;
+  border: 1px solid #f0c8bd;
+  border-radius: 6px;
+  white-space: pre-wrap;
+}
+.cablewin-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--line-soft);
+}
+.cable-btn {
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: #fff;
+  clip-path: var(--chamfer-pill);
+}
+.cable-btn:hover {
+  border-color: var(--cable);
+  color: var(--cable);
+}
+.cable-btn-primary {
+  background: var(--cable);
+  border-color: var(--cable);
+  color: #fff;
+}
+.cable-btn-primary:hover {
+  color: #fff;
+  filter: brightness(1.06);
+}
+/* 禁用態:不設 pointer-events:none —— hover 提示(為什麼不能按)必須浮得出來 */
+.cable-btn[data-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.cable-btn[data-disabled="true"]:hover {
+  border-color: var(--line);
+  color: var(--ink);
+}
+.cable-btn-primary[data-disabled="true"]:hover {
+  color: #fff;
+}
+.cable-foot-hint {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  line-height: 1.35;
+  min-width: 0;
+}
+/* 即時檢核不符的欄位:紅框 + 訊息 + 「套用下限」 */
+.cable-field[data-bad] .numfield {
+  border-color: #d05a45;
+}
+.cable-field-bad {
+  font-size: 10px;
+  color: #a5321f;
+  line-height: 1.4;
+}
+.cable-fix {
+  cursor: pointer;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid #d05a45;
+  color: #a5321f;
+  clip-path: var(--chamfer-pill);
+  white-space: nowrap;
+}
+.cable-fix:hover {
+  background: #fdf1ee;
+}
+/* 結構編輯(層數 ± / 每層帶型) */
+.cable-layers {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cable-step {
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1;
+}
+.cable-step:hover {
+  border-color: var(--cable);
+  color: var(--cable);
+}
+.cable-step[data-disabled="true"] {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.cable-fixed-hint {
+  font-size: 9.5px;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+.cable-band-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.cable-band-n,
+.cable-band-bore {
+  width: 46px;
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  text-align: right;
+}
+.cable-band-bore {
+  width: 56px;
+}
+.cable-specdirty {
+  font-size: 10px;
+  color: var(--cable);
+  border: 1px dashed color-mix(in oklab, var(--cable) 45%, transparent);
+  border-radius: 6px;
+  padding: 4px 8px;
+  line-height: 1.4;
 }

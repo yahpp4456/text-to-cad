@@ -2,6 +2,8 @@
 // 專案、教訓、零件庫互動」的端點。UI 已藏對應入口(App 依 /api/health 的 demo
 // 旗),這裡是防直呼 API 的伺服器端底線——擋的語意以「入口」為單位:
 //   開啟檔案   → /api/files(列目錄)、/api/open(唯讀開檔)、/api/open-project
+//   工作台     → /api/templates(範本/案件清單;案件卡帶客戶名,且卡片動作全在
+//               BLOCKED 名單內——只開清單會變成「看得到、進不去」的假入口)
 //   另存專案   → /api/save-project
 //   教訓       → /api/lessons 全家(含 record:demo 不累積也不改教訓庫)
 //   零件庫互動 → library-add/delete/glb(收庫/刪件/補轉檔=寫入)、upload-step
@@ -14,6 +16,8 @@ const BLOCKED = [
   "/api/files",
   "/api/open",
   "/api/open-project",
+  "/api/templates",
+  "/api/cable/check",
   "/api/save-project",
   "/api/lessons",
   "/api/library-add",

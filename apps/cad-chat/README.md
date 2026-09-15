@@ -311,9 +311,10 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
 - **STP 上傳鏈**:`POST /api/upload-step`(`middleware/upload.mjs`;
   octet-stream、25MB 上限含排水語意、magic 檔頭 `ISO-10303-21` 嗅探=
   `src/server/stepFiles.mjs`)→ 落 session `uploads/` → `/api/chat` body 帶
-  `stepRefs`(`readStepRefs` 雙沙箱+重嗅探,**非 library session 直接丟棄**)→
-  `buildUserText` 只注入路徑註記(STEP 不進 content blocks)。Composer 的
-  accept/貼上/拖放只在 library 模式收 `.step/.stp`(App `attachFiles` 雙保險);
+  `stepRefs`(`readStepRefs` 雙沙箱+重嗅探,**非 library/cable session 直接
+  丟棄**)→ `buildUserText` 只注入路徑註記(STEP 不進 content blocks;cable
+  措辭見「無塵電纜模式」節)。Composer 的 accept/貼上/拖放只在 library/cable
+  模式收 `.step/.stp`(App `attachFiles` 雙保險);
   附件佇列泛化為 `pendingFiles`(`kind:"image"|"step"`,step chip ▤ 無縮圖)。
 - **工具集**(`agent/tools.library.mjs`;prompt=`agent/prompt.library.mjs`):
   共用 emit 4 工具 + `library_preview`(轉檔管線重用 `cad/stepPreview.mjs`
@@ -354,6 +355,223 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
   L4 `smoke_library_live.py`(四回合:preview+必問+零 version → 收庫落盤 →
   查庫回答 → **庫件匯入新設計 session 配安裝底板組裝**——產生器引用 imported/
   的磁碟證據)。
+
+## 無塵電纜模式(CABLE,2026-08-24)
+
+第四聊天模式 `cable`:**設計模式的特化,不是受限模式**——完整設計鏈
+(cad_build/PARAMS 滑桿/版本時間軸/匯出/精算)全開,疊加電纜領域 prompt 與
+STEP 上傳。動機:無塵電纜客戶案會大量重複出現,收斂成固定形狀——
+**頂層 PARAMS 只有 `length/width/height` 三個圖面總體尺寸**,其餘由量測常數表
+`_M` + 閉式 `_derived()` 派生,拉三個滑桿就決定性重生整組。
+
+- **isDesignLike(單一真相源 `src/lib/chatModes.js`)**:cable 與 design 同組。
+  所有「只有設計才有」的判斷改走它:`paramsOnly` 快路徑(chat.mjs)、
+  `rejectNonDesignSession` 六端點放行(project.mjs)、hydrate 產物守衛 `.py`
+  分支(sessions.mjs else 分支天然涵蓋)、教訓 digest 注入(runner.mjs)、
+  前端 `designMode`(ParamsBar/時間軸動作/另存)。
+- **領域模型**(prompt.cable.mjs 教給 agent):整組 = 頭尾固定架 + N 層護套;
+  每層一條帶(或多條並排窄條)、每帶自己的口袋數、**各口袋可不同寬度**
+  (`cleanroom_sleeve` 的 `pocket_w` 收 list;量測件偏離 EHSL 用 `web`/`edge`
+  覆寫);**固定架幾層就幾組**(模組隨層數生成;模組幾何=
+  `cadpy.parts.cable_assembly.rack_module`,OEM 線架逐面普查同款:彎側夾持
+  地台/浮凸解除槽/型錄寬 99.2 導引槽/貫穿長槽/埋頭螺絲+螺帽袋/標籤凹槽,
+  螺向 `measured.screw_from_top`;導引槽比帶排窄 → **微量宣告干涉**,
+  INTENDED_CONTACT 由 `cable_assembly.intended_contact` 現算)。範本
+  `models/cable_x_v4/cable_x_v4.py`(客戶件 Cable X v4 逐件重建,預設值
+  逐位重現原廠 STEP 包絡 118.2×397.225×179.5 = 圖面 394.38+2.845 常數差)。
+- **第二種驅動尺寸形態(2026-08-25,客戶手繪規格)**:客戶直接給**各層
+  電纜長 L1/L2/L3**(內→外,端到端含夾持段)+ 固定頭高 `head_h`(11.5×層數
+  +加高)+ 固定頭安裝高度 `mount_h`(上固定頭底面−下固定頭底面)+ 下直段
+  露出 `bottom_leg`。範本 `models/cable_x_per_layer/cable_x_per_layer.py`:
+  同一組 `_M` 量測常數、只換閉式——彎徑由兩固定架窗口高差定
+  `r=(mount_h+zw[N-1-lvl]-zw[lvl])/2`、外層 L 反算端頭錯位 tip_offset、其餘層
+  直段由各自 L 反算(v4 的 bend_stagger/tip_offset 常數在此變成導出量);
+  `_check_params` 加相鄰層巢套餘隙(中心線最短距離 ≥ 帶厚+0.3,回報
+  「相鄰層長度差至少 (π−2)Δr+2×帶厚」)。餵 v4 的層長 + mount_h=140 逐位
+  重現 v4(`__main__` 釘死)。手繪案 805/840/870、39.5、190、70 → 包絡
+  118.2×540.19×229.5,18 件零干涉。假設(寫在 docstring):L1=最內層、
+  190 量到下固定頭底面、70 是最外層(最低、可見)的露出直段。
+  **四層姊妹範本 `models/cable_y_per_layer/cable_y_per_layer.py`**(客戶
+  Cable Y v4,圖面 1036.62×118.2×236):同一閉式,`N_LAYERS=4`、帶表換成 Y 量測
+  (外 7×11.4 / 窄條列 14.35+14.35+35+35 = X 窄條列的鏡像 / 7×11.4 / 內 6×14.0)、
+  **加高模組不在最底格而在第 3 格**(`_M["riser_module"]=2`,兩端同序
+  11.5/11.5/16.5/11.5)。OEM 配置反算 mount_h 185 / head_h 51 / 外層露出 102.75
+  / 端頭錯位 788.725 → 包絡 1039.475×236 逐位重現(`__main__` 全量重建釘死)。
+  手繪案 1305/1340/1370/1405、51、200、70 → 包絡 118.2×… ×251;相鄰層長度差 30
+  剛好等於幾何下限 2×7 + (π−2)×14 ≈ 29.98(窄條列與第 2 層之間 Δr=14,因為加高
+  模組夾在中間),彎冠餘隙僅 0.3——值得跟客戶提。
+- **兩種輸入形態**:(a) 客戶 STEP+工程圖 → Composer 在 cable 模式收
+  `.step/.stp`(`acceptsStep`,App attachFiles 同步放行)→ `/api/upload-step`
+  落 session `uploads/` → `readStepRefs` 注記(cable 措辭:cad_import 量測
+  擬合,非收庫)→ **`importStepIntoSession` 新收 `uploads/…` 來源**
+  (session 內沙箱 resolveInside;HTTP `/api/import` 仍 models-only);
+  (b) 零起點口述 → `select_sleeve`/`select_kcl_clamp` 型錄選型。
+- **前端**:切換器第四段(創作組 sketch/design/cable | library,`--cable:
+  #18a0c4` 青,icon ⌒);StageStepper 沿用設計五段;空狀態/範例/placeholder
+  專屬文案;demo 鎖比照 library(attachDisabled;demoGuard 的 upload-step/
+  import 本就在 BLOCKED)。
+- **open-project 帶 mode/params(2026-08-25,修死路)**:`/api/open-project`
+  以前恆 mint 出 design session,前端又不校正切換器 → cable 段一鍵開專案後
+  **每一次 `/api/chat`(含滑桿 paramsOnly 重生)都 400 `mode_mismatch`**
+  (實測確認,原 README 稱「已知簡化」其實是死路)。現在:
+  `resolveOpenMode(body,{family})` 純函數決定 mint 的 mode——body.mode 是設計鏈
+  模式就採納,否則退範本 `TEMPLATE_META.family`、再退 design(**刻意不 400**:
+  sketch/library 模式一鍵開專案是既有動線);回應帶 `mode`/`values`,
+  `App.openProject` 據此 `SET_MODE`(連 `ok:false` 也校正——session 已換,
+  接著要用對話修它);`useChatStream` 補 `mode_mismatch` 人話 + 自動校正切換器。
+  同時 `open-project` 收 `params`(規格表單「直接生成」):`validateOpenParams`
+  在 **mint 之前**對來源產生器驗鍵/數值/PARAM_RANGES(壞請求不留空 session 目錄),
+  通過後於 `runStep` **之前** `rewriteParams` → 一次 build 就是使用者要的配置;
+  跨參數耦合違規由 `_check_params` 在 build 時擋,人話訊息原樣回前端。
+  測試:L1 `project.openmode.test.js`(兩支純函數)、L3 `smoke_cable_mode.py`
+  A2 段(mint 前擋 / 落盤 mode / 滑桿重生 200 / family 兜底)。
+### 無塵電纜工作台(2026-08-25;主線改成「選範本 → 填規格 → 直接生成」)
+
+cable 模式原本只有對話一條路(範例/打字/上傳 STEP 全要 LLM)。客戶原話
+「護套寬、口袋數不變,只改總長/固定頭高/安裝高度/層數」——這四件事**不需要
+模型判斷**,所以主線改成零 LLM 的表單鏈,對話退成「表單涵蓋不到的事」。
+
+- **範本/案件的真相在產生器 `.py` 頂部的 JSON 相容宣告**(沒有第二份型錄檔):
+  - `TEMPLATE_META`:family/form/label/summary/unit/self_contained(卡片中繼)
+  - `CABLE_SPEC`:layers/riser_module/**bands**(結構規格)——`_M["bands"]` 與
+    `N_LAYERS` 都從它讀,**帶表只有一份真相**(Phase 4 的 rewriteSpec 就改這塊)
+  - `PARAM_LABELS` / `PARAM_NOTES`:欄位中文標籤與量法說明
+  - 文法(寫進範本註解):單行或多行、**收尾 `}` 頂第 0 欄**、雙引號、無尾逗號、
+    **不得出現 True/False/None**(布林用 1/0、「不覆寫」用 0)。解析走
+    `pipeline.readFlatJsonDecl` 的 `JSON.parse`——**刻意不手刻 regex**
+    (`paramRangesFromGenerator` 那支只吃數值三元組,中繼含中文/巢狀/逗號必誤切)。
+  - 可變的**案件**紀錄(客戶/日期/來源範本/備註)放目錄側檔 `case.json`,由
+    save-project 在 copyProjectTree 後寫——`.py` 的寫入者永遠只有 `rewriteParams`。
+- **`GET /api/templates?family=cable`**(`cad/templates.mjs`):掃 models 一層雙根
+  (per-user 可寫層優先、fixtures 補集),有 TEMPLATE_META = 範本、有 case.json =
+  案件;每筆回 params(欄位定義,含 PARAM_RANGES 固定範圍)/values/labels/notes/
+  bands/glbRel。demoGuard **BLOCKED**(案件卡帶客戶名,且卡片動作全在黑名單內,
+  只開清單會變成「看得到、進不去」的假入口)。
+- **CableShelf**(畫布上方常駐貨架,兩頁籤):範本卡「填規格 / 開啟 / 預覽」、
+  案件卡「複製成新案 / 開啟 / 預覽」;縮圖只用現成 tracked GLB(工作台不為縮圖
+  spawn Python);生出第一版後自動收合(把畫面讓給模型)。
+- **CableSpecWindow**(浮在 3D 上的規格表單,`!clarify` 讓位;草稿在 store 的
+  `cableForm` 不放元件本地——面板一卸即丟):左欄可改欄位(NumberField,與底部
+  ParamsBar 共用同一份 defs)、右欄範本固定住的結構(層數/帶表/加高模組唯讀)+
+  派生數字(總高、固定頭拆解)+「我不確定量法」+「給 AI 的修改說明」。
+  - **▶ 直接生成(零 LLM)**:`canSkipAi(form)` 成立才可按(值都在範圍、沒勾不確定、
+    沒寫給 AI 的說明);走 `open-project {mode, params}` 一次 build。
+  - **✎ 給 AI 確認**:`composeCableSpecText` 組成「電纜規格:」契約 `SET_PREFILL`
+    到 composer(**不先 build**,先過目再送);prompt.cable 有對應契約段——已給的
+    欄位不得再 emit_clarify、先 Read 產生器再 emit_spec、表單值不標 assumed。
+  - **刻意不做量法換算**(L 含不含 32.4、mount_h 量到哪面):換算後 PDF 參數表/
+    滑桿/agent 看到的全是換算值,客戶拿手繪對照反而對不上 → 一律用「不確定」
+    勾選降級給 AI 問。
+- **每回合注入 PARAMS 現值**(`buildUserText`):滑桿與表單的決定性重生不進 SDK
+  transcript,agent 只知道 rehydrate 當下那組值——拉過十次滑桿後它仍用舊值。
+- **✎ 記教訓**(時間軸):零 LLM 主線不會出現 agent 的教訓是/否卡,假綠只有人看
+  得出來 → 直打既有 `/api/lessons/record`(demo 不出)。
+- **即時檢核(2026-08-25 Phase 3)**:閉式與護欄抽成 **OCP-free** 的
+  `packages/cadpy/src/cadpy/parts/cable_spec.py`(stdlib only,import 0.08s;
+  產生器頂部 `from build123d import *` 冷啟 ~16s,表單邊打字邊檢核不可能等它)。
+  - **單一真相**:兩份 per-layer 範本的 `_derived`/`_check_params` 改為呼叫它,
+    cad-chat 的 `POST /api/cable/check`(spawn `cad/cable_check.py`,~0.3s +
+    前端 300ms 防抖)也呼叫它 → **不會「表單綠、build 紅」**。
+  - 回傳 `issues[{key, message, min?, max?}]`:欄位標紅 + 訊息 + 「套用 <值>」鈕;
+    `canSkipAi(form, liveIssues)` 把閉式違規也算進主鈕的閘(否則跨參數耦合要等
+    1–2 分鐘 build 才被踢回來)。派生數字(總高/包絡長/各層彎徑)也來自它。
+  - **回報的界限必須真的可用**:下限往上取到 0.1、上限往下取,巢套餘隙的上限
+    另做二分(first-order 估計只是起點,餘隙對長度非線性)——否則使用者按
+    「套用下限」還是被擋。
+  - 常數優先序:`_DEFAULT_M` < `CABLE_SPEC["measured"]` < 呼叫端 `m`,所以端點
+    只要有 CABLE_SPEC 就能算,不必去讀產生器的 Python `_M`(那是 dict 字面量
+    加註解,JSON 讀不到)。
+  - 測試:`tests/python/packages/cadpy/test_cable_spec.py`(X/Y 兩件的 OEM 等價
+    golden、每條護欄的 must-FAIL + 「回報的界限餵回去要過」、解析餘隙的回歸鎖);
+    動它 → **先 `scripts/dev/sync-vendored.sh`**(venv editable 指向 vendored 複本)。
+- **層數/帶型可改(2026-08-25 Phase 4)**:整族收斂成**規格驅動**——幾何實作在
+  `packages/cadpy/src/cadpy/parts/cable_assembly.py`,兩份 per-layer 範本只剩
+  「宣告 + 薄包裝」(各約 210 行,原本各 350+;X/Y 的差異全在 CABLE_SPEC 資料裡)。
+  - 表單右欄可改**層數**(± 鈕)與**單條層的帶型**(口袋數 × 內腔寬);並排窄條列
+    不給改(寬度/位置不是表單能安全編的,交給對話)。
+  - **固定座螺向**(2026-08-25 三輪,客戶指正後升格欄位):右欄顯示
+    `measured.screw_from_top` 現值(1=六角袋朝下=實裝標準;缺席視為 1 是安全網)
+    +「翻轉」鈕;「✎ 給 AI 確認」的契約文字列「固定座螺向…表單已確認,不要再
+    問」,prompt.cable 則規定 STEP 重建時安裝面必 emit_clarify 確認、不信檔案
+    姿態(客戶 X 檔實測把螺絲建反)。
+  - **加/減層一律在最外側**:客戶編號 L1 = 最內層,所以既有層的 L 鍵完全不動、
+    只多/少一個 L(N)。(若加在最內側,每層編號都 +1,剛填好的值全部錯位。)
+    `paramsWithLayers` 讓新層取「目前最長 + 35」、head_h 保住原加高量;
+    **`defsWithLayers` 同步長/縮欄位定義**——表單渲染的是 defs,只改 values 的話
+    新 L 鍵不會長出欄位、砍掉的還留著。
+  - 生成走 `open-project {spec, params}` → **`rewriteSpec`**:CABLE_SPEC(多行
+    JSON,收尾 `}` 頂第 0 欄)+ PARAMS(**整塊替換不 merge**——縮層 merge 會留下
+    舊 L 鍵 → 幽靈滑桿)+ PARAM_RANGES(純文字 regex 解析、Python 端不能由 N 算,
+    必須一起重寫:L1..LN 各一列、head_h 下限 = 層數 × 線架高)三個區塊一起改寫,
+    `prevSrc` 整檔回滾。`paramShapeForSpec` 決定新的鍵集與範圍。
+  - `/api/cable/check` 收 `spec` 覆寫 → 即時檢核對「將要生成的那個結構」算。
+  - `SWEEP_PATHS` 改成**每層一條**(同層並排窄條共用中心線),避開 generation 的
+    8 條收割上限在 N 大時靜默截斷。
+  - 測試:L1 `cableSpec.test.js`(specWithLayers/paramsWithLayers/defsWithLayers/
+    specWithBand)+ `pipeline.params.test.js`(rewriteSpec:縮層無幽靈鍵、三區塊
+    重寫、壞 spec 不寫檔)+ `project.openmode.test.js`(paramShapeForSpec);
+    L3 `smoke_cable_workbench.py` E 段(2 層 fixture 加一層 → 真 build → 產生器
+    CABLE_SPEC/PARAM_RANGES/滑桿鍵集三處都對)。
+  - **cable_x_v4 不動**:它是圖面總長寬高驅動的另一套閉式(X 結構專用常數),
+    保留為型錄卡;它也改讀 CABLE_SPEC 的帶表,但 `_derived`/`_build` 仍是自己的。
+- 測試:L1 `templates.test.js` / `cableSpec.test.js` / `pipeline.params.test.js`
+  (中繼解析)/ `project.openmode.test.js`;L3 **`smoke_cable_workbench.py`**
+  (A 清單 → B 表單與降級 → C 直接生成 v1 且滑桿=表單值 → D 另存案件+複製成新案;
+  用輕量 fixture 範本讓 build 只要 ~30s)。
+- **固定座 OEM 同款(2026-08-25 客戶回饋「要一模一樣」)**:`rack_module`
+  重建 OEM 線架全特徵(埋頭小螺絲 3.5/讓孔 4.1/M5 通孔不再統一混徑;半板
+  體積與 OEM 實體逐位重合,三份範本 `__main__` 斷言)。導引槽是型錄寬
+  (99.2×s,與帶排寬無關),帶排 105 每側壓進頰板 2.9 = 與 OEM 檔相同的
+  微量重疊(彈性護套實物被夾持面壓縮)→ INTENDED_CONTACT 動態宣告
+  (`cable_assembly.intended_contact`,rewriteSpec 改層數/帶型自動跟上)。
+- **cadpy 擴充(2026-08-24,支撐本模式)**:`sleeve_dims`/`sleeve_profile`/
+  `sleeve_profile_loops`/`cleanroom_sleeve` 的 `pocket_w` 收 `float|list`
+  (逐袋寬,逐接縫腰角閉式 `cos θ_i = pitch_i/(rx_i+rx_j)`),新增
+  `web=`/`edge=` 覆寫(EHSL 預設精確退化)與 `sleeve_outer_profile`(無 bore
+  外形面,夾具開窗用);`test_sweep_parts.py` MixedWidthSleeveTests 釘死。
+- **測試**:L1 `chatModes.test.js`(四模式鎖序+isDesignLike)+
+  `chat.mode.test.js` cable 案 + `prompt.cable.test.js`(組合見證+領域段
+  字面鎖);L3 `smoke_cable_mode.py`(護欄/六端點放行/upload/切換器四段/
+  附件邊界/跨重整);fixture 級驗證見 `models/cable_x_v4/cable_x_v4.py`
+  `__main__`(閉式+bbox+干涉+護欄負案)。
+
+### PDF 工程圖匯出(2026-08-24,通用非 cable 專屬)
+
+`/api/export {format:"pdf"}` = **四視圖工程圖**(仿客戶原廠圖面形制:左上俯視/
+右上等角/左下前視/右下側視,白底無圖框無隱藏線,標三個包絡尺寸——俯視左=
+總長、前視下=總寬、前視左=總高;數值取實體 bbox 誠實量測,不抄 PARAMS)。
+- 實作:`src/server/cad/drawing_pdf.py`——投影在**子程序 worker** 跑,
+  兩層混合:先精確 HLR(`HLRBRep_Algo`,線條乾淨)一次 → 崩了退網格式
+  `HLRBRep_PolyAlgo`(先 BRepMesh 0.08/0.2)+ **端點縫合 `_stitch`**(近距+
+  同向才接);主程序只做版面與 matplotlib 單 axes(全圖同比例)向量 PDF。
+  **兩個 OCCT 毛病互補是這架構的原因**:精確 HLR 對本 app 的 B-spline 掃出件
+  會 **非決定性** access violation(0xC0000005;同一份位元組一次過一次崩,
+  native crash 不可 catch → 必須隔離在子程序);網格式穩不崩但相切區線段被誤判
+  隱藏而**斷線**(使用者一眼抓到)→ 縫合補口。cable_x_v4(18 solid)實測:
+  精確 ~35s、網格 ~25s,最壞 精確崩+網格 ≈ 60s < `EXPORT_TIMEOUT_MS` 180s;
+  走同一道匯出閘(未驗證先精算)。`--force-poly` 旗標可驗退路品質。
+- UI:時間軸「⤓ PDF 工程圖」鈕(與 STL/3MF 並列);agent 面 `cad_export`
+  format enum 加 `pdf`;`/api/asset` 補 `application/pdf` 直接瀏覽器開。
+- **固定頭尺寸 + 參數表(2026-08-25)**:電纜件(解析側視成立)側視右側
+  再標「固定頭高」(上固定頭堆疊 z 範圍)與「固定頭安裝高度」(上固定頭底面
+  −下固定頭底面),數值取固定座實體 bbox(`_rack_stacks` 以 z 連續性把固定座
+  矩形分兩疊;不是恰兩疊就不標)——客戶手繪規格 39.5/190 直接在圖上對得到。
+  兩個尺寸 z 範圍首尾相接 → **串接在同一條垂直尺寸線**(同客戶手繪;分兩條線
+  時短尺寸的數字會擠進固定頭,Sam 第一眼就抓到)。側視下方再標**下直段露出長**
+  (手繪的 70):`_bottom_leg_measure` 取最低中心線,r = 上下腿 z 跨距/2、彎心 y
+  由弧上取樣點閉式反算(取樣點精確落在弧/直線上 → 切點零誤差),減下固定頭
+  近面;數字放線下方(`dim_h(below=True)`),參數表順勢下移 0.95·off。
+  側視下方附產生器 `PARAMS` 參數表(`_read_gen_params`,regex 與
+  `paramValuesFromGenerator` 同式;來源 = STEP 旁同名 `.py` 或 `--gen`),
+  逐層電纜長 L1/L2/L3 這類投影量不到的輸入規格靠它回到圖面;handleExport
+  的 PDF 分支把快照 `.py` 一併複製進 scratch(缺了只是沒表)。
+  **同輪修的靜默缺口**:版本快照只凍結 `.sweep.json` 不凍 build meta
+  (`snapshotVersion` 清單),之前從快照 `ver` 匯出時 `_read_meta_sweep_paths`
+  找不到 meta → 解析側視**靜默退回 HLR**(側視有斷線風險、固定頭尺寸也不標)。
+  現 drawing_pdf 讀不到 meta 就退 `.{name}.sweep.json`(`paths` 條目同形),
+  handleExport 兩份 sidecar 都帶進 scratch;L2 以 fitz 抽 PDF 文字斷 39.5/190
+  在場即為證。
+- 測試:`smoke_versions.py` §6 匯出段加 pdf 正案(`%PDF-` magic bytes)。
 
 ## MOTION 運動宣告(linear + revolute + couple)
 
@@ -442,7 +660,8 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
   spawn fallback。空洞綠**不**閉環教訓迴圈(閉環由 build 綠的 `noteBuildSuccess` 承擔)。
   注意 build 本身仍執行產生器自帶的 `check_geometry`(cadpy `generation.py` 的 opt-in 閘):
   靜態壞幾何在任何路徑都活不過 build,連版本都不會產生。
-- **匯出閘(`ensureVerifiedForExport`,project.mjs)**:`/api/export`(STL/3MF)與
+- **匯出閘(`ensureVerifiedForExport`,project.mjs)**:`/api/export`(STL/3MF/
+  **PDF 工程圖**)與
   `/api/export-parts`(拆件 zip)出檔前,未驗證的版本**自動補跑完整驗證**——通過才轉檔
   (回應帶 `gate:{ran,ok,ver,checks}`,前端落成驗證卡 + badge 轉綠),未過回
   `ok:false` + 「匯出已擋下」+ 紅 checks。agent 的 `cad_export` 工具走同一道閘
@@ -737,6 +956,18 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
   - **canvas 語境安全網**:`send` 帶 `canvas`(name/file/source/projectDir),
     `buildUserText` 在 `source==="opened" && !_rehydrateNote` 時注入「使用者正在
     檢視 X」一行——覆蓋 escalation 兜不到的殘餘(裸檔、session-A-檢視-B)。
+  - **同步重建的「活著」回饋(2026-08-25)**:open-project / revert-version 是
+    同步 Python 重建+驗證(大型電纜件 1–2 分鐘),先前只留一則靜態「重建中…」
+    → 被當成當機。加 store 暫態 `pending:{text,since}|null`(`SET_PENDING`;
+    **不是 running**,不動 composer/鎖定語意;RESTORE/RESET 不還原、
+    `CLEAR_WORKSPACE` 保留——open-project 中途換 session 時指示要撐到 finally)。
+    渲染:對話 `.live-row[data-pending]`(脈衝點 + `Elapsed` 跳秒,`live-text` 同
+    running 樣式)、有模型時畫布頂部 `canvas-progress-strip`、空畫布時
+    `.canvas-empty-text` 換成脈衝點 + pending 文案(進度條掛在 viewport 分支,
+    空狀態沒有;`.live-dot` 在 inline 文字流要 inline-block 才有尺寸)。
+    App 的 openProject/revertVersion 在 notify 後 `SET_PENDING`、`finally` 清。
+    驗證:`chatStore.test.js` SET_PENDING 案、`smoke_open_project.py` A 段
+    三個斷言(出現/空畫布脈衝點/完成消失)。
   驗證:`smoke_open_project.py`(智慧路由→滑桿、唯讀聊天→open-project 先於 chat)、
   `smoke_versions.py` §9(旗標)、`smoke_canvas_context_live.py`(L4:agent 認得畫布
   模型不再回「沒收到」)。`smoke_open_dedupe.py` 的 fixture 都是專案,其唯讀去重測試

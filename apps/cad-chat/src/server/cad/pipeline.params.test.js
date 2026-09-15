@@ -11,8 +11,13 @@ import {
   generatorHasDxf,
   generatorHasFlat,
   paramDefsFromGenerator,
+  paramRangesFromGenerator,
   paramValuesFromGenerator,
+  readCableSpec,
+  readParamLabels,
+  readTemplateMeta,
   rewriteParams,
+  rewriteSpec,
 } from "./pipeline.mjs";
 
 function tmpSession(tag) {
@@ -42,6 +47,61 @@ function writeGen(s, name, src = GEN_SRC) {
 function readGen(s, name) {
   return fs.readFileSync(path.join(s.workdir, `${name}.py`), "utf8");
 }
+
+// ---------------------------------------------------------------------------
+// PARAM_RANGES:固定滑桿範圍(範本用;不受當前值 ×2.5 啟發式困住)
+// ---------------------------------------------------------------------------
+const RANGES_SRC = [
+  "PARAMS = {",
+  '    "length": 394.38,',
+  '    "width": 118.2,',
+  '    "pockets": 6,',
+  "}",
+  "PARAM_RANGES = {",
+  '    "length": [340, 1500, 5],',
+  '    "width": (50, 250, 2),',
+  "}",
+  "def gen_step():",
+  "    return 0",
+  "",
+].join("\n");
+
+test("paramRangesFromGenerator:解析 [min,max,step] 與 (min,max,step);缺檔/無區塊 → {}", () => {
+  const s = tmpSession("pr");
+  try {
+    assert.deepEqual(paramRangesFromGenerator(s, "foo"), {}); // 缺檔
+    writeGen(s, "foo", RANGES_SRC);
+    const r = paramRangesFromGenerator(s, "foo");
+    assert.deepEqual(r.length, { min: 340, max: 1500, step: 5 });
+    assert.deepEqual(r.width, { min: 50, max: 250, step: 2 }); // 圓括號也接受
+    assert.equal("pockets" in r, false); // 未宣告的鍵不在範圍表
+    writeGen(s, "bar", GEN_SRC); // 無 PARAM_RANGES 區塊
+    assert.deepEqual(paramRangesFromGenerator(s, "bar"), {});
+  } finally {
+    fs.rmSync(s.workdir, { recursive: true, force: true });
+  }
+});
+
+test("paramDefsFromGenerator:有 PARAM_RANGES 的鍵用固定範圍,其餘走啟發式", () => {
+  const s = tmpSession("prd");
+  try {
+    writeGen(s, "foo", RANGES_SRC);
+    const defs = Object.fromEntries(paramDefsFromGenerator(s, "foo").map((d) => [d.key, d]));
+    // length:固定範圍(啟發式會是 394*2.5≈986;固定要是 1500)
+    assert.equal(defs.length.max, 1500);
+    assert.equal(defs.length.min, 340);
+    assert.equal(defs.length.step, 5);
+    assert.equal(defs.length.unit, "mm");
+    assert.equal(defs.length.int, undefined);
+    // width:固定範圍
+    assert.equal(defs.width.max, 250);
+    // pockets:無宣告 → 啟發式(整數小值當顆數)
+    assert.equal(defs.pockets.int, true);
+    assert.equal(defs.pockets.step, 1);
+  } finally {
+    fs.rmSync(s.workdir, { recursive: true, force: true });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // rewriteParams
@@ -261,6 +321,153 @@ test("buildOrRollback:失敗 + aborted → 絕不寫檔/動狀態(中斷語意�
     assert.ok(readGen(s, "foo").includes('"w": 5'));
     assert.equal(s._geomDirty, true); // 狀態也不還原
     assert.equal(s.lastBuildMeta, null);
+  } finally {
+    fs.rmSync(s.workdir, { recursive: true, force: true });
+  }
+});
+
+// ── 範本中繼(TEMPLATE_META / PARAM_LABELS):單行 JSON 相容 dict ──
+// 文法刻意收緊成「單行、JSON.parse 可解」:PARAM_RANGES 那支 regex 只吃數值三元組,
+// 中繼含中文字串/括號/逗號,手刻 regex 必誤切。壞法一律回 null(不列清單,不炸)。
+test("readTemplateMeta/readParamLabels:單行 JSON 解析;壞法回 null", () => {
+  const s = tmpSession("meta");
+  try {
+    const META = '{"family": "cable", "form": "per_layer", "layers": 3, "label": "三層(X 型)"}';
+    writeGen(
+      s,
+      "good",
+      [
+        `TEMPLATE_META = ${META}`,
+        'PARAM_LABELS = {"L1": "第1層電纜長(內層)", "head_h": "固定頭高"}',
+        GEN_SRC,
+      ].join("\n"),
+    );
+    const meta = readTemplateMeta(s, "good");
+    assert.equal(meta.family, "cable");
+    assert.equal(meta.layers, 3);
+    assert.equal(meta.label, "三層(X 型)"); // 中文/括號不被 regex 切壞
+    assert.equal(readParamLabels(s, "good").L1, "第1層電纜長(內層)");
+    // 沒宣告 → null(不是 {},呼叫端據此判「這不是範本」)
+    writeGen(s, "plain");
+    assert.equal(readTemplateMeta(s, "plain"), null);
+    assert.equal(readParamLabels(s, "plain"), null);
+    // 壞法:Python 單引號 / True / 尾逗號 / 多行 → 一律 null(不 throw)
+    for (const bad of [
+      "TEMPLATE_META = {'family': 'cable'}",
+      'TEMPLATE_META = {"family": "cable", "t": True}',
+      'TEMPLATE_META = {"family": "cable",}',
+      'TEMPLATE_META = {\n  "family": "cable"\n  }', // 收尾 } 沒頂到第 0 欄
+    ]) {
+      writeGen(s, "bad", [bad, GEN_SRC].join("\n"));
+      assert.equal(readTemplateMeta(s, "bad"), null, bad);
+    }
+    // 陣列不算(必須是物件)
+    writeGen(s, "arr", ['TEMPLATE_META = ["cable"]', GEN_SRC].join("\n"));
+    assert.equal(readTemplateMeta(s, "arr"), null);
+    // 檔案不存在 → null
+    assert.equal(readTemplateMeta(s, "missing"), null);
+  } finally {
+    fs.rmSync(s.workdir, { recursive: true, force: true });
+  }
+});
+
+// ── rewriteSpec:層數/帶型的結構重生(Phase 4)──
+const SPEC_SRC = [
+  "TEMPLATE_META = {\"family\": \"cable\", \"form\": \"per_layer\"}",
+  "CABLE_SPEC = {",
+  '  "layers": 2,',
+  '  "riser_module": 0,',
+  '  "bands": [',
+  '    {"key": "outer", "level": 0, "n": 7, "bore": 11.4, "web": 2.8, "edge": 4.2, "x": 0.0},',
+  '    {"key": "inner", "level": 1, "n": 6, "bore": 14.0, "web": 2.5, "edge": 4.25, "x": 0.0}',
+  "  ]",
+  "}",
+  'PARAMS = {"L1": 790.0, "L2": 830.0, "width": 118.2}',
+  'PARAM_RANGES = {"L1": [200, 2500, 5], "L2": [200, 2500, 5], "width": [50, 250, 2]}',
+  "",
+  "def gen_step():",
+  "    return None",
+  "",
+].join("\n");
+
+test("rewriteSpec:整塊替換 PARAMS(縮層不留幽靈鍵)+ 重寫 CABLE_SPEC/PARAM_RANGES", () => {
+  const s = tmpSession("spec");
+  try {
+    writeGen(s, "cab", SPEC_SRC);
+    const rw = rewriteSpec(s, "cab", {
+      spec: {
+        layers: 3,
+        riser_module: 1,
+        bands: [
+          { key: "outer", level: 0, n: 7, bore: 11.4, web: 2.8, edge: 4.2, x: 0.0 },
+          { key: "mid", level: 1, n: 7, bore: 11.4, web: 2.8, edge: 4.2, x: 0.0 },
+          { key: "inner", level: 2, n: 6, bore: 14.0, web: 2.5, edge: 4.25, x: 0.0 },
+        ],
+      },
+      params: { L1: 780, L2: 820, L3: 860, width: 118.2 },
+      ranges: {
+        L1: { min: 200, max: 2500, step: 5 },
+        L2: { min: 200, max: 2500, step: 5 },
+        L3: { min: 200, max: 2500, step: 5 },
+        width: { min: 50, max: 250, step: 2 },
+      },
+    });
+    assert.equal(rw.ok, true, rw.error);
+    const src = readGen(s, "cab");
+    // 三個區塊都被改寫,且仍解析得回來
+    assert.equal(readCableSpec(s, "cab").layers, 3);
+    assert.equal(readCableSpec(s, "cab").riser_module, 1);
+    assert.equal(readCableSpec(s, "cab").bands.length, 3);
+    assert.deepEqual(paramValuesFromGenerator(s, "cab"), { L1: 780, L2: 820, L3: 860, width: 118.2 });
+    assert.equal(paramRangesFromGenerator(s, "cab").L3.max, 2500);
+    // float-ness 保留(整數值也要 780.0,否則下次被整數啟發式誤判成顆數)
+    assert.ok(src.includes('"L1": 780.0'), src.slice(src.indexOf("PARAMS"), src.indexOf("PARAMS") + 90));
+
+    // 縮層:PARAMS 整塊替換 → 舊 L3 不得殘留(否則出幽靈滑桿)
+    const rw2 = rewriteSpec(s, "cab", {
+      spec: {
+        layers: 2,
+        riser_module: 0,
+        bands: [
+          { key: "outer", level: 0, n: 7, bore: 11.4, web: 2.8, edge: 4.2, x: 0.0 },
+          { key: "inner", level: 1, n: 6, bore: 14.0, web: 2.5, edge: 4.25, x: 0.0 },
+        ],
+      },
+      params: { L1: 780, L2: 820, width: 118.2 },
+      ranges: { L1: { min: 200, max: 2500, step: 5 }, L2: { min: 200, max: 2500, step: 5 } },
+    });
+    assert.equal(rw2.ok, true, rw2.error);
+    const vals = paramValuesFromGenerator(s, "cab");
+    assert.deepEqual(Object.keys(vals).sort(), ["L1", "L2", "width"]);
+    assert.equal("L3" in vals, false, "縮層留下幽靈 L3");
+    assert.equal(paramDefsFromGenerator(s, "cab").some((d) => d.key === "L3"), false);
+    assert.equal("L3" in paramRangesFromGenerator(s, "cab"), false);
+    // prevSrc 可整檔回滾
+    assert.ok(rw2.prevSrc.includes('"layers": 3'));
+  } finally {
+    fs.rmSync(s.workdir, { recursive: true, force: true });
+  }
+});
+
+test("rewriteSpec:壞 spec 一律擋下(不寫檔)", () => {
+  const s = tmpSession("specbad");
+  try {
+    writeGen(s, "cab", SPEC_SRC);
+    const before = readGen(s, "cab");
+    const cases = [
+      [{ spec: null, params: {} }, "物件"],
+      [{ spec: { layers: 0, bands: [{ level: 0 }] }, params: {} }, "layers"],
+      [{ spec: { layers: 2, bands: [] }, params: {} }, "bands"],
+      // 少了 level 1 的帶 → 該層沒東西可掃,建到一半才炸
+      [{ spec: { layers: 2, bands: [{ key: "a", level: 0 }] }, params: {} }, "level 1"],
+      [{ spec: { layers: 1, bands: [{ key: "a", level: 0 }] }, params: { L1: "x" } }, "數值"],
+    ];
+    for (const [arg, needle] of cases) {
+      const r = rewriteSpec(s, "cab", arg);
+      assert.equal(r.ok, false, JSON.stringify(arg));
+      assert.ok(r.error.includes(needle), `${r.error} 不含 ${needle}`);
+    }
+    assert.equal(readGen(s, "cab"), before, "壞 spec 不得動到檔案");
   } finally {
     fs.rmSync(s.workdir, { recursive: true, force: true });
   }

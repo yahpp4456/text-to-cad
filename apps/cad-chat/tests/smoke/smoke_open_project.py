@@ -49,12 +49,23 @@ with sync_playwright() as p:
     row = page.locator(".fb-row", has=page.locator(".fb-projrow", has_text=DIRP)).first
     c.check("A: 專案列無獨立動作按鈕(整列即開)", row.locator(".fb-action").count() == 0)
     page.locator(".fb-projrow", has_text=DIRP).click()
+    # 2026-08-25:同步重建期間必須有「活著」回饋——live-row 脈衝點 + 秒數計時
+    # (data-pending 標記非回合的 pending 態),否則大型件 1–2 分鐘像當機。
+    page.wait_for_selector(".live-row[data-pending]", timeout=5000)
+    c.check("A: 重建期間顯示 pending 活動列(脈衝點+計時)",
+            page.locator(".live-row[data-pending] .live-elapsed").count() == 1
+            and "重建" in page.locator(".live-row[data-pending] .live-text").inner_text())
+    # 新頁面畫布是空狀態(進度條掛在 viewport 分支不存在)→ 空狀態文案換成 pending + 脈衝點
+    c.check("A: 空畫布同步顯示 pending 脈衝點",
+            page.locator(".canvas-empty .live-dot").count() == 1)
     page.wait_for_function(
         "() => [...document.querySelectorAll('.version-id')].some(e => e.textContent.includes('v1'))",
         timeout=300000)
     c.check("A: 一鍵 → v1 session(非 o1 唯讀)",
             page.locator(".version-chip").count() == 1
             and "v1" in page.locator(".version-id").first.inner_text())
+    page.wait_for_selector(".live-row[data-pending]", state="detached", timeout=15000)
+    c.check("A: 重建完成 pending 活動列消失", page.locator(".live-row[data-pending]").count() == 0)
     # 2026-07-16 range→NumberField 改版:設計模式參數列是 number 輸入框
     # (range 只剩草模 DofBar,見 smoke_sketch.py)
     page.wait_for_selector(".param .numfield input", timeout=15000)

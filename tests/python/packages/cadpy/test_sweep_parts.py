@@ -33,6 +33,7 @@ from cadpy.parts import (  # noqa: E402
     select_kcl_clamp,
     select_sleeve,
     sleeve_dims,
+    sleeve_outer_profile,
     sleeve_profile,
     swept_solid,
 )
@@ -123,6 +124,94 @@ class SleeveCrossSectionTests(unittest.TestCase):
         prof = sleeve_profile(3, 16.0)
         self.assertEqual(len(prof.faces()), 1)  # one face, three bore holes
         self.assertEqual(len(prof.faces()[0].inner_wires()), 3)
+
+
+class MixedWidthSleeveTests(unittest.TestCase):
+    """Per-pocket width lists + web/edge overrides (the generalized closed
+    form; uniform + defaults must degenerate to the EHSL formulas exactly).
+    The override witnesses are the measured Cable X v4 OEM bands."""
+
+    def test_mixed_closed_form(self) -> None:
+        d = sleeve_dims(3, [16.0, 20.0, 25.0])
+        self.assertAlmostEqual(d["total_w"], 67.0, places=9)  # sum(w+1)+3
+        self.assertEqual([round(p, 9) for p in d["pitch_list"]], [19.0, 23.5])
+        self.assertEqual([round(r, 9) for r in d["rx_list"]], [10.0, 12.0, 14.5])
+        self.assertEqual(
+            [round(c, 9) for c in d["pocket_centers"]], [-23.5, -4.5, 19.0]
+        )
+        # per-junction waist angles: cos(theta_i) == pitch_i / (rx_i + rx_j)
+        for th, p, ra, rb in zip(
+            d["theta_w_list"], d["pitch_list"], d["rx_list"], d["rx_list"][1:]
+        ):
+            self.assertAlmostEqual(math.cos(math.radians(th)), p / (ra + rb), places=12)
+        # mixed mode omits the legacy scalar keys
+        self.assertNotIn("pocket_w", d)
+        self.assertNotIn("rx", d)
+
+    def test_uniform_list_equals_float_api(self) -> None:
+        du, dl = sleeve_dims(6, 16.0), sleeve_dims(6, [16.0] * 6)
+        self.assertEqual(set(du), set(dl))
+        for k in du:
+            self.assertEqual(repr(du[k]), repr(dl[k]), k)
+
+    def test_mixed_profile_face(self) -> None:
+        f = sleeve_profile(3, [16.0, 20.0, 25.0])
+        self.assertEqual(len(f.faces()), 1)
+        self.assertEqual(len(f.faces()[0].inner_wires()), 3)
+        self.assertAlmostEqual(f.bounding_box().size.X, 67.0, places=6)
+
+    def test_mixed_sweep_is_valid_solid(self) -> None:
+        s = cleanroom_sleeve(
+            3,
+            [16.0, 20.0, 25.0],
+            path={"kind": "drag_chain", "straight_a": 120.0, "bend_r": 95.0,
+                  "straight_b": 120.0},
+        )
+        assert_valid_solid(s, label="mixed_sleeve")
+        self.assertAlmostEqual(s.bounding_box().size.X, 67.0, places=4)
+
+    def test_v4_oem_band_overrides(self) -> None:
+        # measured Cable X v4: inner band 6 bores 14.0 @ pitch 16.5, band 105
+        d = sleeve_dims(6, 16.0, wall_t=1.0, outer_h=6.7, web=2.5, edge=4.25)
+        self.assertAlmostEqual(d["total_w"], 105.0, places=9)
+        self.assertAlmostEqual(d["pitch"], 16.5, places=9)
+        self.assertAlmostEqual(d["rx"], 11.25, places=9)
+        self.assertAlmostEqual(2 * d["bore_rx"], 14.0, places=9)
+        # middle band: 7 bores 11.4 @ pitch 14.2, band 105
+        d = sleeve_dims(7, 13.4, wall_t=1.0, outer_h=6.7, web=2.8, edge=4.2)
+        self.assertAlmostEqual(d["total_w"], 105.0, places=9)
+        self.assertAlmostEqual(d["pitch"], 14.2, places=9)
+        # single-pocket outer strips: bore 32 -> strip 35, bore 11.6 -> 14.35
+        d = sleeve_dims(1, 34.0, wall_t=1.0, outer_h=6.7, edge=1.5)
+        self.assertAlmostEqual(d["total_w"], 35.0, places=9)
+        d = sleeve_dims(1, 13.6, wall_t=1.0, outer_h=6.7, edge=1.375)
+        self.assertAlmostEqual(d["total_w"], 14.35, places=9)
+
+    def test_ehsl_defaults_degenerate(self) -> None:
+        # web/edge defaults reproduce N*(pw+1)+3 for every catalog count
+        for n in range(1, 8):
+            d = sleeve_dims(n, 16.0)
+            self.assertAlmostEqual(d["total_w"], n * 17.0 + 3.0, places=9)
+            self.assertAlmostEqual(d["web"], 3.0, places=12)
+            self.assertAlmostEqual(d["edge"], 3.0, places=12)
+
+    def test_outer_profile_has_no_bores(self) -> None:
+        f = sleeve_outer_profile(6, 16.0, wall_t=1.0, outer_h=6.7, web=2.5, edge=4.25)
+        self.assertEqual(len(f.faces()), 1)
+        self.assertEqual(len(f.faces()[0].inner_wires()), 0)
+        bb = f.bounding_box()
+        self.assertAlmostEqual(bb.size.X, 105.0, places=6)
+        self.assertAlmostEqual(bb.size.Y, 6.7, places=6)
+
+    def test_mixed_gates(self) -> None:
+        with self.assertRaises(ValueError):  # length mismatch
+            sleeve_dims(3, [16.0, 20.0])
+        with self.assertRaises(ValueError):  # per-pocket minimum
+            sleeve_dims(2, [16.0, 5.0])
+        with self.assertRaises(ValueError):  # waist needs web < 2*edge
+            sleeve_dims(2, 16.0, web=7.0, edge=3.0)
+        with self.assertRaises(ValueError):  # non-positive override
+            sleeve_dims(2, 16.0, web=0.0)
 
 
 class ZeroTwistTests(unittest.TestCase):

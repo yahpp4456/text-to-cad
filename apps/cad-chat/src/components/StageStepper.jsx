@@ -15,6 +15,16 @@ export const STAGES_SKETCH = [
   ["演示", "PLAY"],
 ];
 
+// 無塵電纜模式 5 段:工作台動線(選範本→填規格→生成)取代通用的「理解/規劃」,
+// 因為 cable 的主線是零 LLM 表單生成,不是對話推進。
+export const STAGES_CABLE = [
+  ["選範本", "TEMPLATE"],
+  ["填規格", "SPEC"],
+  ["生成", "GENERATE"],
+  ["驗證", "VALIDATE"],
+  ["呈現", "PRESENT"],
+];
+
 // 零件庫模式 3 段(對齊 prompt.library 的收庫流程)
 export const STAGES_LIBRARY = [
   ["選檔", "PICK"],
@@ -23,7 +33,14 @@ export const STAGES_LIBRARY = [
 ];
 
 export default function StageStepper({ stageIdx, mode }) {
-  const stages = mode === "sketch" ? STAGES_SKETCH : mode === "library" ? STAGES_LIBRARY : STAGES;
+  const stages =
+    mode === "sketch"
+      ? STAGES_SKETCH
+      : mode === "library"
+        ? STAGES_LIBRARY
+        : mode === "cable"
+          ? STAGES_CABLE
+          : STAGES;
   return (
     <div className="stepper">
       {stages.map(([cn, en], i) => {

@@ -7,12 +7,14 @@ import StageStepper from "./components/StageStepper.jsx";
 import Conversation from "./components/conversation/Conversation.jsx";
 import Composer from "./components/conversation/Composer.jsx";
 import Canvas3D from "./components/canvas/Canvas3D.jsx";
+import CableShelf from "./components/canvas/CableShelf.jsx";
 import LibraryShelf from "./components/canvas/LibraryShelf.jsx";
 import ParamsBar from "./components/canvas/ParamsBar.jsx";
 import SketchCanvas3D from "./components/canvas/SketchCanvas3D.jsx";
 import VersionTimeline from "./components/versions/VersionTimeline.jsx";
 import { useChatStream } from "./hooks/useChatStream.js";
-import { normalizeMode } from "./lib/chatModes.js";
+import { composeCableSpecText } from "./lib/cableSpec.js";
+import { isDesignLike, normalizeMode } from "./lib/chatModes.js";
 import { latestSpecItem, pendingLessonOffer } from "./lib/clarifyText.js";
 import { DEMO_TIP } from "./lib/demo.js";
 import { apiUrl } from "@/lib/apiBase";
@@ -87,13 +89,81 @@ function ConfirmDialog({ box, onClose }) {
 }
 
 // 另存專案的小對話框:單一名稱輸入;目標已存在時就地引導改名或確認覆蓋。
-function SaveDialog({ open, defaultName, onClose, onSave }) {
+// 人工記教訓(零 LLM 主線的唯一入口:表單/滑桿生成不會觸發 agent 的「是/否卡」)。
+// 三欄對齊 /api/lessons/record 的 symptom/rootCause/fix;partName 由呼叫端帶。
+function LessonRecordDialog({ open, partName, onClose, onSubmit }) {
+  const [symptom, setSymptom] = useState("");
+  const [rootCause, setRootCause] = useState("");
+  const [fix, setFix] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setSymptom("");
+      setRootCause("");
+      setFix("");
+    }
+  }, [open]);
+  if (!open) return null;
+  const go = async () => {
+    if (!symptom.trim() || busy) return;
+    setBusy(true);
+    await onSubmit({ symptom: symptom.trim(), rootCause: rootCause.trim(), fix: fix.trim(), partName });
+    setBusy(false);
+  };
+  return (
+    <div className="fb-overlay" onClick={onClose}>
+      <div className="save-dialog" onClick={(e) => e.stopPropagation()}>
+        <span className="save-eyebrow">RECORD LESSON · 記教訓</span>
+        <p className="save-hint">
+          把這一版踩到的問題記下來(未蒸餾)。之後在「教訓」面板可按「立即蒸餾」升級成規則。
+          症狀必填,根因/修法可留空。
+        </p>
+        <input
+          className="save-input"
+          value={symptom}
+          autoFocus
+          placeholder="症狀:看到什麼不對(必填)"
+          onChange={(e) => setSymptom(e.target.value)}
+          onKeyDown={(e) => e.key === "Escape" && onClose()}
+        />
+        <input
+          className="save-input"
+          value={rootCause}
+          placeholder="根因:為什麼會這樣(選填)"
+          onChange={(e) => setRootCause(e.target.value)}
+          onKeyDown={(e) => e.key === "Escape" && onClose()}
+        />
+        <input
+          className="save-input"
+          value={fix}
+          placeholder="修法:下次怎麼避免(選填)"
+          onChange={(e) => setFix(e.target.value)}
+          onKeyDown={(e) => e.key === "Escape" && onClose()}
+        />
+        <div className="save-actions">
+          <a className="save-btn" data-disabled={!symptom.trim() || busy || undefined} onClick={go}>
+            {busy ? "加入中…" : "加入教訓"}
+          </a>
+          <a className="save-btn save-cancel" onClick={onClose}>
+            取消
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SaveDialog({ open, defaultName, onClose, onSave, caseMode = false }) {
   const [name, setName] = useState("");
+  const [customer, setCustomer] = useState("");
+  const [note, setNote] = useState("");
   const [exists, setExists] = useState(false);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (open) {
       setName(defaultName || "");
+      setCustomer("");
+      setNote("");
       setExists(false);
     }
   }, [open, defaultName]);
@@ -102,16 +172,22 @@ function SaveDialog({ open, defaultName, onClose, onSave }) {
     const n = name.trim();
     if (!n || busy) return;
     setBusy(true);
-    const r = await onSave(n, overwrite);
+    // 客戶/備註只在 cable(案件)模式帶:server 據此寫 case.json,工作台「案件」頁籤才列得到
+    const r = await onSave(n, overwrite, caseMode ? { customer: customer.trim(), note: note.trim() } : null);
     setBusy(false);
     if (r?.exists) setExists(true);
   };
   return (
     <div className="fb-overlay" onClick={onClose}>
       <div className="save-dialog" onClick={(e) => e.stopPropagation()}>
-        <span className="save-eyebrow">SAVE PROJECT · 另存專案</span>
+        <span className="save-eyebrow">
+          {caseMode ? "SAVE CASE · 另存案件" : "SAVE PROJECT · 另存專案"}
+        </span>
         <p className="save-hint">
-          存到 <code>models/&lt;名稱&gt;/</code>,之後可從「開啟檔案」載回並用對話續改。
+          存到 <code>models/&lt;名稱&gt;/</code>
+          {caseMode
+            ? ",並記下客戶/日期——之後在工作台「案件」頁籤可看/開/複製成新案。"
+            : ",之後可從「開啟檔案」載回並用對話續改。"}
           名稱僅限英數、底線與連字號。
         </p>
         <input
@@ -128,6 +204,24 @@ function SaveDialog({ open, defaultName, onClose, onSave }) {
             if (e.key === "Escape") onClose();
           }}
         />
+        {caseMode && (
+          <>
+            <input
+              className="save-input"
+              value={customer}
+              placeholder="客戶(選填;中文可,只進 case.json 不進目錄名)"
+              onChange={(e) => setCustomer(e.target.value)}
+              onKeyDown={(e) => e.key === "Escape" && onClose()}
+            />
+            <input
+              className="save-input"
+              value={note}
+              placeholder="案件備註(選填;例如「第一版,待客戶確認量法」)"
+              onChange={(e) => setNote(e.target.value)}
+              onKeyDown={(e) => e.key === "Escape" && onClose()}
+            />
+          </>
+        )}
         {exists && (
           <p className="save-warn">
             ⚠ models/{name.trim()} 已存在——換個名稱,或確認覆蓋(舊內容會被取代)。
@@ -165,6 +259,8 @@ export default function App() {
   const [health, setHealth] = useState(null);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
+  const [shelfRefresh, setShelfRefresh] = useState(0); // 工作台重抓訊號(另存案件後 +1)
+  const [lessonBox, setLessonBox] = useState(null); // 記教訓對話框:{partName} | null
   const [confirmBox, setConfirmBox] = useState(null); // 通用確認框(切模式/升級)
   const [lessonsOpen, setLessonsOpen] = useState(false);
   const [exporting, setExporting] = useState(null); // "v2:stl" | null(匯出中鎖鈕)
@@ -375,7 +471,7 @@ export default function App() {
       const room = 4 - pendingFiles.length;
       for (const f of Array.from(files).slice(0, Math.max(0, room))) {
         const isStep = /\.ste?p$/i.test(f.name || "");
-        if (isStep && (modeRef.current !== "library" || demo)) continue; // 模式邊界+demo 唯讀(Composer 已濾,雙保險)
+        if (isStep && ((modeRef.current !== "library" && modeRef.current !== "cable") || demo)) continue; // 模式邊界+demo 唯讀(Composer 已濾,雙保險)
         const kind = isStep ? "step" : "image";
         const id = `f${++fileSeqRef.current}`;
         setPendingFiles((prev) => [
@@ -421,27 +517,47 @@ export default function App() {
     [state.sessionId, setSessionId, pendingFiles.length, demo],
   );
 
-  // 開既有專案:新 session + 伺服端同步重建,回應帶 version/present/params/motion。
+  // 開既有專案:新 session + 伺服端同步重建,回應帶 mode/version/present/params/motion。
   // 回傳新 sessionId(或 null)——submitText 的「自動帶入編輯」據此確認升級成功再送。
   // opts.auto:由聊天自動觸發(非使用者手動開專案),notify 文案改成貼合語境。
+  // opts.params:規格表單「直接生成」帶的 PARAMS 覆寫(伺服端於 build 前決定性改寫,
+  //   一次 build 就是使用者要的配置);opts.note:notify 首句改寫(表單路徑用)。
   const openProject = useCallback(
     async (dirRel, opts = {}) => {
       if (state.running) return null;
       notify(
-        opts.auto
-          ? `偵測到你要編輯,正把 models/${dirRel} 帶入可編輯工作區…`
-          : `開啟專案 models/${dirRel},重建中…`,
+        opts.note ||
+          (opts.auto
+            ? `偵測到你要編輯,正把 models/${dirRel} 帶入可編輯工作區…`
+            : `開啟專案 models/${dirRel},重建中…`),
       );
+      // 同步重建期間的「活著」指示(live-row 脈衝點+計時、畫布頂部進度條):
+      // 大型電纜件 Python 建模+驗證 1–2 分鐘,只留一句靜態訊息會被當成當機。
+      dispatch({
+        type: "SET_PENDING",
+        pending: { text: `重建 models/${dirRel} 中(Python 建模 + 幾何驗證)…`, since: Date.now() },
+      });
       try {
         const r = await fetch(apiUrl("/api/open-project"), {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ dir: dirRel }),
+          body: JSON.stringify({
+            dir: dirRel,
+            // session.mode 是出生恆定屬性:不帶則永遠 mint 成 design,而切換器還停在
+            // cable → 之後每次 /api/chat(含滑桿 paramsOnly)都 400 mode_mismatch。
+            // 非設計鏈模式(sketch/library)不帶,由伺服端依範本家族/design 裁定。
+            mode: isDesignLike(modeRef.current) ? modeRef.current : undefined,
+            params: opts.params || undefined,
+            spec: opts.spec || undefined,
+          }),
         });
         const j = await r.json();
         if (j.sessionId) {
           setSessionId(j.sessionId);
           dispatch({ type: "SET_SESSION", sessionId: j.sessionId });
+          // 切換器校正回 session 真相(ok:false 也要校正——session 已經換了,
+          // 使用者接著會用對話修復它,模式不對就又是 400)。
+          if (j.mode) dispatch({ type: "SET_MODE", mode: j.mode });
           // 換了 session 就清舊工作區(版本/運動/參數;對話保留):舊 session 的
           // v* chip 對新 sessionId 全是死引用(精算標錯版、匯出/回退 404、v1 撞號)。
           // 重建失敗(!j.ok)也已換 session,同樣要清。
@@ -449,6 +565,7 @@ export default function App() {
         }
         if (!j.ok) {
           notify(j.error || "開啟專案失敗", true);
+          opts.onFail?.(j.error || "開啟專案失敗");
           return null;
         }
         if (j.motion?.dofs?.length) {
@@ -477,6 +594,8 @@ export default function App() {
       } catch {
         notify("無法連線到本機伺服器", true);
         return null;
+      } finally {
+        dispatch({ type: "SET_PENDING", pending: null });
       }
     },
     [state.running, setSessionId, notify],
@@ -582,6 +701,10 @@ export default function App() {
     async (ver) => {
       if (state.running) return;
       notify(`回退到 ${ver},還原並重建中…`);
+      dispatch({
+        type: "SET_PENDING",
+        pending: { text: `回退到 ${ver}:還原快照並重建中…`, since: Date.now() },
+      });
       try {
         const r = await fetch(apiUrl("/api/revert-version"), {
           method: "POST",
@@ -615,6 +738,8 @@ export default function App() {
         notify(`已回到 ${ver}(以新版 ${j.version?.id || ""} 繼續)。後續訊息會基於這一版修改。`);
       } catch {
         notify("無法連線到本機伺服器", true);
+      } finally {
+        dispatch({ type: "SET_PENDING", pending: null });
       }
     },
     [state.running, state.sessionId, notify],
@@ -826,16 +951,24 @@ export default function App() {
 
   // 另存專案:session 產物 → models/<name>/(server 端 copy;成功後可從開啟檔案載回)
   const saveProject = useCallback(
-    async (name, overwrite = false) => {
+    async (name, overwrite = false, caseMeta = null) => {
       try {
         const r = await fetch(apiUrl("/api/save-project"), {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ sessionId: state.sessionId, name, overwrite }),
+          body: JSON.stringify({
+            sessionId: state.sessionId,
+            name,
+            overwrite,
+            ...(caseMeta || {}),
+            // 來源範本:案件卡「複製成新案」要知道當初是哪個範本(rehydratedFrom 是伺服端兜底)
+            sourceTemplate: stateRef.current.cableForm?.sourceTemplate || undefined,
+          }),
         });
         const j = await r.json();
         if (j.ok) {
           setSaveOpen(false);
+          setShelfRefresh((n) => n + 1); // 工作台「案件」頁籤立刻看到新案
           notify(`已另存為 models/${j.dir}/,之後可從「開啟檔案」載回續改。`);
           return { ok: true };
         }
@@ -848,6 +981,29 @@ export default function App() {
       }
     },
     [state.sessionId, notify],
+  );
+
+  // 人工記教訓(時間軸「✎ 記教訓」):直打既有端點,與教訓是/否卡同一條落庫路徑。
+  const recordLesson = useCallback(
+    async (payload) => {
+      try {
+        const r = await fetch(apiUrl("/api/lessons/record"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sessionId: stateRef.current.sessionId, ...payload }),
+        });
+        const j = await r.json();
+        if (j.ok) {
+          setLessonBox(null);
+          notify("已加入教訓(未蒸餾)。可在「教訓」面板按「立即蒸餾」升級。");
+        } else {
+          notify(j.error === "disabled" ? "教訓系統已停用。" : "加入教訓失敗。", true);
+        }
+      } catch {
+        notify("無法連線到本機伺服器", true);
+      }
+    },
+    [notify],
   );
 
   // 新對話:斷開 session、前端狀態全清(不必重新整理頁面),續聊快照一併作廢。
@@ -879,12 +1035,20 @@ export default function App() {
         dispatch({ type: "SET_MODE", mode: next });
         return;
       }
-      const name = next === "sketch" ? "草模" : next === "library" ? "零件庫" : "設計";
+      const name =
+        next === "sketch" ? "草模" : next === "library" ? "零件庫" : next === "cable" ? "無塵電纜" : "設計";
       setConfirmBox({
         eyebrow: `SWITCH MODE · 切換到「${name}」`,
         body: "切換模式會開一個新對話:目前的對話與畫布會清空,已產出的檔案仍保留在磁碟。",
         actionLabel: `切換到「${name}」`,
-        accent: next === "sketch" ? "var(--sketch)" : next === "library" ? "var(--part)" : "var(--design)",
+        accent:
+          next === "sketch"
+            ? "var(--sketch)"
+            : next === "library"
+              ? "var(--part)"
+              : next === "cable"
+                ? "var(--cable)"
+                : "var(--design)",
         onConfirm: () => {
           newChat();
           dispatch({ type: "SET_MODE", mode: next });
@@ -936,9 +1100,9 @@ export default function App() {
   );
 
   // 可另存 = 這條 session 產過東西(開檔看圖的 o* 版本不算,那本來就在 models/ 裡;
-  // 草模/零件庫不支援另存——只有設計模式有 session 產物專案)
+  // 草模/零件庫不支援另存——只有設計鏈模式(design/cable)有 session 產物專案)
   const canSave = !!(
-    state.mode === "design" &&
+    isDesignLike(state.mode) &&
     state.sessionId &&
     state.canvas.glbUrl &&
     state.canvas.source !== "opened"
@@ -1066,7 +1230,7 @@ export default function App() {
   const clarifyPending = state.clarify != null;
   const needAuth = health && !health.agentReady;
   const sketchMode = state.mode === "sketch";
-  const designMode = state.mode === "design"; // 時間軸動作/ParamsBar 只屬於設計模式
+  const designMode = isDesignLike(state.mode); // 時間軸動作/ParamsBar 屬於設計鏈模式(design/cable)
   // 零件庫硬閘:新對話(還沒有任何訊息)未附上 STP 前鎖定輸入框——訪談開始後
   // 不再鎖(否則沒法回答 AI 的追問)。附件鈕/拖放/空狀態上傳區是解鎖的路。
   // demo 例外:零件庫全程鎖(demo 不能收庫訪談,upload-step 端點也被擋)。
@@ -1078,6 +1242,91 @@ export default function App() {
 
   // LibraryShelf 卡片動作:預覽=載進畫布(單純檢視,不進時間軸——與 library_preview
   // 工具同語意);⇪ 設計=確認切設計模式(開新對話)後強制 mint 新 session 匯入。
+  // ── 無塵電纜工作台(CableShelf)────────────────────────────────────────
+  // 選範本/案件 → 開規格表單。**零等待**:欄位定義與現值隨 /api/templates 一起
+  // 回來,不必先建 session(建 session = 一次 1–2 分鐘的同步 build)。
+  const pickCableTemplate = useCallback((it) => {
+    const defs = it.params || [];
+    dispatch({
+      type: "SET_CABLE_FORM",
+      form: {
+        dir: it.dir,
+        name: it.name,
+        label: it.label,
+        form: it.form || "",
+        layers: it.layers ?? null,
+        unit: it.unit || "mm",
+        bands: it.bands || null,
+        // 結構工作副本(改層數/帶型用;深拷貝,不動清單裡的原件)
+        spec: it.spec ? JSON.parse(JSON.stringify(it.spec)) : null,
+        specDirty: false,
+        labels: it.labels || {},
+        notes: it.notes || {},
+        defs,
+        values: Object.fromEntries(defs.map((d) => [d.key, d.value])),
+        // 從案件卡開 = 複製成新案(以該案現值起手),來源範本沿用案件記的那個
+        source: it.kind,
+        sourceTemplate: it.kind === "case" ? it.case?.sourceTemplate || it.dir : it.dir,
+        riserModule: it.riserModule ?? null,
+        unsure: false, // 「我不確定量法」→ canSkipAi 為假,降級走 AI
+        note: "",
+        error: null,
+      },
+    });
+    dispatch({ type: "SET_STAGE", index: 1 }); // 選範本 ✓ → 填規格
+  }, []);
+
+  // 直接生成(零 LLM):open-project 帶 params,一次同步 build 就是要的配置。
+  // in-flight 守衛:pending/running 期間不受理(連點、雙分頁各自送會並行 build)。
+  const generateFromCableForm = useCallback(async () => {
+    const f = stateRef.current.cableForm;
+    if (!f || stateRef.current.pending || stateRef.current.running) return;
+    dispatch({ type: "PATCH_CABLE_FORM", patch: { error: null } });
+    dispatch({ type: "SET_STAGE", index: 2 }); // 生成
+    const vals = Object.entries(f.values)
+      .map(([k, v]) => `${k}=${v}`)
+      .join("、");
+    const sid = await openProject(f.dir, {
+      params: f.values,
+      // 只有真的動過結構才送 spec(送了就走 rewriteSpec 整塊改寫三個區塊)
+      spec: f.specDirty && f.spec ? f.spec : undefined,
+      note: `以範本「${f.label}」生成:${vals}`,
+      onFail: (msg) => dispatch({ type: "PATCH_CABLE_FORM", patch: { error: msg } }),
+    });
+    if (sid) {
+      dispatch({ type: "SET_CABLE_FORM", form: null }); // 成功才收表單(失敗留著改值重來)
+      dispatch({ type: "SET_STAGE", index: 4 }); // 驗證已在 open-project 內跑完 → 呈現
+    }
+  }, [openProject]);
+
+  // 給 AI 確認:規格組成「電纜規格:」契約文字預填 composer(先過目再送,不先 build)
+  const askAiFromCableForm = useCallback(() => {
+    const f = stateRef.current.cableForm;
+    if (!f) return;
+    dispatch({ type: "SET_PREFILL", text: composeCableSpecText(f) });
+    dispatch({ type: "SET_CABLE_FORM", form: null });
+  }, []);
+
+  // 唯讀看件(工作台「預覽」):走既有 /api/open 唯讀鏈(o* 版、不建 session);
+  // 之後在 composer 打字會由 submitText 的「自動帶入編輯」升級成可編輯 session。
+  const openModelFile = useCallback(
+    async (rel) => {
+      try {
+        const r = await fetch(apiUrl("/api/open"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ file: rel }),
+        });
+        const j = await r.json();
+        if (j.ok) openFile(j);
+        else notify(j.error || "開啟失敗", true);
+      } catch {
+        notify("無法連線到本機伺服器", true);
+      }
+    },
+    [openFile, notify],
+  );
+
   const shelfPreview = useCallback((p, glbUrl) => {
     if (!glbUrl) return;
     dispatch({
@@ -1148,9 +1397,16 @@ export default function App() {
       />
       <LessonsPanel open={lessonsOpen} onClose={() => setLessonsOpen(false)} />
       <ConfirmDialog box={confirmBox} onClose={() => setConfirmBox(null)} />
+      <LessonRecordDialog
+        open={!!lessonBox}
+        partName={lessonBox?.partName || ""}
+        onClose={() => setLessonBox(null)}
+        onSubmit={recordLesson}
+      />
       <SaveDialog
         open={saveOpen}
         defaultName={state.canvas.name}
+        caseMode={state.mode === "cable"}
         onClose={() => setSaveOpen(false)}
         onSave={saveProject}
       />
@@ -1178,12 +1434,13 @@ export default function App() {
             isIdle={isIdle}
             running={state.running}
             live={state.live}
+            pending={state.pending}
             frozen={clarifyPending}
             mode={state.mode}
             specLiveId={specLiveId}
             onSubmitText={submitText}
             onAttachFiles={attachFiles}
-            attachDisabled={demo && state.mode === "library"}
+            attachDisabled={demo && (state.mode === "library" || state.mode === "cable")}
             attachDisabledTip={DEMO_TIP}
             handlers={handlers}
           />
@@ -1192,7 +1449,7 @@ export default function App() {
             mode={state.mode}
             locked={libraryLocked}
             lockedHint={demo ? DEMO_TIP : undefined}
-            attachDisabled={demo && state.mode === "library"}
+            attachDisabled={demo && (state.mode === "library" || state.mode === "cable")}
             attachDisabledTip={DEMO_TIP}
             pickRefs={state.pickRefs}
             pendingFiles={pendingFiles}
@@ -1207,6 +1464,17 @@ export default function App() {
           />
         </div>
         <div className="right-col">
+          {state.mode === "cable" && (
+            <CableShelf
+              onPickTemplate={pickCableTemplate}
+              onOpenProject={(it) => openProject(it.dir)}
+              onPreview={(it) => openModelFile(`${it.dir}/${it.name}.step`)}
+              refreshSignal={`${shelfRefresh}:${state.versions.length}`}
+              autoCollapse={state.versions.length > 0}
+              readOnly={demo}
+              busy={!!state.pending || state.running}
+            />
+          )}
           {state.mode === "library" && (
             <LibraryShelf
               onPreview={shelfPreview}
@@ -1223,6 +1491,7 @@ export default function App() {
               dispatch={dispatch}
               running={state.running}
               live={state.live}
+              pending={state.pending}
               stageIdx={state.stageIdx}
               toolFeed={toolFeed}
               clarify={state.clarify}
@@ -1244,6 +1513,20 @@ export default function App() {
                 pickRefs={state.pickRefs}
                 running={state.running}
                 live={state.live}
+                pending={state.pending}
+                cable={
+                  state.mode === "cable"
+                    ? {
+                        form: state.cableForm,
+                        busy: !!state.pending || state.running,
+                        onValue: (key, value) => dispatch({ type: "SET_CABLE_FORM_VALUE", key, value }),
+                        onPatch: (patch) => dispatch({ type: "PATCH_CABLE_FORM", patch }),
+                        onClose: () => dispatch({ type: "SET_CABLE_FORM", form: null }),
+                        onGenerate: generateFromCableForm,
+                        onAskAi: askAiFromCableForm,
+                      }
+                    : null
+                }
                 stageIdx={state.stageIdx}
                 toolFeed={toolFeed}
                 clarify={state.clarify}
@@ -1302,6 +1585,13 @@ export default function App() {
                 : null
             }
             onPromote={sketchMode ? promoteSketch : null}
+            // 記教訓:零 LLM 主線(表單/滑桿)不會出現 agent 的是/否卡,這是唯一入口。
+            // demo 不出(/api/lessons/* 對 demo 是 403,比照教訓面板不渲染的處置)。
+            onRecordLesson={
+              !demo && designMode && state.sessionId
+                ? (v) => setLessonBox({ partName: v?.name || "" })
+                : null
+            }
             exporting={exporting}
             running={state.running}
           />

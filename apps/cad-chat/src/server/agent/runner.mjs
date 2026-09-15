@@ -13,7 +13,9 @@ import { isDemoUser } from "../users.mjs";
 import { scrubPaths } from "../cad/python.mjs";
 import { getLessonsDigest, recordTurnError } from "../lessons.mjs";
 import { persistSession } from "../sessions.mjs";
+import { isDesignLike } from "../../lib/chatModes.js";
 import { buildSystemPrompt } from "./prompt.mjs";
+import { buildCableSystemPrompt } from "./prompt.cable.mjs";
 import { buildLibrarySystemPrompt } from "./prompt.library.mjs";
 import { buildSketchSystemPrompt } from "./prompt.sketch.mjs";
 import { makeToolGuard } from "./guards.mjs";
@@ -90,9 +92,9 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
   const allowed = isSketch ? SKETCH_ALLOWED : mode === "library" ? LIBRARY_ALLOWED : ALLOWED;
   // 累積教訓摘要:每 turn 重算一次(讀一個小 JSON;失敗回 "" 絕不擋 turn),
   // buildSystemPrompt 讀 session._lessonsDigest 注入「# 累積教訓」段。
-  // 只有設計模式注入:現有教訓全是 build123d/幾何驗證語彙,對草模/零件庫是
-  // 純 token 浪費+契約污染。
-  session._lessonsDigest = mode === "design" ? getLessonsDigest() : "";
+  // 只有設計鏈模式(design/cable)注入:現有教訓全是 build123d/幾何驗證語彙,
+  // 對草模/零件庫是純 token 浪費+契約污染。
+  session._lessonsDigest = isDesignLike(mode) ? getLessonsDigest() : "";
 
   // prompt 恆走 streaming input(單一程式路徑):SDK 的字串 prompt 會被傳輸層硬編成
   // 純 text block,永遠帶不了 image content block;這裡自組同形狀的 user message
@@ -131,7 +133,9 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
           ? buildSketchSystemPrompt(session)
           : mode === "library"
             ? buildLibrarySystemPrompt(session)
-            : buildSystemPrompt(session),
+            : mode === "cable"
+              ? buildCableSystemPrompt(session)
+              : buildSystemPrompt(session),
       },
       mcpServers: { cadchat: mcp },
       allowedTools: allowed,

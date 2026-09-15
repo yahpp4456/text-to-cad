@@ -139,7 +139,7 @@ try:
 
         # ---- C. ModeSwitch / 世界切換 ----
         print("== C. ModeSwitch ==")
-        c.check("C: 切換器三段", page.locator(".mode-seg").count() == 3)
+        c.check("C: 切換器四段", page.locator(".mode-seg").count() == 4)
         c.check("C: 分隔線存在(創作組|管理組)", page.locator(".mode-divider").count() == 1)
         page.locator('.mode-seg[data-mode="library"]').click()
         page.wait_for_selector('.mode-seg[data-mode="library"][data-on="true"]')

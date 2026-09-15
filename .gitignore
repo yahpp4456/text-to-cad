@@ -33,6 +33,9 @@ coverage
 *.swp
 *.step.glb.lock
 *.stp.glb.lock
+# gen_step 進行中鎖檔(程序被殺會殘留)與 asset.user.test 的 legacy 暫存 fixture(中斷殘留)
+*.generation.lock.json
+models/tmp_asset_*.json
 # build 收割 sidecar(MOTION+parts;cad-chat 設計模式用)——隱藏 GLB 是刻意提交的
 # fixture,meta 不是,任何 gen_step build 都會重生它
 *.step.meta.json

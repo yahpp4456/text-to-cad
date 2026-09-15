@@ -459,3 +459,19 @@ test("RESTORE:library snapshot 還原 library mode", () => {
   });
   assert.equal(s.mode, "library");
 });
+
+// ── 同步重建等待指示(開專案/回退)──
+test("SET_PENDING:設 {text,since} / 清 null;RESET 與 RESTORE 都不殘留(暫態)", () => {
+  const s1 = reducer(initialState, { type: "SET_PENDING", pending: { text: "重建中…", since: 1000 } });
+  assert.deepEqual(s1.pending, { text: "重建中…", since: 1000 });
+  assert.equal(s1.running, false, "pending 不是 running(不鎖 composer 語意)");
+  // CLEAR_WORKSPACE(open-project 中途換 session)不得清 pending——指示要撐到 finally
+  const s2 = reducer(s1, { type: "CLEAR_WORKSPACE" });
+  assert.deepEqual(s2.pending, { text: "重建中…", since: 1000 });
+  const s3 = reducer(s2, { type: "SET_PENDING", pending: null });
+  assert.equal(s3.pending, null);
+  assert.equal(reducer(s1, { type: "RESET" }).pending, null);
+  assert.equal(reducer(s1, { type: "RESTORE", snapshot: { items: [], pending: { text: "x", since: 1 } } }).pending, null);
+  // 缺欄位的防呆:text 給預設、since 非數字歸 0
+  assert.deepEqual(reducer(initialState, { type: "SET_PENDING", pending: {} }).pending, { text: "處理中…", since: 0 });
+});

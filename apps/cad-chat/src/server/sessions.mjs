@@ -144,7 +144,8 @@ function hydrateSession(session) {
   // 產物守衛 mode-aware:草模 session 的真相源是 <name>.sketch.json,不是 .py
   // (不分流則草模重掛必 bail → version 歸零 → v-id 相撞)。零件庫 session 無建模
   // 產物(lastName 恆 null),artifact=null 跳過檢查——防禦:萬一 lastName 被寫入,
-  // 不分流會 bail 丟掉 sdkSessionId,對話記憶蒸發。
+  // 不分流會 bail 丟掉 sdkSessionId,對話記憶蒸發。cable(設計特化)走 else 的
+  // .py 分支,與 design 同款。
   const artifact =
     session.mode === "sketch"
       ? `${lastName}.sketch.json`

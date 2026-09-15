@@ -257,6 +257,36 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `/api/library-glb` 補轉路(等 data: URL,timeout 放寬)。動 shelf/縮圖/端點 →
   smoke_library_mode F 段 + library.test(list/delete)。
 
+- **L1 與 L3 不要同時跑**:`asset.user.test.js` 會自己起一個臨時埠的 server,
+  煙測(dev server + Playwright + Python build)在跑時 CPU/埠壓力下它會偶發紅
+  (單跑必綠、閒置時連跑三輪也綠)。看到它紅先確認有沒有背景煙測在跑。
+- **無塵電纜工作台(2026-08-25,Phase 0–4)**:cable 主線改成零 LLM 的
+  「選範本 → 填規格 → 直接生成」。動它之前先知道這幾根:
+  - **範本/結構的真相在產生器 .py 頂部的 JSON 相容宣告**(`TEMPLATE_META` /
+    `CABLE_SPEC` / `PARAM_LABELS` / `PARAM_NOTES`),解析走
+    `pipeline.readFlatJsonDecl` 的 **JSON.parse**(文法:單行或多行、收尾 `}`
+    頂第 0 欄、雙引號、無尾逗號、**不得有 True/False/None**——布林用 1/0、
+    「不覆寫」用 0)。**別再手刻 regex**:`paramRangesFromGenerator` 那支只吃
+    數值三元組,中繼含中文/巢狀/逗號必誤切。
+  - **閉式與護欄的單一真相是 `cadpy.parts.cable_spec`(OCP-free,import 0.08s)**:
+    產生器的 `_check_params`、`/api/cable/check`、表單即時檢核全走它 → 動它必跑
+    `tests/python/packages/cadpy/test_cable_spec.py`,而且**先 sync-vendored**
+    (venv editable 指向 vendored 複本,不同步 = 測到舊碼)。回報的下限/上限
+    **必須餵回去就過**(往上/往下取到 0.1;餘隙上限另做二分)。
+  - **幾何實作在 `cadpy.parts.cable_assembly`**(規格驅動,兩份 per_layer 範本
+    共用);改它 → 兩支範本的 `__main__` 全跑(含 Y 的 OEM 等價 golden)。
+  - **`rewriteSpec` 是第二個 .py 寫入者**(第一個是 rewriteParams):改層數時
+    PARAMS **整塊替換不 merge**(merge 會留幽靈 L 鍵 → 幽靈滑桿)、PARAM_RANGES
+    必須一起重寫、CABLE_SPEC 用多行 JSON。動它 → `pipeline.params.test.js`
+    的 rewriteSpec 段 + `smoke_cable_workbench.py` E 段(真 build)。
+  - **`session.mode` 在 open-project mint 時就要帶**(`resolveOpenMode`):不帶
+    → cable 段開專案後每個 `/api/chat`(含滑桿)400 `mode_mismatch`,實測過的
+    死路,回歸鎖在 `smoke_cable_mode.py` A2 段。
+  - 煙測用**輕量 fixture 範本**(TEMPLATE_META family=cable + 一顆盒子 + 完整的
+    per_layer PARAMS)讓 build 只要 ~35s;真電纜件一次 build 要 1–2 分鐘。
+    fixture 的 PARAMS **必須是完整規格**(L1..LN + width + head_h + mount_h +
+    bottom_leg),否則 `/api/cable/check` KeyError,即時檢核整段測不到。
+
 - **per-user 資料隔離(2026-07-15,VM 部署啟用)**:反代注入 `X-Remote-User` →
   `req.cadchat={user,modelsRoot,sessionsRoot}`(`middleware/userContext.mjs`,鏈首位);
   資料根切 `DATA_ROOT/users/<u>/models(/.cadchat)`。**dev/無 header = legacy 全域根,

@@ -1,0 +1,14 @@
+{
+ "schemaVersion": 1,
+ "label": "無塵電纜護套 Cable X v4",
+ "family": "other",
+ "source": "客戶提供 STEP",
+ "notes": "客戶 Cable X v4 原廠無塵電纜護套件(與 ref-cable-sheath/cable_x_v4.step 同一檔;參數化重建範本見 models/cable_x_v4),bbox 118.20 × 397.23 × 179.50 mm",
+ "bboxMm": [
+  118.2,
+  397.23,
+  179.5
+ ],
+ "faceCount": 1072,
+ "addedAt": "2026-08-25T09:56:43.920Z"
+}

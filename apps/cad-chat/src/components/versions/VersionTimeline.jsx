@@ -23,6 +23,7 @@ export default function VersionTimeline({
   onValidate,
   onExportParts,
   onPromote, // 草模版「⇪ 轉為正式設計」(切設計模式開新對話+prefill 規格摘要)
+  onRecordLesson, // 「✎ 記教訓」(零 LLM 主線沒有 agent 的是/否卡,這是唯一入口)
   exporting,
   running,
 }) {
@@ -148,7 +149,7 @@ export default function VersionTimeline({
             active.source !== "opened" &&
             /^v\d+$/.test(active.id) &&
             onExport &&
-            [...(active.hasDxf ? ["dxf"] : []), "stl", "3mf"].map((f) => {
+            [...(active.hasDxf ? ["dxf"] : []), "stl", "3mf", "pdf"].map((f) => {
               const busy = exporting === `${active.id}:${f}`;
               return (
                 <a
@@ -158,11 +159,13 @@ export default function VersionTimeline({
                   title={
                     f === "dxf"
                       ? `下載 ${active.id} 的鈑金展開圖 DXF(外輪廓/孔/折彎線分層,可直接雷切下料)`
-                      : `把 ${active.id} 轉成 ${f.toUpperCase()} 下載(免 AI,約數秒~數十秒)`
+                      : f === "pdf"
+                        ? `下載 ${active.id} 的四視圖工程圖 PDF(俯/前/側/等角+包絡尺寸,約十秒~數分鐘)`
+                        : `把 ${active.id} 轉成 ${f.toUpperCase()} 下載(免 AI,約數秒~數十秒)`
                   }
                   onClick={() => !running && !exporting && onExport(active.id, f)}
                 >
-                  {busy ? "⤓ 轉換中…" : f === "dxf" ? "⤓ DXF 展開圖" : `⤓ ${f.toUpperCase()}`}
+                  {busy ? "⤓ 轉換中…" : f === "dxf" ? "⤓ DXF 展開圖" : f === "pdf" ? "⤓ PDF 工程圖" : `⤓ ${f.toUpperCase()}`}
                 </a>
               );
             })}
@@ -180,6 +183,17 @@ export default function VersionTimeline({
                 {exporting === "parts:step" ? "⤓ 拆件中…" : "⤓ 零件包"}
               </a>
             )}
+          {/* 記教訓:表單/滑桿的零 LLM 主線永遠不會觸發 agent 的「是/否卡」——
+              假綠(幾何有效但不合客戶意)只有人看得出來,這是它唯一的入口。 */}
+          {active && active.type !== "sketch" && onRecordLesson && (
+            <a
+              className="version-dl version-lesson"
+              title="把這一版踩到的問題記成教訓(未蒸餾;之後在「教訓」面板可升級成規則)"
+              onClick={() => !running && !exporting && onRecordLesson(active)}
+            >
+              ✎ 記教訓
+            </a>
+          )}
         </div>
       )}
     </div>

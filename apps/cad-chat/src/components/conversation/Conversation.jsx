@@ -1,4 +1,17 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+
+// 同步伺服端工作(開專案/回退重建)的等待計時:秒數跳動是「還活著」最便宜的證據
+// (大型電纜件重建 1–2 分鐘,靜態一句「重建中…」會被當成當機)。
+function Elapsed({ since }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const s = Math.max(0, Math.round((now - (since || now)) / 1000));
+  const label = s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s` : `${s}s`;
+  return <span className="live-elapsed">{label}</span>;
+}
 
 // 零件庫空狀態的上傳區(硬閘:先上傳 STP 才會開始;點擊選檔+拖放二路)
 // disabled(DEMO):上傳區照常渲染但整塊禁用(點擊/拖放 no-op),副標換成
@@ -52,6 +65,13 @@ const EXAMPLES = [
   { text: "行程 100mm 的電動線性滑台:底板、線軌滑塊、滾珠螺桿與步進馬達", accent: "var(--ink)" },
 ];
 
+// 無塵電纜模式的閒置範例:**主線是右側工作台的範本+規格表單(零 LLM)**,
+// 這裡只留「表單涵蓋不到」的對話入口——客戶檔擬合、型錄選型、改帶型/層數。
+const EXAMPLES_CABLE = [
+  { text: "三條 8mm 電纜的無塵護套,直段 300、彎徑照型錄", accent: "var(--emit)" },
+  { text: "照右側範本改帶型:中層換成 6 袋 ×14mm", accent: "var(--ink)" },
+];
+
 // 草模模式的閒置範例:機構構想(拓撲/DOF/動作),不是零件規格
 const EXAMPLES_SKETCH = [
   { text: "水平汽缸經連桿推末端平台前傾 30°", accent: "var(--sketch)" },
@@ -67,6 +87,7 @@ export default function Conversation({
   isIdle,
   running,
   live,
+  pending,
   frozen,
   mode,
   specLiveId,
@@ -120,6 +141,12 @@ export default function Conversation({
                     <br />
                     訪談後收進零件庫。
                   </>
+                ) : mode === "cable" ? (
+                  <>
+                    選範本填規格,
+                    <br />
+                    當場生成整組無塵電纜。
+                  </>
                 ) : (
                   <>
                     描述零件,
@@ -133,7 +160,9 @@ export default function Conversation({
                   ? "用一句話描述機構構想(拓撲、驅動方式、行程)。AI 會在幾秒內搭出可播放、可拉滑桿的剛體運動示意——快速驗證想法,要產真零件再切「設計」。"
                   : mode === "library"
                     ? "把原廠 STP 交給 AI:先呈現 3D 外形並量測尺寸,訪談名稱/型號/分類後收進零件庫;之後在「設計」模式一句話就能引用。"
-                    : "用自然語言描述你要的機構或零件。AI 會解析規格 → 規劃 → 參數化生成 → 自我檢查與修正 → 把 3D 模型載入右側畫布。"}
+                    : mode === "cable"
+                      ? "主線在右側「無塵電纜工作台」:選範本 → 填規格 → 直接生成(不經 AI,幾何當場算)。這裡的對話留給表單涵蓋不到的事——上傳客戶 STEP+工程圖做量測擬合、型錄選型、改帶型或層數。"
+                      : "用自然語言描述你要的機構或零件。AI 會解析規格 → 規劃 → 參數化生成 → 自我檢查與修正 → 把 3D 模型載入右側畫布。"}
               </span>
             </div>
             {mode === "library" ? (
@@ -146,8 +175,10 @@ export default function Conversation({
               />
             ) : (
               <div className="empty-examples">
-                <span className="empty-examples-eyebrow">範例 · 點擊開始</span>
-                {(mode === "sketch" ? EXAMPLES_SKETCH : EXAMPLES).map((ex, i) => (
+                <span className="empty-examples-eyebrow">
+                  {mode === "cable" ? "表單以外 · 用對話" : "範例 · 點擊開始"}
+                </span>
+                {(mode === "sketch" ? EXAMPLES_SKETCH : mode === "cable" ? EXAMPLES_CABLE : EXAMPLES).map((ex, i) => (
                   <a className="example" key={i} onClick={() => onSubmitText(ex.text)}>
                     <span className="example-bar" style={{ background: ex.accent }} />
                     <span className="example-text">{ex.text}</span>
@@ -169,12 +200,13 @@ export default function Conversation({
                 />
               </div>
             ))}
-            {running && live && (
-              <div className="live-row">
+            {(running && live) || pending ? (
+              <div className="live-row" data-pending={!running && pending ? "1" : undefined}>
                 <span className="live-dot" />
-                <span className="live-text">{live.text}</span>
+                <span className="live-text">{running && live ? live.text : pending.text}</span>
+                {!running && pending && <Elapsed since={pending.since} />}
               </div>
-            )}
+            ) : null}
           </>
         )}
       </div>

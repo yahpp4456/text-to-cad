@@ -55,7 +55,7 @@ export default function Header({
             onClick={demo ? undefined : onSaveProject}
             title={demo ? DEMO_TIP : "把目前產物存成 models/ 下的具名專案"}
           >
-            ⤓ 另存專案
+            {mode === "cable" ? "⤓ 另存案件" : "⤓ 另存專案"}
           </a>
         )}
         {onOpenFiles && (

@@ -16,6 +16,7 @@ import {
 } from "../../lib/viewOrientations.js";
 import { STAGES } from "../StageStepper.jsx";
 import ClarifyWizard from "./ClarifyWizard.jsx";
+import CableSpecWindow from "./CableSpecWindow.jsx";
 import LessonOfferPanel from "./LessonOfferPanel.jsx";
 import PropertiesDrawer from "./PropertiesDrawer.jsx";
 import SpecPanel from "./SpecPanel.jsx";
@@ -107,6 +108,8 @@ export default function Canvas3D({
   pickRefs,
   running,
   live,
+  pending,
+  cable, // 無塵電纜規格表單:{form, busy, onValue, onPatch, onClose, onGenerate, onAskAi}
   stageIdx,
   toolFeed,
   clarify,
@@ -890,7 +893,17 @@ export default function Canvas3D({
         ) : (
           <div className="canvas-empty">
             <span className="canvas-empty-box">3D</span>
-            <span className="canvas-empty-text">產出後,模型會在這裡出現</span>
+            {/* 空畫布時的同步重建(開專案)也要有脈衝回饋——進度條掛在 viewport 分支,
+                這裡沒有;改把空狀態文案換成 pending 文字 + live-dot */}
+            <span className="canvas-empty-text">
+              {pending ? (
+                <>
+                  <span className="live-dot" /> {pending.text}
+                </>
+              ) : (
+                "產出後,模型會在這裡出現"
+              )}
+            </span>
           </div>
         )
       ) : (
@@ -974,10 +987,10 @@ export default function Canvas3D({
               {fmtMeasure(measureResult.value)} mm
             </div>
           )}
-          {running && (
+          {(running || pending) && (
             <div className="canvas-progress-strip">
               <span className="live-dot" />
-              <span>{live?.text || "回合進行中…"}</span>
+              <span>{running ? live?.text || "回合進行中…" : pending.text}</span>
             </div>
           )}
           {canvas.status === "loading" && (
@@ -1245,6 +1258,19 @@ export default function Canvas3D({
           onApply={onApplyParams}
           onClose={() => setSweepWinOpen(false)}
           onChatProfile={(text) => dispatch({ type: "SET_PREFILL", text })}
+        />
+      )}
+      {/* 無塵電纜規格表單:工作台選了範本就開,clarify 待答時讓位(草稿在 store 不丟)。
+          與 SweepWindow 互斥不必特別處理——兩者觸發源不同,cable 件目前無 SWEEP_VIEW。 */}
+      {cable?.form && !clarify && (
+        <CableSpecWindow
+          form={cable.form}
+          busy={cable.busy}
+          onValue={cable.onValue}
+          onPatch={cable.onPatch}
+          onClose={cable.onClose}
+          onGenerate={cable.onGenerate}
+          onAskAi={cable.onAskAi}
         />
       )}
       {/* 需要使用者作答的介面一律在視圖(聊天卡全為被動紀錄):

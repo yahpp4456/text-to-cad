@@ -1,6 +1,7 @@
 // 專案生命周期(免 LLM 直接操作,回 JSON):
 //   POST /api/import        {sessionId?, file}     — 複製 models/ 下 STEP 進 session imported/
-//   POST /api/open-project  {dir, generator?}      — 開既有專案:複製樹到新 session + 重建
+//   POST /api/open-project  {dir, generator?, mode?, params?} — 開既有專案:複製樹到新
+//                            session(mode 隨模式 mint)+ 可選參數覆寫 + 重建
 //   POST /api/save-project  {sessionId, name, overwrite?} — session 產物存成 models/<name>/
 //   POST /api/revert-version {sessionId, ver}             — 回退到 vK 快照(產生新版=vK 複本)
 //   POST /api/export        {sessionId, ver?, format}     — 快照/頂層 STEP → STL/3MF(免 LLM;
@@ -12,6 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { MODELS_ROOT } from "../config.mjs";
+import { isDesignLike } from "../../lib/chatModes.js";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
 import { resolveInside, resolveModelRead } from "../cad/paths.mjs";
 import {
@@ -28,7 +30,14 @@ import {
   importStepIntoSession,
   inspectFacts,
   paramDefsFromGenerator,
+  paramRangesFromGenerator,
+  paramValuesFromGenerator,
+  pickGenerator,
+  readCableSpec,
+  readTemplateMeta,
   resolveImportSource,
+  rewriteParams,
+  rewriteSpec,
   runStep,
   runValidate,
   sanitizeName,
@@ -108,21 +117,70 @@ function copyProjectTree(srcDir, dstDir) {
   }
 }
 
-// 選主產生器:指定 > 唯一 .py > 有同名 .asm.json > 檔案最大。回 stem|null。
-function pickGenerator(dir, requested) {
-  const pys = fs.readdirSync(dir).filter((f) => f.endsWith(".py"));
-  if (!pys.length) return null;
-  if (requested) {
-    const want = `${sanitizeName(requested)}.py`;
-    if (pys.includes(want)) return want.slice(0, -3);
+// 開專案時的 session mode 裁定(純函數,L1 可測)。session.mode 是出生恆定屬性,
+// mint 時不帶就永遠是 design——前端停在 cable 段一鍵開專案後,下一次 /api/chat
+// (含滑桿 paramsOnly)必回 400 mode_mismatch(實測過的死路)。
+//   ① body.mode 是設計鏈模式(design/cable)→ 採納(使用者在哪個模式按開啟就是哪個);
+//   ② 否則看範本家族(TEMPLATE_META.family;Phase 1 起有值)——cable 範本從
+//      sketch/library 模式開也該是 cable session;
+//   ③ 再不然 design。
+// **刻意不回 400**:sketch/library 模式下用 FileBrowser 一鍵開專案是既有動線,
+// 擋掉是回歸;非設計鏈的 body.mode 一律忽略而非拒絕。
+export function resolveOpenMode(body, { family } = {}) {
+  const req = body?.mode;
+  if (isDesignLike(req)) return req;
+  if (isDesignLike(family)) return family;
+  return "design";
+}
+
+// 開專案時附帶的參數覆寫檢查(純函數,L1 可測)。規格表單「直接生成」把值一次帶進
+// open-project,build 前先擋掉壞值:鍵必須是產生器 PARAMS 既有鍵(免打錯字靜默無效)、
+// 值必須是有限數、且落在產生器宣告的 PARAM_RANGES 內(未宣告的鍵不設限——跨參數耦合
+// 約束仍由 _check_params 在 build 時把關並回報下限)。
+// 回 {ok:true, values|null} 或 {ok:false, error}。
+export function validateOpenParams(params, current, ranges = {}) {
+  if (params === undefined || params === null) return { ok: true, values: null };
+  if (typeof params !== "object" || Array.isArray(params)) {
+    return { ok: false, error: "params 必須是 {鍵: 數值} 物件" };
   }
-  if (pys.length === 1) return pys[0].slice(0, -3);
-  const withManifest = pys.find((f) => fs.existsSync(path.join(dir, `${f.slice(0, -3)}.asm.json`)));
-  if (withManifest) return withManifest.slice(0, -3);
-  const largest = pys
-    .map((f) => ({ f, size: fs.statSync(path.join(dir, f)).size }))
-    .sort((a, b) => b.size - a.size)[0];
-  return largest.f.slice(0, -3);
+  const keys = Object.keys(params);
+  if (!keys.length) return { ok: true, values: null };
+  if (!current || !Object.keys(current).length) {
+    return { ok: false, error: "此專案的產生器沒有可覆寫的 PARAMS 區塊" };
+  }
+  const values = {};
+  for (const k of keys) {
+    const n = Number(params[k]);
+    if (!Number.isFinite(n)) return { ok: false, error: `參數 ${k} 必須是數值` };
+    if (!(k in current)) {
+      return { ok: false, error: `產生器沒有參數 ${k}(可用:${Object.keys(current).join("、")})` };
+    }
+    const r = ranges?.[k];
+    if (r && (n < r.min || n > r.max)) {
+      return { ok: false, error: `參數 ${k}=${n} 超出範圍 ${r.min}–${r.max}` };
+    }
+    values[k] = n;
+  }
+  return { ok: true, values };
+}
+
+// 結構改動(層數/帶型)時的 PARAMS 鍵集與滑桿範圍。層數 N 決定 L1..LN——舊的
+// L 鍵要消失(整塊替換,見 rewriteSpec),新的要有固定範圍,head_h 下限跟著層數走。
+export function paramShapeForSpec(spec, srcValues, srcRanges) {
+  const n = Number(spec?.layers) || 0;
+  const keys = {};
+  for (let i = 1; i <= n; i++) keys[`L${i}`] = srcValues?.[`L${i}`] ?? 0;
+  for (const [k, v] of Object.entries(srcValues || {})) if (!/^L\d+$/.test(k)) keys[k] = v;
+  const lTpl =
+    Object.entries(srcRanges || {}).find(([k]) => /^L\d+$/.test(k))?.[1] || { min: 200, max: 3000, step: 5 };
+  const ranges = {};
+  for (let i = 1; i <= n; i++) ranges[`L${i}`] = srcRanges?.[`L${i}`] || lTpl;
+  for (const [k, v] of Object.entries(srcRanges || {})) if (!/^L\d+$/.test(k)) ranges[k] = v;
+  if (ranges.head_h) {
+    const mh = Number(spec?.measured?.module_h) || 11.5;
+    ranges.head_h = { ...ranges.head_h, min: Math.round(n * mh * 10) / 10 };
+  }
+  return { keys, ranges };
 }
 
 async function handleOpenProject(body, res, ctx = {}) {
@@ -141,8 +199,37 @@ async function handleOpenProject(body, res, ctx = {}) {
     return;
   }
 
+  // 參數覆寫先對「來源」產生器驗(mint 之前):壞請求不得在磁碟留下空 session 目錄
+  // (session-info 之後會誤回 exists:true)。paramValues/RangesFromGenerator 只讀
+  // session.workdir → 直接餵來源目錄即可。
+  const srcName = pickGenerator(srcAbs, body?.generator);
+  const srcRef = { workdir: srcAbs };
+  const srcValues = srcName ? paramValuesFromGenerator(srcRef, srcName) : null;
+  const srcRanges = srcName ? paramRangesFromGenerator(srcRef, srcName) : {};
+  // 結構改動(規格表單改層數/帶型):鍵集與範圍由新 spec 決定,不是來源 .py 的舊鍵
+  const wantSpec = body?.spec && typeof body.spec === "object" ? body.spec : null;
+  const shape = wantSpec ? paramShapeForSpec(wantSpec, srcValues, srcRanges) : null;
+  const pchk = validateOpenParams(
+    body?.params,
+    shape ? shape.keys : srcValues,
+    shape ? shape.ranges : srcRanges,
+  );
+  if (!pchk.ok) {
+    sendJson(res, 400, { ok: false, error: pchk.error });
+    return;
+  }
+  if (wantSpec && !(srcName && readCableSpec(srcRef, srcName))) {
+    sendJson(res, 400, { ok: false, error: "此範本沒有 CABLE_SPEC,不能改結構" });
+    return;
+  }
+
   // 開新 session(不原地續用:舊 workdir 是歷史快照,兩個 session 同目錄會互踩)
-  const session = getOrCreateSession(null, { user: ctx.user });
+  const session = getOrCreateSession(null, {
+    user: ctx.user,
+    mode: resolveOpenMode(body, {
+      family: srcName ? readTemplateMeta(srcRef, srcName)?.family : null,
+    }),
+  });
   copyProjectTree(srcAbs, session.workdir);
 
   const name = pickGenerator(session.workdir, body?.generator);
@@ -150,6 +237,7 @@ async function handleOpenProject(body, res, ctx = {}) {
     sendJson(res, 200, {
       ok: false,
       sessionId: session.sessionId,
+      mode: session.mode,
       error: "目錄裡沒有產生器 .py(純檔案請用「開啟」看圖)",
     });
     return;
@@ -157,10 +245,51 @@ async function handleOpenProject(body, res, ctx = {}) {
   session.lastName = name;
   session.rehydratedFrom = clean;
   persistSession(session);
+  // 參數覆寫(規格表單「直接生成」):在 runStep 之前決定性改寫 PARAMS,一次 build
+  // 就得到使用者要的配置(免「先建範本預設值、再重生一次」雙倍等待)。值已於 mint
+  // 前驗過(validateOpenParams);跨參數耦合違規由 _check_params 在 build 時擋,錯誤
+  // 走下方 !step.ok 分支帶人話訊息回前端(session 保留,可改值重來或用對話修)。
+  let appliedValues = null;
+  if (wantSpec) {
+    // 結構重生:CABLE_SPEC + PARAMS(整塊替換,縮層不留幽靈鍵)+ PARAM_RANGES 一起改寫
+    const rw = rewriteSpec(session, name, {
+      spec: wantSpec,
+      params: pchk.values || shape.keys,
+      ranges: shape.ranges,
+    });
+    if (!rw.ok) {
+      sendJson(res, 200, {
+        ok: false,
+        sessionId: session.sessionId,
+        name,
+        mode: session.mode,
+        error: `套用結構失敗:${rw.error}`,
+      });
+      return;
+    }
+    appliedValues = paramValuesFromGenerator(session, name);
+  } else if (pchk.values) {
+    const rw = rewriteParams(session, name, pchk.values);
+    if (!rw.ok) {
+      sendJson(res, 200, {
+        ok: false,
+        sessionId: session.sessionId,
+        name,
+        mode: session.mode,
+        error: `套用參數失敗:${rw.error}`,
+      });
+      return;
+    }
+    appliedValues = paramValuesFromGenerator(session, name);
+  }
   // rehydrate 後首個 agent turn 的一次性接續提示(chat.mjs 取用後清空)
   session._rehydrateNote =
     `（本對話接續既有專案 ${name}(來源 models/${clean})。產生器已在 ${session.workdirAbs}/${name}.py,` +
-    `修改前先 Read 它,沿用其 PARAMS/INTENDED_CONTACT/MOTION 結構,用 cad_build(edits) 精修。）`;
+    `修改前先 Read 它,沿用其 PARAMS/INTENDED_CONTACT/MOTION 結構,用 cad_build(edits) 精修。` +
+    (appliedValues
+      ? `本專案由規格表單建立,PARAMS 現值 = ${JSON.stringify(appliedValues)}——以產生器內現值為準,不要沿用範本預設。`
+      : "") +
+    `）`;
 
   // 同步重建:防 cadpy 版本漂移的舊 GLB,並重寫 manifest / 取回 motion
   const ac = new AbortController();
@@ -181,7 +310,10 @@ async function handleOpenProject(body, res, ctx = {}) {
       ok: false,
       sessionId: session.sessionId,
       name,
-      error: `重建失敗:${condenseTraceback(step.stderr, { generatorName: name }) || `exit ${step.exitCode}`}(session 已保留,可用對話修復)`,
+      mode: session.mode,
+      // 參數覆寫路徑的失敗多半是 _check_params 的人話下限(如「L2 至少 872」)——
+      // 前端規格表單據此標紅欄位,所以訊息要原樣帶回,不要包成一句「重建失敗」。
+      error: `重建失敗:${condenseTraceback(step.stderr, { generatorName: name }) || `exit ${step.exitCode}`}(session 已保留,可改值重來或用對話修復)`,
     });
     return;
   }
@@ -195,11 +327,15 @@ async function handleOpenProject(body, res, ctx = {}) {
   sendJson(res, 200, {
     ok: true,
     sessionId: session.sessionId,
+    // session 的真實 mode:前端據此 SET_MODE 校正切換器(不校正 → 下一次 /api/chat
+    // 含滑桿 paramsOnly 必回 400 mode_mismatch)。
+    mode: session.mode,
     name,
     type: version?.type || "part",
     version,
     present,
     params: paramDefsFromGenerator(session, name),
+    values: paramValuesFromGenerator(session, name), // PARAMS 現值(表單回填/回聲用)
     motion: val?.motion || null,
     validateOk: val ? val.ok : null,
     warnings: presentWarnings(events),
@@ -361,13 +497,14 @@ function makeExportScratch(session, rawVer) {
 // 取既有 session(絕不 mint):getOrCreateSession 對格式合法但已 GC/不存在的 id 會
 // mkdirSync 一個全新空目錄——壞請求(stale localStorage 的死 id)不該在磁碟留垃圾,
 // 空目錄還會讓 session-info 對死 id 誤回 exists:true。probeSessionOnDisk 唯讀。
-// 非設計 session 的顯式 400 拒絕:這些端點只對設計模式有意義(草模無 STEP/產生器;
-// 零件庫是收藏管理,收庫產物在 models/parts-library/ 而非 session 工作區)。
+// 非設計鏈 session 的顯式 400 拒絕:這些端點只對設計鏈模式有意義(草模無 STEP/
+// 產生器;零件庫是收藏管理,收庫產物在 models/parts-library/ 而非 session 工作區)。
+// cable(無塵電纜)是設計特化,六端點全放行(isDesignLike)。
 // 不靠 resolveExportBase 的「STEP 不存在」404 兜底——顯式拒絕才誠實、才可測。
 // 訊息措辭:草模保留「草模模式沒有…」逐字(smoke_sketch D 段斷言),library 對應
 // 「零件庫模式沒有…」。
 function rejectNonDesignSession(session, res, what) {
-  if (!session?.mode || session.mode === "design") return false;
+  if (!session?.mode || isDesignLike(session.mode)) return false;
   const label = session.mode === "sketch" ? "草模" : "零件庫";
   sendJson(res, 400, {
     ok: false,
@@ -502,8 +639,9 @@ async function handleExport(body, res, ctx = {}) {
   // flag 一路撞進 spawn 變成難懂的內部 TypeError,而不是這裡的清楚 400。
   const flag = Object.hasOwn(EXPORT_FLAGS, format) ? EXPORT_FLAGS[format] : null;
   const isDxf = format === "dxf";
-  if (!flag && !isDxf) {
-    sendJson(res, 400, { ok: false, error: "format 僅支援 stl / 3mf / dxf" });
+  const isPdf = format === "pdf";
+  if (!flag && !isDxf && !isPdf) {
+    sendJson(res, 400, { ok: false, error: "format 僅支援 stl / 3mf / dxf / pdf" });
     return;
   }
   const session = requireExistingSession(body, res, ctx);
@@ -559,6 +697,18 @@ async function handleExport(body, res, ctx = {}) {
       scratch = makeExportScratch(session, body?.ver);
       const input = isDxf ? `${name}.py` : `${name}.step`;
       fs.copyFileSync(path.join(base.baseAbs, input), path.join(scratch.abs, input));
+      // PDF 工程圖的電纜解析側視要讀 build meta 的中心線(sweepPaths)——連 STEP
+      // 旁的 .{name}.step.meta.json 一併帶進 scratch(缺了就退回 HLR 側視,不致命)。
+      if (isPdf) {
+        // 版本快照只凍結 .sweep.json 不凍 meta(見 snapshotVersion 清單)→ 兩份都帶,
+        // drawing_pdf 讀 meta 沒有就退 .sweep.json,快照匯出的側視才不會靜默退回 HLR。
+        // 產生器 .py 也帶進 scratch:drawing_pdf 讀 STEP 旁同名 .py 的 PARAMS 印參數表
+        // (逐層電纜長這類投影量不到的輸入規格);缺了只是沒表,不致命。
+        for (const f of [`.${name}.step.meta.json`, `.${name}.sweep.json`, `${name}.py`]) {
+          const src = path.join(base.baseAbs, f);
+          if (fs.existsSync(src)) fs.copyFileSync(src, path.join(scratch.abs, f));
+        }
+      }
     } catch (err) {
       sendJson(res, 500, { ok: false, error: `匯出準備失敗:${scrubPaths(String(err?.message || err))}` });
       return;
@@ -575,13 +725,20 @@ async function handleExport(body, res, ctx = {}) {
             [`${scratch.rel}/${name}.py`],
             { session, signal: ac.signal },
           )
-        : // sidecar 輸出路徑由 CLI 解讀為「相對 STEP 目標所在目錄」(cadpy
-          // _resolve_step_option_output_path,且拒絕絕對路徑)→ 只傳檔名,寫在 STEP 旁。
-          await spawnPython(
-            "skills/cad/scripts/step",
-            [`${scratch.rel}/${name}.step`, "--kind", kind, flag, `${name}.${format}`, "--force"],
-            { session, signal: ac.signal },
-          );
+        : isPdf
+          ? // 四視圖工程圖:HLR 投影既有 STEP(俯/前/側/等角+包絡尺寸標註)
+            await spawnPython(
+              "apps/cad-chat/src/server/cad/drawing_pdf.py",
+              [`${scratch.rel}/${name}.step`, "--out", `${scratch.rel}/${name}.pdf`],
+              { session, signal: ac.signal },
+            )
+          : // sidecar 輸出路徑由 CLI 解讀為「相對 STEP 目標所在目錄」(cadpy
+            // _resolve_step_option_output_path,且拒絕絕對路徑)→ 只傳檔名,寫在 STEP 旁。
+            await spawnPython(
+              "skills/cad/scripts/step",
+              [`${scratch.rel}/${name}.step`, "--kind", kind, flag, `${name}.${format}`, "--force"],
+              { session, signal: ac.signal },
+            );
     } finally {
       clearTimeout(timer);
     }
@@ -750,6 +907,26 @@ function handleSaveProject(body, res, ctx = {}) {
     fs.rmSync(dstAbs, { recursive: true, force: true });
   }
   copyProjectTree(session.workdir, dstAbs);
+  // 案件紀錄(工作台「案件」頁籤的來源)。可變的案件中繼**不寫進 .py**——.py 的
+  // 寫入者只有 rewriteParams 一個;客戶/日期/來源範本/備註放 sidecar,copyProjectTree
+  // 之後寫、複製成新案時由當下欄位覆寫(不會帶著舊客戶名跑)。
+  // 只有 cable session 寫(design 的另存語意仍是「存成範本/專案」,不是案件)。
+  if (session.mode === "cable") {
+    try {
+      const meta = {
+        kind: "case",
+        family: "cable",
+        label: String(body?.label || name).slice(0, 80),
+        customer: String(body?.customer || "").slice(0, 80),
+        note: String(body?.note || "").slice(0, 400),
+        source_template: String(body?.sourceTemplate || session.rehydratedFrom || "").slice(0, 120),
+        created: new Date().toISOString().slice(0, 10),
+      };
+      fs.writeFileSync(path.join(dstAbs, "case.json"), JSON.stringify(meta, null, 1), "utf8");
+    } catch {
+      /* 案件中繼寫失敗:專案本體已存好,只是不會出現在「案件」頁籤 */
+    }
+  }
   sendJson(res, 200, { ok: true, dir: name });
 }
 

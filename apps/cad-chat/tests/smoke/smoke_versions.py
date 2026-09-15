@@ -92,6 +92,13 @@ st3, hd3, body3 = get_with_headers(
     "/api/asset?file=" + urllib.parse.quote(ej.get("file", ""), safe="") + "&download=x.stl"
 )
 c.check("STL 可經 asset 下載", st3 == 200 and len(body3) > 1000)
+# PDF 四視圖工程圖(HLR 投影+包絡尺寸;驗 PDF magic bytes 而非只信 ok:true)
+ep = json.loads(post("/api/export", {"sessionId": sid, "ver": "v1", "format": "pdf"}))
+c.check("export pdf ok", ep.get("ok") is True, str(ep)[:200])
+pdf_abs = os.path.join(REPO, ep.get("file", "").replace("/", os.sep))
+pdf_head = open(pdf_abs, "rb").read(5) if os.path.exists(pdf_abs) else b""
+c.check("PDF 工程圖落盤且 %PDF 檔頭", pdf_head == b"%PDF-",
+        f"{ep.get('file')} head={pdf_head!r}")
 bad = post("/api/export", {"sessionId": sid, "ver": "v1", "format": "exe"})
 c.check("format 白名單擋掉 exe", "僅支援" in bad, bad[:120])
 bad2 = post("/api/export", {"sessionId": sid, "ver": "v99", "format": "stl"})

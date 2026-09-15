@@ -55,6 +55,8 @@ with sync_playwright() as p:
     c.check("畫布載入 v2 快照", any("versions%2Fv2" in u for u in reqs))
 
     # 切 v1 → 載入 v1 快照真檔;回退鈕與下載鈕出現
+    # (2026-08-25:時間軸多了「✎ 記教訓」——零 LLM 主線不會出現 agent 的教訓
+    #  是/否卡,那顆是唯一入口,所以 .version-dl 從 5 顆變 6 顆。)
     page.locator(".version-chip").first.click()
     page.wait_for_timeout(2500)
     c.check("切 v1 → 畫布請求 v1 快照(真舊檔)", any("versions%2Fv1" in u for u in reqs))
@@ -62,8 +64,12 @@ with sync_playwright() as p:
     c.check("非最新版 → 回退鈕出現", revert_btn.count() == 1 and "v1" in revert_btn.inner_text())
     dls = page.locator(".version-dl").all_inner_texts()
     c.check(
-        "下載鈕(STEP/STL/3MF/零件包)出現",
-        len(dls) == 4 and any("STEP" in t for t in dls) and any("零件包" in t for t in dls),
+        "下載鈕(STEP/STL/3MF/PDF 工程圖/零件包)+ 記教訓出現",
+        len(dls) == 6
+        and any("記教訓" in t for t in dls)
+        and any("STEP" in t for t in dls)
+        and any("PDF" in t for t in dls)
+        and any("零件包" in t for t in dls),
         str(dls),
     )
 
