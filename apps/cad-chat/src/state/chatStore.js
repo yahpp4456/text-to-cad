@@ -1,6 +1,7 @@
 // 頂層狀態(useReducer),鏡射設計稿 DCLogic.state。
 import { normalizeMode } from "../lib/chatModes.js";
 import { pendingClarifyFromItems } from "../lib/clarifyText.js";
+import { normalizeProjectBinding } from "../lib/projectState.js";
 
 export const initialState = {
   _seq: 0,
@@ -18,6 +19,10 @@ export const initialState = {
   // clarify 待答時視圖面板會整個讓位卸載,本地 state 一卸即丟草稿。
   // 暫態——RESTORE 不還原(跨重整重選一次範本即可,不為草稿加快照 schema)。
   cableForm: null,
+  // 專案綁定(「儲存」就地覆寫的目標;伺服端 session.project 的鏡射):
+  // {dir, savedVer, origin, sessionId} | null。dirty 由 lib/projectState 依 versions 現算,
+  // 不另存一份旗標。跨 session 殘留視為未綁定(SET_SESSION 換 id 即清)。
+  project: null,
   stageIdx: -1, // 驅動 StageStepper(D)
   items: [], // 對話 transcript
   // verified 由 server versionStamp 發(三態:undefined=未知,舊快照/opened 檔)
@@ -64,8 +69,18 @@ function patchTool(items, id, patch) {
 
 export function reducer(state, action) {
   switch (action.type) {
-    case "SET_SESSION":
-      return { ...state, sessionId: action.sessionId ?? state.sessionId };
+    case "SET_SESSION": {
+      const sessionId = action.sessionId ?? state.sessionId;
+      // 換了 session 就解除綁定(舊綁定對新 session 是死引用);open-project 回應會再 SET_PROJECT
+      return { ...state, sessionId, project: sessionId === state.sessionId ? state.project : null };
+    }
+
+    // 專案綁定(open-project / save-project 回應、開機 session-info 校正);null = 解除
+    case "SET_PROJECT":
+      return {
+        ...state,
+        project: normalizeProjectBinding(action.project, action.sessionId ?? state.sessionId),
+      };
 
     // 模式切換(切換器/開機還原/伺服端 session 事件校正);非法值收斂 design。
     case "SET_MODE":
@@ -412,6 +427,11 @@ export function reducer(state, action) {
           : { ...initialState.params },
         motion: s.motion?.dofs?.length ? s.motion : null,
         clarify: pendingClarify ? { id: `c_restored_${items.length}`, ...pendingClarify } : null,
+        // 專案綁定:只認同 session 的(舊快照無欄位 → null;開機由 session-info 校正重綁)
+        project: (() => {
+          const p = normalizeProjectBinding(s.project);
+          return p && p.sessionId && p.sessionId === (s.sessionId || null) ? p : null;
+        })(),
         stageIdx: versions.length ? 4 : -1,
         phase: versions.length ? "done" : "idle",
       };
@@ -427,6 +447,7 @@ export function reducer(state, action) {
         versions: [],
         activeVer: null,
         motion: null,
+        project: null, // 舊 session 的綁定對新 session 是死引用;open-project 回應再綁
         params: { ...initialState.params },
         // 換 session=換設計:舊 spec 卡標 stale(latestSpecItem 會跳過)——否則
         // 舊設計的「解析規格」面板浮在新專案上,「套用修正」會把無關鍵值以

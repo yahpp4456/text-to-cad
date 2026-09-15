@@ -277,3 +277,93 @@ test("library session mint→persist→重掛仍保留 library mode", async () =
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── 專案綁定(session.project)──
+test("project:persist → 重掛還原;probe 回 project 與 dirty(disk-only 與 live 皆然)", () => {
+  const id = freshId("proj");
+  const dir = makeDir(id);
+  try {
+    fs.writeFileSync(path.join(dir, "foo.py"), "PARAMS = {}\n");
+    persistSession({
+      workdir: dir,
+      version: 3,
+      lastName: "foo",
+      project: { dir: "cases/x", ver: 2, origin: "opened" },
+    });
+    // disk-only:Map 沒有這 id
+    const p0 = probeSessionOnDisk(id);
+    assert.deepEqual(p0.project, { dir: "cases/x", ver: 2, origin: "opened" });
+    assert.equal(p0.dirty, true); // version 3 > ver 2
+    const s = getOrCreateSession(id); // hydrate
+    assert.deepEqual(s.project, { dir: "cases/x", ver: 2, origin: "opened" });
+    // live:儲存後 ver 推進 → 不 dirty
+    s.project = { dir: "cases/x", ver: 3, origin: "opened" };
+    const p1 = probeSessionOnDisk(id);
+    assert.deepEqual(p1.project, { dir: "cases/x", ver: 3, origin: "opened" });
+    assert.equal(p1.dirty, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("project:垃圾綁定 → null;無欄位(舊 session.json)→ null;origin 非法收斂 saved", () => {
+  for (const [tag, raw] of [
+    ["bad-dir", { dir: "../x", ver: 1 }],
+    ["bad-ver", { dir: "x", ver: "nope" }],
+    ["neg-ver", { dir: "x", ver: -1 }],
+    ["string", "x"],
+  ]) {
+    const id = freshId(`pj_${tag}`);
+    const dir = makeDir(id);
+    try {
+      fs.writeFileSync(path.join(dir, "foo.py"), "PARAMS = {}\n");
+      fs.writeFileSync(
+        path.join(dir, "session.json"),
+        JSON.stringify({ mode: "design", version: 1, lastName: "foo", project: raw }),
+      );
+      assert.equal(getOrCreateSession(id).project, null, tag);
+      assert.equal(probeSessionOnDisk(id).project, null, tag);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const id = freshId("pj_legacy");
+  const dir = makeDir(id);
+  try {
+    fs.writeFileSync(path.join(dir, "foo.py"), "PARAMS = {}\n");
+    fs.writeFileSync(path.join(dir, "session.json"), JSON.stringify({ mode: "design", version: 1, lastName: "foo" }));
+    assert.equal(getOrCreateSession(id).project, null);
+    assert.equal(probeSessionOnDisk(id).dirty, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  const id2 = freshId("pj_origin");
+  const dir2 = makeDir(id2);
+  try {
+    fs.writeFileSync(path.join(dir2, "foo.py"), "PARAMS = {}\n");
+    persistSession({ workdir: dir2, version: 1, lastName: "foo", project: { dir: "x", ver: 1, origin: "weird" } });
+    assert.equal(getOrCreateSession(id2).project.origin, "saved");
+  } finally {
+    fs.rmSync(dir2, { recursive: true, force: true });
+  }
+});
+
+test("project:產物缺席(GC 殘缺)→ 綁定不還原、probe 也不回(沒有可儲存的東西)", () => {
+  const id = freshId("pj_gone");
+  const dir = makeDir(id);
+  try {
+    persistSession({
+      workdir: dir,
+      version: 2,
+      lastName: "foo", // foo.py 不存在
+      project: { dir: "x", ver: 1, origin: "saved" },
+    });
+    assert.equal(getOrCreateSession(id).project, null);
+    const p = probeSessionOnDisk(id);
+    assert.equal(p.hasGenerator, false);
+    assert.equal(p.project, null);
+    assert.equal(p.dirty, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -126,7 +126,7 @@
 .hdr-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px; /* 7 個項目:每 1px 間距 = 7px,右側群組與置中切換器只差幾十 px */
 }
 .status-pill {
   display: flex;
@@ -151,6 +151,40 @@
   font-size: 11px;
   letter-spacing: 1px;
   color: var(--text-muted);
+}
+/* 專案綁定 chip(Header):models/<dir> · ● 未儲存 / ✓ 已儲存 */
+.proj-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  font-family: var(--font-eyebrow);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  color: #5b6577;
+  padding: 5px 10px;
+  background: #fff;
+  border: 1px solid #e0e5ee;
+  clip-path: var(--chamfer-pill);
+}
+.proj-chip-dir {
+  max-width: 150px; /* 左側標題與置中切換器之間只有 ~220px:長目錄名截尾,全名在 title */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hdr-save[data-busy="true"] {
+  opacity: 0.6;
+}
+.proj-chip-state {
+  font-weight: 700;
+  white-space: nowrap;
+}
+.proj-chip[data-state="dirty"] .proj-chip-state {
+  color: var(--amber, #a06a00);
+}
+.proj-chip[data-state="saved"] .proj-chip-state {
+  color: var(--part);
 }
 .auth-banner {
   flex: none;

@@ -6,7 +6,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { paramShapeForSpec, resolveOpenMode, validateOpenParams } from "./middleware/project.mjs";
+import {
+  paramShapeForSpec,
+  resolveOpenMode,
+  shouldBindOnOpen,
+  validateOpenParams,
+} from "./middleware/project.mjs";
 
 // ── resolveOpenMode ──
 test("resolveOpenMode:設計鏈模式(design/cable)照收", () => {
@@ -99,4 +104,14 @@ test("paramShapeForSpec:L 鍵跟著層數增減,head_h 下限跟著層數走", (
   // 非 L 的鍵原樣保留
   assert.equal(down.keys.bottom_leg, 70);
   assert.deepEqual(down.ranges.width, { min: 50, max: 250, step: 2 });
+});
+
+// ── shouldBindOnOpen(開專案時要不要把 session 綁到來源目錄,供「儲存」就地覆寫)──
+test("shouldBindOnOpen:範本 / 帶參數或規格 / 不在可寫層 → 不綁;一般專案與案件 → 綁", () => {
+  const base = { isTemplate: false, hasParams: false, hasSpec: false, inWritableRoot: true };
+  assert.equal(shouldBindOnOpen(base), true);
+  assert.equal(shouldBindOnOpen({ ...base, isTemplate: true }), false); // CableShelf 開範本
+  assert.equal(shouldBindOnOpen({ ...base, hasParams: true }), false); // 填規格→直接生成
+  assert.equal(shouldBindOnOpen({ ...base, hasSpec: true }), false); // 改層數/帶型
+  assert.equal(shouldBindOnOpen({ ...base, inWritableRoot: false }), false); // per-user 從 fixtures 層開
 });

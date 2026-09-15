@@ -40,6 +40,29 @@ function str(v, fallback = "") {
   return typeof v === "string" ? v : fallback;
 }
 
+// 案件中繼的合併(save-project 兩路共用):
+//   prev=null(另存成新目錄)→ 全由 body 決定(與 2026-08-25 的寫法逐位相同,只多 updated);
+//   prev 有值(就地儲存 / 覆蓋既有案件)→ body 非空才覆蓋,否則沿用既有——
+//   就地儲存沒帶 customer/note 不會把客戶名清掉、created 不會被重設。
+export function buildCaseMeta(prev, body, { name, fallbackSourceTemplate = "", today } = {}) {
+  const p = prev && typeof prev === "object" ? prev : null;
+  const pick = (v, fallback, max) => {
+    const s = typeof v === "string" ? v.trim() : "";
+    return String(s || fallback || "").slice(0, max);
+  };
+  const day = today || new Date().toISOString().slice(0, 10);
+  return {
+    kind: "case",
+    family: "cable",
+    label: pick(body?.label, p?.label || name, 80),
+    customer: pick(body?.customer, p?.customer, 80),
+    note: pick(body?.note, p?.note, 400),
+    source_template: pick(body?.sourceTemplate, p?.source_template || fallbackSourceTemplate, 120),
+    created: pick(p?.created, day, 10),
+    updated: day,
+  };
+}
+
 // 單一目錄 → 工作台條目(不是範本/案件回 null)。absDir 必須已在沙箱內解析過。
 function entryFor(absDir, dirRel) {
   const name = pickGenerator(absDir);

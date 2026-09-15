@@ -95,6 +95,14 @@ try:
             and all(t["dir"] != CASE_DIR for t in j["templates"]), str(case)[:200])
     j2 = get_json("/api/templates?family=nosuchfamily")
     c.check("A: family 過濾生效", all(t["dir"] != TPL for t in j2["templates"]), str(j2)[:120])
+    # 開範本(無參數)→ 不綁定專案(範本禁止被「儲存」就地覆寫);未綁定 inPlace → 400 not_bound
+    op = json.loads(post("/api/open-project", {"dir": TPL, "mode": "cable"}, timeout=300))
+    c.check("A: 開範本 → project=None(範本不綁定)", op.get("ok") is True and op.get("project") is None,
+            str({k: op.get(k) for k in ("ok", "project", "error")}))
+    if op.get("sessionId"):
+        cleanup_dirs.append(os.path.join(CADCHAT, op["sessionId"]))
+        nb = post("/api/save-project", {"sessionId": op["sessionId"], "inPlace": True})
+        c.check("A: 未綁定 inPlace → 400 not_bound", "not_bound" in nb, nb[:120])
 
     # ================= B/C/D. UI =================
     with sync_playwright() as p:
@@ -208,6 +216,9 @@ try:
                         page.locator(".param .numfield input").evaluate_all("els => els.map(e => e.value)")))
         c.check("C: 滑桿值 = 表單送出的值(一次 build,不是先建範本再重生)",
                 vals.get("L1") == "780" and vals.get("mount_h") == "190", str(vals))
+        c.check("C: 帶參數生成 → 不綁定範本(無 chip、無儲存鈕;另存後才綁)",
+                page.locator(".proj-chip").count() == 0 and page.locator(".hdr-save").count() == 0
+                and page.locator(".hdr-btn", has_text="另存案件").count() == 1)
         # sessionId 取自續聊快照(有 debounce → 等它落盤,別在生成完當下就讀)
         page.wait_for_function(
             "() => (JSON.parse(localStorage.getItem('cadchat.session.v1')||'{}').sessionId||'').startsWith('s_')",
@@ -240,6 +251,34 @@ try:
         c.check("D: 另存寫出 case.json(客戶/日期/來源範本)",
                 meta.get("kind") == "case" and meta.get("customer") == "客戶乙"
                 and meta.get("created", "").count("-") == 2, str(meta)[:160])
+        # ── D2. 另存後綁定案件 → 改滑桿重生 v2 → ● 未儲存 → Ctrl+S 就地儲存 → ✓;case.json 客戶/日期保留 ──
+        chip = page.locator(".proj-chip")
+        c.check(f"D2: 另存案件後綁定 chip「models/{saved} · ✓ 已儲存」",
+                chip.count() == 1 and f"models/{saved}" in chip.inner_text() and "✓ 已儲存" in chip.inner_text(),
+                chip.inner_text() if chip.count() else "(no chip)")
+        first = page.locator(".paramsbar .param .numfield input").first  # L1
+        first.fill("785")
+        first.press("Tab")
+        page.wait_for_selector(".paramsbar-apply", timeout=5000)
+        page.locator(".paramsbar-apply").click()
+        page.wait_for_function(
+            "() => [...document.querySelectorAll('.version-id')].some(e => e.textContent.includes('v2'))",
+            timeout=300000)
+        page.wait_for_function(
+            "() => (document.querySelector('.proj-chip')?.textContent || '').includes('未儲存')", timeout=5000)
+        c.check("D2: 滑桿重生 v2 → chip ● 未儲存", "● 未儲存" in page.locator(".proj-chip").inner_text())
+        created0 = meta.get("created")
+        page.keyboard.press("Control+s")
+        page.wait_for_function(
+            "() => (document.querySelector('.proj-chip')?.textContent || '').includes('已儲存')", timeout=60000)
+        c.check("D2: Ctrl+S 就地儲存(免對話框)→ chip ✓ 已儲存",
+                "✓ 已儲存" in page.locator(".proj-chip").inner_text() and page.locator(".save-dialog").count() == 0)
+        meta2 = json.load(open(case_path, encoding="utf-8")) if os.path.isfile(case_path) else {}
+        c.check("D2: 就地儲存後 case.json 客戶/日期保留、多 updated",
+                meta2.get("customer") == "客戶乙" and meta2.get("created") == created0
+                and meta2.get("updated", "").count("-") == 2 and meta2.get("note") == "煙測另存", str(meta2)[:200])
+        gen_saved = open(os.path.join(REPO, "models", saved, f"{TPL}.py"), encoding="utf-8").read()
+        c.check("D2: 磁碟案件的產生器已是新值(L1=785)", '"L1": 785' in gen_saved, gen_saved[gen_saved.find("PARAMS"):][:80])
         page.wait_for_function(
             "(d) => window.__cadCableShelf && window.__cadCableShelf.counts().cases >= 2",
             arg=saved, timeout=15000)
@@ -247,8 +286,11 @@ try:
         page.locator(".cable-tab", has_text="案件").click()
         page.locator(f'.cable-card[data-dir="{saved}"] .fb-action', has_text="複製成新案").click()
         page.wait_for_selector(".cable-window", timeout=5000)
-        c.check("D: 複製成新案 → 表單以該案現值預填(780 而非範本 790)",
-                page.locator('.cable-field[data-key="L1"] input').input_value() == "780")
+        # D2 已把案件 L1 改成 785 並就地儲存 → 預填的是磁碟現值 785(不是另存當下的 780、
+        # 更不是範本的 790):證明複製成新案讀的是案件目錄現況
+        c.check("D: 複製成新案 → 表單以該案現值預填(785=就地儲存後,而非範本 790)",
+                page.locator('.cable-field[data-key="L1"] input').input_value() == "785",
+                page.locator('.cable-field[data-key="L1"] input').input_value())
         c.check("D: 表單標題標示複製成新案",
                 "複製成新案" in page.locator(".sweepwin-title").inner_text())
         print("== E. 改層數(結構重生)==")
@@ -305,6 +347,8 @@ try:
         keys = page.locator(".param-label").all_inner_texts()
         c.check("E: 滑桿是 3 層的鍵集(沒有幽靈鍵)",
                 "L3" in keys and "L4" not in keys, str(keys))
+        c.check("E: 結構重生 = 帶規格開範本 → 新 session 不綁定(chip 消失)",
+                page.locator(".proj-chip").count() == 0)
         c.check("E: 全程無 JS 錯誤", not errs, "; ".join(errs[:3]))
         browser.close()
 finally:

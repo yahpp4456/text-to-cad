@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { listWorkbench, readCaseMeta } from "./templates.mjs";
+import { buildCaseMeta, listWorkbench, readCaseMeta } from "./templates.mjs";
 
 const FAM = "tplsmoke"; // 專屬家族:與真 models/ 的 cable 隔離
 
@@ -146,4 +146,54 @@ test("listWorkbench:根不存在 → 空清單(不 throw)", () => {
   });
   assert.deepEqual(templates, []);
   assert.deepEqual(cases, []);
+});
+
+// ── buildCaseMeta(save-project 兩路共用的案件中繼合併)──
+test("buildCaseMeta:prev=null(另存新目錄)→ 全由 body 決定,created=today,多 updated", () => {
+  const m = buildCaseMeta(
+    null,
+    { label: "案 A", customer: "甲", note: "n", sourceTemplate: "cable_x_per_layer" },
+    { name: "case_a", today: "2026-09-15" },
+  );
+  assert.deepEqual(m, {
+    kind: "case",
+    family: "cable",
+    label: "案 A",
+    customer: "甲",
+    note: "n",
+    source_template: "cable_x_per_layer",
+    created: "2026-09-15",
+    updated: "2026-09-15",
+  });
+  // 缺欄位:label 退 name、source_template 退 fallback、其餘空字串
+  const m2 = buildCaseMeta(null, {}, { name: "case_b", fallbackSourceTemplate: "tpl", today: "2026-09-15" });
+  assert.equal(m2.label, "case_b");
+  assert.equal(m2.customer, "");
+  assert.equal(m2.source_template, "tpl");
+});
+
+test("buildCaseMeta:prev 有值(就地儲存)→ body 空不清掉客戶名/備註,created 保住,updated=today", () => {
+  const prev = {
+    kind: "case",
+    family: "cable",
+    label: "舊標",
+    customer: "甲",
+    note: "舊備註",
+    source_template: "tpl_x",
+    created: "2026-08-25",
+  };
+  const m = buildCaseMeta(prev, {}, { name: "case_a", today: "2026-09-15" });
+  assert.equal(m.label, "舊標");
+  assert.equal(m.customer, "甲");
+  assert.equal(m.note, "舊備註");
+  assert.equal(m.source_template, "tpl_x");
+  assert.equal(m.created, "2026-08-25");
+  assert.equal(m.updated, "2026-09-15");
+  // body 非空才覆蓋;空白字串視為沒給
+  const m2 = buildCaseMeta(prev, { customer: "乙", note: "   " }, { name: "case_a", today: "2026-09-15" });
+  assert.equal(m2.customer, "乙");
+  assert.equal(m2.note, "舊備註");
+  // slice 上限
+  const m3 = buildCaseMeta(prev, { note: "x".repeat(500) }, { name: "case_a", today: "2026-09-15" });
+  assert.equal(m3.note.length, 400);
 });

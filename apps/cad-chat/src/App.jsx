@@ -15,6 +15,7 @@ import VersionTimeline from "./components/versions/VersionTimeline.jsx";
 import { useChatStream } from "./hooks/useChatStream.js";
 import { composeCableSpecText } from "./lib/cableSpec.js";
 import { isDesignLike, normalizeMode } from "./lib/chatModes.js";
+import { isProjectDirty, projectChipLabel } from "./lib/projectState.js";
 import { latestSpecItem, pendingLessonOffer } from "./lib/clarifyText.js";
 import { DEMO_TIP } from "./lib/demo.js";
 import { apiUrl } from "@/lib/apiBase";
@@ -264,6 +265,9 @@ export default function App() {
   const [confirmBox, setConfirmBox] = useState(null); // 通用確認框(切模式/升級)
   const [lessonsOpen, setLessonsOpen] = useState(false);
   const [exporting, setExporting] = useState(null); // "v2:stl" | null(匯出中鎖鈕)
+  const [saving, setSaving] = useState(false); // 就地儲存進行中(Header 鈕文案/Ctrl+S 守衛)
+  const saveInFlightRef = useRef(false); // 雙擊/連按 Ctrl+S 守衛(state 更新有延遲)
+  const confirmedInPlaceRef = useRef(false); // 「開啟來的」專案首次就地儲存確認過(每頁一次)
   // 附件圖片(composer 暫態,刻意不進 reducer/localStorage 快照;選檔即上傳,
   // 送出時只帶輕量 rel)。status: uploading | ready | error。
   // 附件佇列(圖片+STEP 共用):{id, kind:"image"|"step", name, status, rel, url}
@@ -284,6 +288,35 @@ export default function App() {
   // server 端 demoGuard 對應端點回 403;前端禁用只是 UX,不是安全邊界。
   // health 未回前 demo=false:入口短暫可用,點了也被 403 擋。
   const demo = !!health?.demo;
+
+  // ── 專案綁定 / 未儲存 ──
+  // dirty = 最新生成版 > 上次儲存版(純函數 lib/projectState;跨 session 殘留視為未綁定)。
+  const projectDirty = useMemo(
+    () => isProjectDirty(state.project, state.versions, state.sessionId),
+    [state.project, state.versions, state.sessionId],
+  );
+  const projectChip = useMemo(
+    () => projectChipLabel(state.project, state.versions, state.sessionId),
+    [state.project, state.versions, state.sessionId],
+  );
+  // 會丟掉工作區的動作(新對話/切模式/中途開另一專案/用範本重生)前的守衛:綁定專案且
+  // 有未儲存變更 → 樣式化確認框;未綁定(從沒存過)不打擾,維持現在的輕量感。
+  const confirmDiscardThen = useCallback(
+    (what, fn) => {
+      if (!projectDirty) {
+        fn();
+        return;
+      }
+      setConfirmBox({
+        eyebrow: "UNSAVED · 尚未儲存",
+        body: `models/${state.project?.dir} 有未儲存的變更(最新版尚未寫回專案目錄)。仍要${what}?工作區檔案會在磁碟保留一段時間,但不會回到專案目錄。`,
+        actionLabel: `捨棄變更並${what}`,
+        accent: "var(--amber)",
+        onConfirm: fn,
+      });
+    },
+    [projectDirty, state.project],
+  );
 
   // 模式偏好:開機還原切換器位置(session 快照的 RESTORE 之後會以快照 mode 蓋過,
   // 兩者一致——快照存在即上次也在那個模式);之後每次變動回寫。
@@ -568,6 +601,8 @@ export default function App() {
           opts.onFail?.(j.error || "開啟專案失敗");
           return null;
         }
+        // 專案綁定(伺服端依範本/帶參數/可寫層規則裁定;null = 未綁定只有另存)
+        dispatch({ type: "SET_PROJECT", project: j.project || null, sessionId: j.sessionId });
         if (j.motion?.dofs?.length) {
           dispatch({ type: "SET_MOTION", motion: { name: j.name, dofs: j.motion.dofs } });
         }
@@ -969,7 +1004,9 @@ export default function App() {
         if (j.ok) {
           setSaveOpen(false);
           setShelfRefresh((n) => n + 1); // 工作台「案件」頁籤立刻看到新案
-          notify(`已另存為 models/${j.dir}/,之後可從「開啟檔案」載回續改。`);
+          // 另存後綁定到新名稱:之後「儲存」/Ctrl+S 直接寫回 models/<dir>
+          dispatch({ type: "SET_PROJECT", project: j.project || null, sessionId: state.sessionId });
+          notify(`已另存為 models/${j.dir}/,之後按「儲存」(Ctrl+S)直接寫回這裡。`);
           return { ok: true };
         }
         if (j.error === "exists") return { ok: false, exists: true };
@@ -1008,7 +1045,9 @@ export default function App() {
 
   // 新對話:斷開 session、前端狀態全清(不必重新整理頁面),續聊快照一併作廢。
   // mode 由 reducer RESET 保留(新對話沿用當前模式)。
-  const newChat = useCallback(() => {
+  // resetChat = 原始動作(切模式/升級/用零件三個既有確認框內部呼叫它,不再疊一層確認);
+  // newChat = Header「＋ 新對話」入口,綁定專案且有未儲存變更時先確認。
+  const resetChat = useCallback(() => {
     if (state.running) return;
     setPendingFiles([]); // 附件屬於舊 session(rel 對新 session 無效);遲到的上傳回應 no-op
     resetSession();
@@ -1023,6 +1062,10 @@ export default function App() {
       window.history.replaceState(null, "", window.location.pathname);
     }
   }, [state.running, resetSession]);
+  const newChat = useCallback(() => {
+    if (state.running) return;
+    confirmDiscardThen("開新對話", resetChat);
+  }, [state.running, confirmDiscardThen, resetChat]);
 
   // 模式切換(草模/設計/零件庫):mode 是 session 出生時的恆定屬性——已有內容就出
   // 樣式化確認框(非原生 confirm)後開新對話;還沒開聊(含只上傳過圖的處女
@@ -1039,7 +1082,9 @@ export default function App() {
         next === "sketch" ? "草模" : next === "library" ? "零件庫" : next === "cable" ? "無塵電纜" : "設計";
       setConfirmBox({
         eyebrow: `SWITCH MODE · 切換到「${name}」`,
-        body: "切換模式會開一個新對話:目前的對話與畫布會清空,已產出的檔案仍保留在磁碟。",
+        body:
+          (projectDirty ? `models/${state.project?.dir} 有未儲存的變更,切換前請先儲存。` : "") +
+          "切換模式會開一個新對話:目前的對話與畫布會清空,已產出的檔案仍保留在磁碟。",
         actionLabel: `切換到「${name}」`,
         accent:
           next === "sketch"
@@ -1050,12 +1095,12 @@ export default function App() {
                 ? "var(--cable)"
                 : "var(--design)",
         onConfirm: () => {
-          newChat();
+          resetChat();
           dispatch({ type: "SET_MODE", mode: next });
         },
       });
     },
-    [state.running, state.mode, state.items.length, state.versions.length, newChat],
+    [state.running, state.mode, state.items.length, state.versions.length, resetChat, projectDirty, state.project],
   );
 
   // 草模 → 正式設計(升級路徑):切設計模式開新對話,把場景規格摘要 prefill 進
@@ -1090,13 +1135,13 @@ export default function App() {
           } catch {
             /* fetch 失敗用降級摘要 */
           }
-          newChat();
+          resetChat();
           dispatch({ type: "SET_MODE", mode: "design" });
           dispatch({ type: "SET_PREFILL", text: specText });
         },
       });
     },
-    [state.running, newChat],
+    [state.running, resetChat],
   );
 
   // 可另存 = 這條 session 產過東西(開檔看圖的 o* 版本不算,那本來就在 models/ 裡;
@@ -1115,6 +1160,121 @@ export default function App() {
   const restoreDoneRef = useRef(false);
   const stateRef = useRef(state); // 給開機還原的 async 回呼讀「當下」狀態(closure 是舊的)
   stateRef.current = state;
+
+  // ── 儲存(就地覆寫綁定的專案目錄)──
+  const canSaveInPlace = canSave && !!projectChip;
+  const saveInPlace = useCallback(async () => {
+    const st = stateRef.current;
+    if (!canSaveInPlace || saving || saveInFlightRef.current) return;
+    if (st.running || st.pending || exporting || demo) return;
+    const run = async () => {
+      saveInFlightRef.current = true;
+      setSaving(true);
+      try {
+        const r = await fetch(apiUrl("/api/save-project"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            sessionId: st.sessionId,
+            inPlace: true, // 目標由伺服端綁定決定(session.project.dir),不送 name
+            sourceTemplate: st.cableForm?.sourceTemplate || undefined,
+          }),
+        });
+        const j = await r.json();
+        if (j.ok) {
+          // savedVer 以伺服端回應為準(滑桿重生的 version 事件可能還在路上)
+          dispatch({ type: "SET_PROJECT", project: j.project || null, sessionId: st.sessionId });
+          setShelfRefresh((n) => n + 1);
+          notify(`已儲存到 models/${j.dir}/(v${j.project?.ver ?? "?"})。`);
+          return;
+        }
+        if (j.error === "not_bound") {
+          setSaveOpen(true); // 伺服端說沒綁定 → 退成另存
+          return;
+        }
+        notify(j.message || j.error || "儲存失敗", true);
+      } catch {
+        notify("無法連線到本機伺服器", true);
+      } finally {
+        saveInFlightRef.current = false;
+        setSaving(false);
+      }
+    };
+    // 「開啟來的」專案第一次就地儲存先確認一次(dev 的 fixtures 與 models 同根,tracked
+    // fixture 開了就綁得到——這是防手滑蓋掉 fixture 的唯一閘);另存來的綁定不問。
+    if (st.project?.origin === "opened" && !confirmedInPlaceRef.current) {
+      setConfirmBox({
+        eyebrow: "SAVE · 儲存到專案目錄",
+        body: `這會原地覆蓋 models/${st.project.dir}/(你從這裡開啟的專案;只換產生器與其產物,其他檔案保留)。此頁之後按儲存不再詢問。`,
+        actionLabel: "覆蓋並儲存",
+        accent: "var(--design)",
+        onConfirm: () => {
+          confirmedInPlaceRef.current = true;
+          run();
+        },
+      });
+      return;
+    }
+    await run();
+  }, [canSaveInPlace, saving, exporting, demo, notify]);
+  const saveInPlaceRef = useRef(null);
+  saveInPlaceRef.current = saveInPlace;
+
+  // 中途開另一專案(FileBrowser 專案列 / CableShelf「開啟」)會換 session:先過未儲存守衛
+  const openProjectGuarded = useCallback(
+    (dirRel, opts = {}) => {
+      confirmDiscardThen("開啟另一個專案", () => {
+        openProject(dirRel, opts);
+      });
+    },
+    [confirmDiscardThen, openProject],
+  );
+
+  // Ctrl/Cmd+S:綁定 → 就地儲存;未綁定但可另存 → 開另存對話框(永不是死鍵)。
+  // 設計鏈模式下一律 preventDefault(壓掉瀏覽器「另存網頁」);對話框/overlay 開著、
+  // 回合進行中、匯出中、demo 都略過。既有 keydown(ConfirmDialog Enter/Esc、Canvas3D Esc、
+  // Composer Enter)都不吃 Ctrl+S。
+  const uiRef = useRef({});
+  uiRef.current = {
+    saveOpen,
+    confirmBox,
+    lessonBox,
+    browserOpen,
+    lessonsOpen,
+    exporting,
+    demo,
+    saving,
+    canSave,
+    canSaveInPlace,
+  };
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      if (String(e.key).toLowerCase() !== "s") return;
+      const st = stateRef.current;
+      if (!isDesignLike(st.mode)) return;
+      e.preventDefault();
+      if (e.repeat) return;
+      const ui = uiRef.current;
+      if (ui.demo || ui.saving || ui.exporting || st.running || st.pending) return;
+      if (ui.saveOpen || ui.confirmBox || ui.lessonBox || ui.browserOpen || ui.lessonsOpen) return;
+      if (ui.canSaveInPlace) saveInPlaceRef.current?.();
+      else if (ui.canSave) setSaveOpen(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // 關分頁/重整:綁定專案且有未儲存變更才攔(瀏覽器固定文案);未綁定不打擾。
+  useEffect(() => {
+    if (!projectDirty) return undefined;
+    const onBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [projectDirty]);
   useEffect(() => {
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     persistTimerRef.current = setTimeout(() => {
@@ -1135,6 +1295,7 @@ export default function App() {
             canvas: state.canvas,
             params: state.params,
             motion: state.motion,
+            project: state.project,
             savedAt: Date.now(),
           }),
         );
@@ -1153,6 +1314,7 @@ export default function App() {
     state.canvas,
     state.params,
     state.motion,
+    state.project,
   ]);
 
   // 還原:開機一次;?glb= 預覽優先不還原;session-info 驗證產物還在才回灌
@@ -1200,6 +1362,8 @@ export default function App() {
               : info.hasGenerator;
         if (info.exists && (!hasGenVersions || artifactAlive)) {
           dispatch({ type: "RESTORE", snapshot: snap });
+          // 專案綁定以伺服端為準(session.json 有落盤;快照可能落後 500ms throttle)
+          dispatch({ type: "SET_PROJECT", project: info.project || null, sessionId: snap.sessionId });
           setSessionId(snap.sessionId);
           notify(`已接續上次對話${info.lastName ? `(${info.lastName})` : ""}。`);
         } else {
@@ -1278,26 +1442,29 @@ export default function App() {
 
   // 直接生成(零 LLM):open-project 帶 params,一次同步 build 就是要的配置。
   // in-flight 守衛:pending/running 期間不受理(連點、雙分頁各自送會並行 build)。
-  const generateFromCableForm = useCallback(async () => {
+  const generateFromCableForm = useCallback(() => {
     const f = stateRef.current.cableForm;
     if (!f || stateRef.current.pending || stateRef.current.running) return;
-    dispatch({ type: "PATCH_CABLE_FORM", patch: { error: null } });
-    dispatch({ type: "SET_STAGE", index: 2 }); // 生成
-    const vals = Object.entries(f.values)
-      .map(([k, v]) => `${k}=${v}`)
-      .join("、");
-    const sid = await openProject(f.dir, {
-      params: f.values,
-      // 只有真的動過結構才送 spec(送了就走 rewriteSpec 整塊改寫三個區塊)
-      spec: f.specDirty && f.spec ? f.spec : undefined,
-      note: `以範本「${f.label}」生成:${vals}`,
-      onFail: (msg) => dispatch({ type: "PATCH_CABLE_FORM", patch: { error: msg } }),
+    // 生成會換 session:目前綁定的專案若有未儲存變更,先確認(未綁定直接過)
+    confirmDiscardThen("用範本生成新設計", async () => {
+      dispatch({ type: "PATCH_CABLE_FORM", patch: { error: null } });
+      dispatch({ type: "SET_STAGE", index: 2 }); // 生成
+      const vals = Object.entries(f.values)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("、");
+      const sid = await openProject(f.dir, {
+        params: f.values,
+        // 只有真的動過結構才送 spec(送了就走 rewriteSpec 整塊改寫三個區塊)
+        spec: f.specDirty && f.spec ? f.spec : undefined,
+        note: `以範本「${f.label}」生成:${vals}`,
+        onFail: (msg) => dispatch({ type: "PATCH_CABLE_FORM", patch: { error: msg } }),
+      });
+      if (sid) {
+        dispatch({ type: "SET_CABLE_FORM", form: null }); // 成功才收表單(失敗留著改值重來)
+        dispatch({ type: "SET_STAGE", index: 4 }); // 驗證已在 open-project 內跑完 → 呈現
+      }
     });
-    if (sid) {
-      dispatch({ type: "SET_CABLE_FORM", form: null }); // 成功才收表單(失敗留著改值重來)
-      dispatch({ type: "SET_STAGE", index: 4 }); // 驗證已在 open-project 內跑完 → 呈現
-    }
-  }, [openProject]);
+  }, [openProject, confirmDiscardThen]);
 
   // 給 AI 確認:規格組成「電纜規格:」契約文字預填 composer(先過目再送,不先 build)
   const askAiFromCableForm = useCallback(() => {
@@ -1348,7 +1515,7 @@ export default function App() {
         actionLabel: "切換並匯入",
         accent: "var(--part)",
         onConfirm: async () => {
-          newChat();
+          resetChat();
           dispatch({ type: "SET_MODE", mode: "design" });
           await importFile(p.rel, {
             sessionId: null, // 強制新設計 session(舊閉包是零件庫 session)
@@ -1357,7 +1524,7 @@ export default function App() {
         },
       });
     },
-    [state.running, newChat, importFile],
+    [state.running, resetChat, importFile],
   );
   // 需要使用者作答的介面一律在視圖(聊天卡=被動紀錄):
   // 最新 spec 卡 → 視圖 SpecPanel(規格修正);最舊未答 lesson_offer → 視圖是/否面板。
@@ -1391,6 +1558,9 @@ export default function App() {
         demo={demo}
         onOpenFiles={() => setBrowserOpen(true)}
         onSaveProject={canSave ? () => setSaveOpen(true) : null}
+        onSave={canSaveInPlace ? saveInPlace : null}
+        saving={saving}
+        project={projectChip}
         onNewChat={newChat}
         onOpenLessons={() => setLessonsOpen(true)}
         running={state.running}
@@ -1405,7 +1575,10 @@ export default function App() {
       />
       <SaveDialog
         open={saveOpen}
-        defaultName={state.canvas.name}
+        // 綁定了就預填綁定名(單層目錄;巢狀名會被單段 sanitize 誤導,退回 canvas 名)
+        defaultName={
+          state.project?.dir && !state.project.dir.includes("/") ? state.project.dir : state.canvas.name
+        }
         caseMode={state.mode === "cable"}
         onClose={() => setSaveOpen(false)}
         onSave={saveProject}
@@ -1420,7 +1593,7 @@ export default function App() {
         }}
         onOpenProject={(rel) => {
           setBrowserOpen(false);
-          openProject(rel);
+          openProjectGuarded(rel);
         }}
       />
       {needAuth && <AuthBanner warnings={health.warnings} />}
@@ -1467,7 +1640,7 @@ export default function App() {
           {state.mode === "cable" && (
             <CableShelf
               onPickTemplate={pickCableTemplate}
-              onOpenProject={(it) => openProject(it.dir)}
+              onOpenProject={(it) => openProjectGuarded(it.dir)}
               onPreview={(it) => openModelFile(`${it.dir}/${it.name}.step`)}
               refreshSignal={`${shelfRefresh}:${state.versions.length}`}
               autoCollapse={state.versions.length > 0}

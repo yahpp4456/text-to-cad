@@ -41,12 +41,57 @@ meta1 = json.load(open(os.path.join(snap1, "meta.json"), encoding="utf-8"))
 c.check("meta.json name 正確", meta1.get("name") == name, str(meta1))
 c.check("session.json 已落盤", os.path.exists(os.path.join(wd, "session.json")))
 
+
+def session_info(s):
+    return json.loads(get_with_headers(f"/api/session-info?id={s}")[2].decode("utf-8"))
+
+
+# ── 1b. 專案綁定:從 models/<dir> 開啟 → session 綁到來源(ver=1、origin=opened)──
+c.check("open-project 回 project 綁定(dir/ver=1/origin=opened)",
+        j.get("project") == {"dir": "motorized_linear_stage", "ver": 1, "origin": "opened"},
+        str(j.get("project")))
+info = session_info(sid)
+c.check("session-info 帶 project 且 dirty=False",
+        (info.get("project") or {}).get("dir") == "motorized_linear_stage" and info.get("dirty") is False,
+        str(info)[:200])
+
 # ── 2. 弄髒工作基準(fixture 產生器無 PARAMS,免 LLM 的參數重生不可用;直接動頂層檔) ──
 py1 = sha(os.path.join(snap1, f"{name}.py"))
 top_py = os.path.join(wd, f"{name}.py")
 with open(top_py, "a", encoding="utf-8") as f:
     f.write("\n# smoke marker: dirtied after v1\n")
 c.check("頂層 py 已被弄髒(≠ v1 快照)", sha(top_py) != py1)
+
+# ── 2b. 另存(對話框路徑)→ 綁定換成新名;uploads/ 與 versions/ 不帶出去 ──
+# (在回退之前另存:handoff 給 smoke_restore 的版本序要維持 v1/v2,回退留給 §3)
+os.makedirs(os.path.join(wd, "uploads"), exist_ok=True)
+with open(os.path.join(wd, "uploads", "ref.png"), "wb") as f:
+    f.write(b"PNG")
+sj = json.loads(post("/api/save-project", {"sessionId": sid, "name": "cadchat_snap_test", "overwrite": True}))
+c.check("save-project ok", sj.get("ok") is True, str(sj)[:160])
+saved = os.path.join(REPO, "models", "cadchat_snap_test")
+c.check("存出的專案無 versions/", not os.path.exists(os.path.join(saved, "versions")))
+c.check("存出的專案無 uploads/(聊天附件不進專案目錄)", not os.path.exists(os.path.join(saved, "uploads")))
+c.check("存出的專案有產生器", os.path.exists(os.path.join(saved, f"{name}.py")))
+c.check("另存後綁定換成新名(ver=1、origin=saved)",
+        sj.get("project") == {"dir": "cadchat_snap_test", "ver": 1, "origin": "saved"}, str(sj.get("project")))
+c.check("另存回 inPlace=False", sj.get("inPlace") is False, str(sj.get("inPlace")))
+c.check("另存走純 rename(無退路)", (sj.get("swap") or {}).get("swapped") is True, str(sj.get("swap")))
+info = session_info(sid)
+c.check("另存後 session-info dirty=False、ver=1",
+        info.get("dirty") is False and (info.get("project") or {}).get("ver") == 1, str(info)[:200])
+# 目的地放「非產生器家族」的檔(tracked .dxf / PDF 圖面 / 子資料夾)與舊產生器家族殘檔:
+# 之後的就地儲存要保留前者、清掉後者(合併語意,不是清空)
+with open(os.path.join(saved, "keep.dxf"), "w", encoding="utf-8") as f:
+    f.write("tracked dxf")
+with open(os.path.join(saved, "drawing.pdf"), "wb") as f:
+    f.write(b"%PDF-")
+os.makedirs(os.path.join(saved, "20260101_fix"), exist_ok=True)
+with open(os.path.join(saved, "20260101_fix", "a.txt"), "w", encoding="utf-8") as f:
+    f.write("x")
+for fn in ("old_gen.py", "old_gen.step"):
+    with open(os.path.join(saved, fn), "w", encoding="utf-8") as f:
+        f.write("# stale generator family\n")
 
 # ── 3. 回退 v1 → 產生 v2 = v1 複本(標記應消失) ──
 rj = json.loads(post("/api/revert-version", {"sessionId": sid, "ver": "v1"}))
@@ -63,12 +108,32 @@ c.check("v2 快照存在", os.path.exists(os.path.join(wd, "versions", "v2", "me
 r404 = post("/api/revert-version", {"sessionId": sid, "ver": "v99"})
 c.check("v99 無快照 → 誠實錯誤", "沒有快照" in r404, r404[:120])
 
-# ── 4. save-project 不挾 versions/ ──
-sj = json.loads(post("/api/save-project", {"sessionId": sid, "name": "cadchat_snap_test", "overwrite": True}))
-c.check("save-project ok", sj.get("ok") is True, str(sj)[:120])
-saved = os.path.join(REPO, "models", "cadchat_snap_test")
-c.check("存出的專案無 versions/", not os.path.exists(os.path.join(saved, "versions")))
-c.check("存出的專案有產生器", os.path.exists(os.path.join(saved, f"{name}.py")))
+# ── 4. 回退 = 版本 +1 → 未儲存;「儲存」(inPlace)寫回綁定目錄(合併語意)──
+info = session_info(sid)
+c.check("回退後 session-info dirty=True(version 2 > ver 1)",
+        info.get("dirty") is True and info.get("version") == 2, str(info)[:200])
+ip = json.loads(post("/api/save-project", {"sessionId": sid, "inPlace": True, "name": "should_be_ignored"}))
+c.check("inPlace 儲存 ok", ip.get("ok") is True, str(ip)[:200])
+c.check("inPlace 目標由伺服端綁定決定(忽略 body.name)",
+        ip.get("dir") == "cadchat_snap_test" and ip.get("inPlace") is True, str(ip)[:160])
+c.check("inPlace 後 ver 推進到 2、origin 不變",
+        ip.get("project") == {"dir": "cadchat_snap_test", "ver": 2, "origin": "saved"}, str(ip.get("project")))
+c.check("磁碟產生器 == v1 快照(回退後就地儲存寫的是乾淨版,另存時的標記版被換掉)",
+        sha(os.path.join(saved, f"{name}.py")) == py1)
+c.check("就地儲存保留非家族檔(dxf / pdf / 子資料夾)",
+        all(os.path.exists(os.path.join(saved, f))
+            for f in ("keep.dxf", "drawing.pdf", os.path.join("20260101_fix", "a.txt"))))
+c.check("就地儲存清掉舊產生器家族殘檔",
+        not os.path.exists(os.path.join(saved, "old_gen.py")) and not os.path.exists(os.path.join(saved, "old_gen.step")))
+c.check("就地儲存仍不挾 versions/ 與 uploads/",
+        not os.path.exists(os.path.join(saved, "versions")) and not os.path.exists(os.path.join(saved, "uploads")))
+info = session_info(sid)
+c.check("inPlace 後 session-info dirty=False", info.get("dirty") is False, str(info)[:200])
+c.check("models/ 下無 .cadchat_snap_test.saving-*/.old-* 殘留",
+        not [n for n in os.listdir(os.path.join(REPO, "models")) if n.startswith(".cadchat_snap_test.")])
+# 負案:死 session → 誠實 400(未綁定 session 的 inPlace 400 由 smoke_cable_workbench 開範本覆蓋)
+bad_ip = post("/api/save-project", {"sessionId": "s_gone_xxxxxx", "inPlace": True})
+c.check("inPlace 對不存在的 session → 誠實 400", "沒有可保存" in bad_ip, bad_ip[:120])
 shutil.rmtree(saved, ignore_errors=True)
 
 # ── 5. 下載:asset ?download= header ──
@@ -264,6 +329,7 @@ hand = {
     "v2": v2,
     "present2": rj.get("present"),
     "params": rj.get("params") or [],
+    "project": ip.get("project"),  # {dir, ver:2, origin}:restore 煙測驗 chip 兩態
 }
 json.dump(hand, open(out_path("versions_session.json"), "w", encoding="utf-8"))
 

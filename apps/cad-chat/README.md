@@ -105,15 +105,20 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
     裸 STEP 按需以 `--kind` 轉隱藏 topology GLB)。
   - `POST /api/import` / `POST /api/open-project`:匯入元件進 session `imported/`、
     開既有專案(複製樹到新 session + 同步重建 rehydrate)。
-  - `POST /api/save-project`(`{sessionId,name,overwrite?}`):把 session 產物存成
-    `models/<name>/`(與 open-project 互為讀寫方向;已存在回 `error:"exists"` 待確認覆蓋)。
+  - `POST /api/save-project`(`{sessionId,name?,overwrite?,inPlace?}`):把 session 產物存成
+    `models/<name>/`(與 open-project 互為讀寫方向)。另存路徑:已存在回 `error:"exists"`
+    待確認覆蓋、overwrite = 整目錄取代;**儲存路徑 `inPlace:true`**:目標 = session 綁定的
+    `project.dir`(忽略 body.name),未綁定 400 `not_bound`、範本目錄 409、合併語意(只換
+    產生器家族檔,其餘保留;case.json 合併)。回 `{ok,dir,inPlace,project}`。兩路都走暫存→
+    換名(`cad/projectTree.mjs`),目的地在完整替代品就位前絕不消失。見「儲存 vs 另存」節。
   - `POST /api/revert-version`(`{sessionId,ver}`):回退到 vK 快照——複回頂層+重建驗證,
     產生新版 v{N+1}=vK 複本(歷史線性)。
   - `POST /api/validate`(`{sessionId}`):對 session 頂層工作基準跑「完整」幾何驗證(含運動掃掠),
     不重新產生——版本上的「✓ 精算此版」用:快速迭代後一鍵補驗,通過後匯出免等閘。
   - `POST /api/validate-ver`(`{sessionId,ver?}`):匯出閘單獨入口(STEP 直下載把關;
     memo 命中秒回,未驗過自動完整驗證)。
-  - `GET /api/session-info?id=`:唯讀探測 session 是否還救得回來(前端開機還原用)。
+  - `GET /api/session-info?id=`:唯讀探測 session 是否還救得回來(前端開機還原用);
+    另回 `project`(綁定)與 `dirty`(版本 > 上次儲存版)。
 - **Agent**(`src/server/agent/`):`query()` 依認證模式傳憑證(`agentEnv`),掛 in-process MCP 工具
   (`emit_*` 推進 UI + `cad_import/cad_build/cad_validate/cad_source_part/cad_present/
   cad_measure/cad_align/cad_export` 實跑 `.venv` 的 `scripts/step`、`scripts/inspect`、
@@ -1203,6 +1208,57 @@ open-project 再送;`smoke_open_dedupe.py` 已隨開檔 option C 退場,不在 O
   `/api/save-project` 存成 `models/<name>/`,之後可從「開啟檔案」載回續改;
   「＋ 新對話」一鍵清空對話/畫布/版本並斷開 session(不必重新整理頁面)。
   對話文字紀錄不落盤(跨重整續聊為後續項目)。
+
+## 儲存 vs 另存:專案綁定 + 就地儲存 + 未儲存指示(2026-09-15)
+
+使用者回饋「v2 之後好像沒存、只有另存」——查證:每版其實都自動快照到隱形的
+`models/.cadchat/<session>/versions/vN/`(7 天 GC、30 版上限),但確實沒有「儲存」:
+開舊專案後改出的 v2/v3 永遠不寫回 `models/<dir>/`,另存也不記得存過哪。現在:
+
+- **session 綁定專案目錄**(`session.project = {dir, ver, origin}`,落 session.json;
+  `/api/open-project`、`/api/save-project`、`/api/session-info` 都回它):從 `models/<dir>`
+  開啟 → 綁來源(`origin:"opened"`, ver=1);另存成功 → 綁新名(`origin:"saved"`)。
+  **不綁**三種:範本(`TEMPLATE_META` 且無 case.json——案件的 .py 也帶 TEMPLATE_META,
+  只看它不夠)、帶 params/spec 開(「填規格→直接生成」「複製成新案」,綁了就是蓋回來源)、
+  來源不在本人可寫層(per-user 從 fixtures 層開;要 fork 走另存)。純函數
+  `shouldBindOnOpen`(project.mjs)+ `validateProjectDir`(1–3 段、每段 `[a-z0-9_-]`;
+  巢狀 `cases/x` 合法,就地路徑逐段驗後 `resolveInside`,**不走 sanitizeName**——那支會把
+  `/` 拍掉)。
+- **Header 專案 chip**(`.proj-chip`):`models/<dir> · ✓ 已儲存` / `● 未儲存`;dirty =
+  最新「生成」版本號 > 上次儲存版(`lib/projectState.js`;o*/p* 檢視版不算;回退也 +1 版
+  所以回退 = dirty)。未綁定不出 chip,只有「另存」。
+- **「⤓ 儲存」鈕 + Ctrl/Cmd+S**:綁定 → `save-project {inPlace:true}` 一鍵寫回,免對話框;
+  savedVer 以伺服端回應為準(滑桿重生的 version SSE 可能還在路上,前端自記會永遠
+  「未儲存」)。未綁定但可另存 → Ctrl+S 開另存對話框(永不是死鍵)。設計鏈模式下
+  一律 preventDefault(壓掉瀏覽器「另存網頁」);對話框/overlay 開著、回合中、匯出中、
+  demo 都略過。**首次**就地儲存且綁定來自「開啟」→ 一次性 ConfirmDialog(dev 的
+  fixtures 與 models 同根,tracked fixture 開了就綁得到,這是防手滑蓋 fixture 的唯一閘;
+  另存來的綁定不問)。另存對話框預填綁定名(單層目錄時)。
+- **寫入一律暫存→換名**(`cad/projectTree.mjs` `writeProjectTreeAtomic`):舊做法 rmSync
+  再複製,複製中途炸掉(磁碟滿、Windows EPERM:viewer 串流該目錄 GLB)= 唯一存檔消失。
+  現在先在同層 `.<name>.saving-*` 組完整樹(點開頭,檔案列表/工作台都隱藏),再 rename
+  `dst → .<name>.old-*`、`tmp → dst`;rename EPERM 重試 5×200ms,仍失敗退 rmSync(maxRetries)
+  + copy-over(終態仍完整)。**就地 = 合併**:只換「產生器家族」(`<stem>.py/.step/.asm.json`
+  + 隱藏衍生 + `imported/`,stems 取目的地∪來源所有 .py,改名不留舊家族),tracked
+  `.dxf`/PDF 圖面/子資料夾保留;cable 的 `case.json` 走 `buildCaseMeta` 合併(沒帶
+  customer/note 沿用既有、`created` 保住、多 `updated`)。另存 overwrite 仍是整目錄取代。
+  `uploads/` 新加進跳過清單(聊天附件不進專案目錄)。
+- **伺服端閘**:`session.busy` 409 照舊;`_geomDirty || childProcs.size>0`(上輪被中斷/
+  build 了沒 present)409「工作基準與最新版本不一致」;成功後 `persistSession`。
+- **未儲存提醒**:綁定且 dirty → 「＋ 新對話」/ 切模式 / 中途開另一專案(FileBrowser、
+  CableShelf)/ 用範本重生 → 樣式化 `ConfirmDialog`(`confirmDiscardThen`);關分頁
+  `beforeunload`。未綁定不打擾。`newChat` 拆成 `resetChat`(既有三個確認框內部呼叫)+
+  守衛版。
+- **前端狀態**:`state.project = {dir, savedVer, origin, sessionId}`(`SET_PROJECT`;
+  `SET_SESSION` 換 id / `CLEAR_WORKSPACE` / `RESET` 清;RESTORE 只認同 session;
+  localStorage 快照增欄不 bump 鍵;開機以 `session-info.project` 校正)。
+- 測試:L1 `projectState.test.js`、`projectTree.test.js`、`templates.test.js`(buildCaseMeta)、
+  `sessions.persist.test.js`(project 往返/垃圾/產物缺席)、`project.openmode.test.js`
+  (shouldBindOnOpen)、`chatStore.test.js`;L3 `smoke_versions.py`(§1b 綁定/§2b 另存
+  換綁/§4 回退 dirty → inPlace 合併)、`smoke_restore.py`(chip 三態、Ctrl+S 攔
+  save-project、新對話確認框、beforeunload)、`smoke_open_project.py`(chip、中途開
+  專案確認框)、`smoke_cable_workbench.py`(開範本不綁、未綁 inPlace 400、另存案件後
+  Ctrl+S 保 case.json)、`smoke_demo.py`(儲存鈕禁用、Ctrl+S 不打端點)。
 
 ## 組合件互動補完(2026-07-04)
 

@@ -123,6 +123,34 @@ def main():
             new_chat = _find(hdr, "新對話")
             C.check("「＋ 新對話」對 demo 不禁用", new_chat and new_chat["disabled"] is None, str(new_chat))
 
+            # 「儲存」(專案綁定)鈕:demo 一樣渲染但禁用;Ctrl+S 不打 /api/save-project。
+            # 注入綁定+產物讓鈕出現;斷言完解除綁定,免得之後 reload 被 beforeunload 攔住。
+            page.evaluate(
+                """() => {
+                    window.__cadDispatch({ type: 'SET_SESSION', sessionId: 's_demo_save' });
+                    window.__cadDispatch({ type: 'ADD_VERSION', version: {
+                        id: 'v1', name: 'demo_proj', glbUrl: '/api/asset?file=nope.glb', source: 'generated' } });
+                    window.__cadDispatch({ type: 'PRESENT', glbUrl: '/api/asset?file=nope.glb',
+                        name: 'demo_proj', ver: 'v1', source: 'generated' });
+                    window.__cadDispatch({ type: 'SET_PROJECT', project: { dir: 'demo_proj', ver: 0, origin: 'saved' } });
+                }"""
+            )
+            page.wait_for_selector(".hdr-save", timeout=5000)
+            save_btn = _find(_attrs(page, ".hdr-save"), "儲存")
+            C.check("Header「儲存」仍渲染(不是藏)", save_btn is not None)
+            if save_btn:
+                C.check("Header「儲存」data-disabled", save_btn["disabled"] == "true", str(save_btn))
+                C.check("Header「儲存」title=DEMO_TIP", save_btn["title"] == DEMO_TIP, str(save_btn))
+            save_reqs = []
+            page.on("request", lambda r: save_reqs.append(r.url) if "/api/save-project" in r.url else None)
+            page.keyboard.press("Control+s")
+            page.wait_for_timeout(500)
+            C.check("demo Ctrl+S 不打 /api/save-project、不開對話框",
+                    not save_reqs and page.locator(".save-dialog").count() == 0, str(save_reqs))
+            # 整個清掉(不只解綁):注入的 v1 若留在快照,B 段 reload 會被判「有生成版但 session
+            # 不存在」→ 吐「已過期」訊息 → 之後切零件庫改跳確認框,貨架永不出現
+            page.evaluate("() => window.__cadDispatch({ type: 'RESET' })")
+
             # 點禁用鈕 → overlay 不開(onClick 守衛,不是只靠 CSS)
             page.click(".hdr-btn:has-text('開啟檔案')")
             page.wait_for_timeout(400)

@@ -76,13 +76,50 @@ with sync_playwright() as p:
             not any("攤平" in l or "摺疊" in l for l in labels), str(labels))
     c.check("A 頁無 JS 錯誤", not errs_a, "; ".join(errs_a[:3]))
     page.screenshot(path=out_path("smoke_open_project_a.png"))
+    # 開專案 → session 綁定來源目錄(chip ✓ 已儲存 + 儲存鈕)
+    chip = page.locator(".proj-chip")
+    c.check(f"A: 綁定 chip「models/{DIRP} · ✓ 已儲存」",
+            chip.count() == 1 and f"models/{DIRP}" in chip.inner_text() and "✓ 已儲存" in chip.inner_text(),
+            chip.inner_text() if chip.count() else "(no chip)")
+    c.check("A: 「⤓ 儲存」鈕在場", page.locator(".hdr-save").count() == 1)
 
-    # ── B. 對話中途開另一專案 → 換 session + 清舊版 ──
-    open_project_row(page, DIRB)
+    # ── B. 對話中途開另一專案 → 換 session + 清舊版;未儲存時先過確認框 ──
+    # 注入「未儲存」(savedVer 0 < v1)→ 點另一專案列先出確認框:取消不換、確認才換
+    page.evaluate(
+        f"() => window.__cadDispatch({{type:'SET_PROJECT', project:{{dir:{json.dumps(DIRP)}, ver:0, origin:'opened'}}}})")
+    page.wait_for_timeout(200)
+    c.check("B: 注入未儲存 → chip ● 未儲存", "● 未儲存" in page.locator(".proj-chip").inner_text())
+    page.locator(".hdr-btn", has_text="開啟檔案").click()
+    page.wait_for_selector(".fb-list")
+    page.locator(".fb-crumb", has_text=re.compile(r"^models$")).click()
+    page.wait_for_selector(".fb-projrow")
+    page.locator(".fb-projrow", has_text=DIRB).click()
+    page.wait_for_selector(".confirm-dialog", timeout=5000)
+    c.check("B: 未儲存時開另一專案 → 先出確認框(含目錄名)",
+            DIRP in page.locator(".confirm-dialog").inner_text())
+    page.locator(".confirm-dialog .save-cancel").click()
+    page.wait_for_timeout(300)
+    c.check("B: 取消 → 仍是原專案的 v1",
+            page.locator(".version-chip").count() == 1
+            and DIRP in page.locator(".version-chip").first.inner_text())
+    page.locator(".hdr-btn", has_text="開啟檔案").click()
+    page.wait_for_selector(".fb-list")
+    page.locator(".fb-crumb", has_text=re.compile(r"^models$")).click()
+    page.wait_for_selector(".fb-projrow")
+    page.locator(".fb-projrow", has_text=DIRB).click()
+    page.wait_for_selector(".confirm-dialog", timeout=5000)
+    page.locator(".confirm-dialog .save-btn", has_text="捨棄").click()
+    page.wait_for_function(
+        "(nm) => [...document.querySelectorAll('.version-chip')].some(e => e.textContent.includes(nm))",
+        arg=DIRB, timeout=300000)
     c.check("B: 開另一專案 → 只剩新 session 的 v1(舊版已清)",
             page.locator(".version-chip").count() == 1
             and DIRB in page.locator(".version-chip").first.inner_text(),
             page.locator(".version-chip").first.inner_text())
+    chip = page.locator(".proj-chip")
+    c.check(f"B: chip 換成新專案「models/{DIRB} · ✓ 已儲存」",
+            chip.count() == 1 and f"models/{DIRB}" in chip.inner_text() and "✓ 已儲存" in chip.inner_text(),
+            chip.inner_text() if chip.count() else "(no chip)")
     page.close()
 
     # ── C. 自動帶入編輯:注入唯讀專案版 → 聊天先升級再送 ──

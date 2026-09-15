@@ -15,7 +15,9 @@ import path from "node:path";
 import { MODELS_ROOT } from "../config.mjs";
 import { isDesignLike } from "../../lib/chatModes.js";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
-import { resolveInside, resolveModelRead } from "../cad/paths.mjs";
+import { pathIsInside, resolveInside, resolveModelRead } from "../cad/paths.mjs";
+import { copyProjectTree, validateProjectDir, writeProjectTreeAtomic } from "../cad/projectTree.mjs";
+import { CASE_FILE, buildCaseMeta, readCaseMeta } from "../cad/templates.mjs";
 import {
   acquireBusy,
   getOrCreateSession,
@@ -89,34 +91,6 @@ async function handleImport(body, res, ctx = {}) {
   });
 }
 
-// 遞迴複製專案樹(跳過快取/隱藏目錄雜物;隱藏 topology GLB 要帶——重建失敗時至少能看圖)。
-// versions/ 也跳過:那是 session 內部的版本快照歷史——存出的專案是「成品」不是「歷史」,
-// 開回來的新 session 版本計數從 0 起,帶舊快照只會 id 錯位。
-// session.json / .exports/ 也跳過:前者是 session 私有中繼資料(sdkSessionId 等機器
-// 本地識別;models/<name>/ 是 git 追蹤的,存出去就是把它發佈出去),後者是轉檔
-// 工作區雜物;兩者對「存出的成品/開回來的新 session」都沒有意義。
-// (轉檔區取名 .exports 帶點前綴,避免與手工專案裡使用者自己的 exports/ 目錄撞名被丟。)
-function copyProjectTree(srcDir, dstDir) {
-  fs.mkdirSync(dstDir, { recursive: true });
-  for (const ent of fs.readdirSync(srcDir, { withFileTypes: true })) {
-    if (
-      ent.name === "__pycache__" ||
-      ent.name === "versions" ||
-      ent.name === ".exports" ||
-      ent.name === "session.json" ||
-      ent.name.endsWith(".pyc") ||
-      // 展開圖 DXF 是「按需匯出」產物,不隨滑桿重生更新:帶出去會是與 STEP
-      // 尺寸不符的過期圖(viewer 又會自動與同名 .py 配對)。要展開圖用匯出鈕現算。
-      ent.name.endsWith(".dxf")
-    )
-      continue;
-    const s = path.join(srcDir, ent.name);
-    const d = path.join(dstDir, ent.name);
-    if (ent.isDirectory()) copyProjectTree(s, d);
-    else if (ent.isFile()) fs.copyFileSync(s, d);
-  }
-}
-
 // 開專案時的 session mode 裁定(純函數,L1 可測)。session.mode 是出生恆定屬性,
 // mint 時不帶就永遠是 design——前端停在 cable 段一鍵開專案後,下一次 /api/chat
 // (含滑桿 paramsOnly)必回 400 mode_mismatch(實測過的死路)。
@@ -162,6 +136,20 @@ export function validateOpenParams(params, current, ranges = {}) {
     values[k] = n;
   }
   return { ok: true, values };
+}
+
+// 開專案時要不要把 session 綁到來源目錄(純函數,L1 可測)。不綁的情況:
+//   ① 範本(TEMPLATE_META 且無 case.json;案件的 .py 也帶 TEMPLATE_META,只看它不夠):
+//      CableShelf「開啟」範本後拉一次滑桿 + Ctrl+S 會把 tracked 範本的預設值改壞;
+//   ② 帶參數/規格開(「填規格→直接生成」「複製成新案」):來源是範本或別人的案件,
+//      綁了就是蓋回來源;等另存後才綁到新名;
+//   ③ 來源不在本人可寫層(per-user 從 fixtures 層開):就地儲存會寫到另一個實體目錄,
+//      chip 說的與磁碟不同;要 fork 走另存,綁定才誠實(dev 兩根同一,不受此限)。
+export function shouldBindOnOpen({ isTemplate, hasParams, hasSpec, inWritableRoot }) {
+  if (isTemplate) return false;
+  if (hasParams || hasSpec) return false;
+  if (!inWritableRoot) return false;
+  return true;
 }
 
 // 結構改動(層數/帶型)時的 PARAMS 鍵集與滑桿範圍。層數 N 決定 L1..LN——舊的
@@ -324,12 +312,26 @@ async function handleOpenProject(body, res, ctx = {}) {
   const version = events.find(([e]) => e === "version")?.[1] || null;
   const present = events.find(([e]) => e === "present")?.[1] || null;
 
+  // 專案綁定(「儲存」就地覆寫的目標):重建成功、v1 已出之後才綁——所有 ok:false 早退
+  // 都不綁,綁到壞產生器等於讓 Ctrl+S 蓋掉好目錄。規則見 shouldBindOnOpen。
+  const isTemplate = !!(srcName && readTemplateMeta(srcRef, srcName)) && !readCaseMeta(srcAbs);
+  const bindable =
+    shouldBindOnOpen({
+      isTemplate,
+      hasParams: !!pchk.values,
+      hasSpec: !!wantSpec,
+      inWritableRoot: pathIsInside(srcAbs, session.modelsRoot || MODELS_ROOT),
+    }) && validateProjectDir(clean);
+  session.project = bindable ? { dir: clean, ver: session.version, origin: "opened" } : null;
+  persistSession(session); // emitPresent 已 persist 過一次,但那時 project 還沒設
+
   sendJson(res, 200, {
     ok: true,
     sessionId: session.sessionId,
     // session 的真實 mode:前端據此 SET_MODE 校正切換器(不校正 → 下一次 /api/chat
     // 含滑桿 paramsOnly 必回 400 mode_mismatch)。
     mode: session.mode,
+    project: session.project, // 綁定(null=未綁定,只有另存);前端 SET_PROJECT
     name,
     type: version?.type || "part",
     version,
@@ -863,9 +865,15 @@ async function handleExportParts(body, res, ctx = {}) {
   }
 }
 
-// session 產物 → models/<name>/(另存專案)。目標已存在時要求 overwrite 確認,
-// 覆蓋前先清掉舊樹(避免舊產生器殘檔干擾之後 open-project 的 pickGenerator)。
-function handleSaveProject(body, res, ctx = {}) {
+// session 產物 → models/<name>/。兩路:
+//   另存(對話框;無 inPlace):name 由 body 給、sanitizeName 單段;目標已存在要求 overwrite
+//   確認;overwrite = 整目錄取代(舊產生器殘檔不留,免干擾之後 open-project 的 pickGenerator)。
+//   儲存(inPlace:true):目標 = session.project.dir(伺服端說了算,忽略 body.name);未綁定
+//   400 not_bound;目的地是範本 409;**合併語意**——只換產生器家族檔,其餘(tracked .dxf、
+//   PDF 圖面、子資料夾)保留,case.json 合併(buildCaseMeta:沒帶 customer/note 不清空)。
+// 兩路都走 writeProjectTreeAtomic(暫存 → 換名):完整替代品就位前目的地絕不消失
+// (舊做法 rmSync 再複製,複製中途炸掉 = 唯一存檔消失)。
+async function handleSaveProject(body, res, ctx = {}) {
   // 先驗證再取 session:getOrCreateSession 對缺席/不安全/GC 掉的 id 會 mint 一個
   // 全新空 session 目錄——壞請求不該在 models/.cadchat/ 留下垃圾(其他 handler
   // 都先驗 sessionId,這裡比照)。probeSessionOnDisk 唯讀,絕不建目錄。
@@ -890,7 +898,27 @@ function handleSaveProject(body, res, ctx = {}) {
     sendJson(res, 409, { ok: false, error: "session 忙碌中(等目前回合結束)" });
     return;
   }
-  const name = sanitizeName(body?.name || session.lastName);
+  const inPlace = body?.inPlace === true;
+  if (inPlace && !session.project) {
+    sendJson(res, 400, { ok: false, error: "not_bound", message: "這個對話還沒綁定專案,請先「另存」" });
+    return;
+  }
+  // 中斷後的半成品:interrupt 清 busy 時 kill 尚未完成、頂層 STEP 可能截斷;_geomDirty =
+  // runStep 開跑後還沒 emitPresent(build 了沒 present)——存出去的會與時間軸任何一版都不同。
+  if (session._geomDirty || session.childProcs.size > 0) {
+    sendJson(res, 409, {
+      ok: false,
+      error: "工作基準與最新版本不一致(上輪被中斷或尚未產圖),請重新產圖後再儲存",
+    });
+    return;
+  }
+  // 就地:目標由綁定決定,逐段驗證後 resolveInside(不走 sanitizeName——它會把 / 拍掉,
+  // cases/x 會變成 casesx,chip 說存到 A 實際寫到 B)。另存:單段 sanitizeName 照舊。
+  const name = inPlace ? session.project.dir : sanitizeName(body?.name || session.lastName);
+  if (inPlace && !validateProjectDir(name)) {
+    sendJson(res, 400, { ok: false, error: "綁定的專案目錄名無效" });
+    return;
+  }
   let dstAbs;
   try {
     // 寫入只准本人可寫層(session.modelsRoot;legacy session = 全域 MODELS_ROOT)
@@ -899,35 +927,53 @@ function handleSaveProject(body, res, ctx = {}) {
     sendJson(res, 400, { ok: false, error: "名稱無效" });
     return;
   }
-  if (fs.existsSync(dstAbs)) {
-    if (!body?.overwrite) {
-      sendJson(res, 200, { ok: false, error: "exists", dir: name });
+  const dstExists = fs.existsSync(dstAbs);
+  if (inPlace) {
+    // 目的地是範本(TEMPLATE_META 且無 case.json)→ 拒絕:tracked 範本的預設值不該被
+    // 一次 Ctrl+S 改掉(綁定規則本就不綁範本;這是伺服端第二道閘)。
+    const dstGen = dstExists ? pickGenerator(dstAbs) : null;
+    if (dstGen && readTemplateMeta({ workdir: dstAbs }, dstGen) && !readCaseMeta(dstAbs)) {
+      sendJson(res, 409, { ok: false, error: "範本目錄不可就地覆蓋,請另存新案" });
       return;
     }
-    fs.rmSync(dstAbs, { recursive: true, force: true });
+  } else if (dstExists && !body?.overwrite) {
+    sendJson(res, 200, { ok: false, error: "exists", dir: name });
+    return;
   }
-  copyProjectTree(session.workdir, dstAbs);
   // 案件紀錄(工作台「案件」頁籤的來源)。可變的案件中繼**不寫進 .py**——.py 的
-  // 寫入者只有 rewriteParams 一個;客戶/日期/來源範本/備註放 sidecar,copyProjectTree
-  // 之後寫、複製成新案時由當下欄位覆寫(不會帶著舊客戶名跑)。
-  // 只有 cable session 寫(design 的另存語意仍是「存成範本/專案」,不是案件)。
-  if (session.mode === "cable") {
-    try {
-      const meta = {
-        kind: "case",
-        family: "cable",
-        label: String(body?.label || name).slice(0, 80),
-        customer: String(body?.customer || "").slice(0, 80),
-        note: String(body?.note || "").slice(0, 400),
-        source_template: String(body?.sourceTemplate || session.rehydratedFrom || "").slice(0, 120),
-        created: new Date().toISOString().slice(0, 10),
-      };
-      fs.writeFileSync(path.join(dstAbs, "case.json"), JSON.stringify(meta, null, 1), "utf8");
-    } catch {
-      /* 案件中繼寫失敗:專案本體已存好,只是不會出現在「案件」頁籤 */
-    }
+  // 寫入者只有 rewriteParams 一個;客戶/日期/來源範本/備註放 sidecar。prev 要在換名前
+  // 從**目的地**讀(workdir 裡那份是開啟時複製的舊檔,不是真相);只有 cable session 寫
+  // (design 的另存語意仍是「存成範本/專案」,不是案件)。
+  const prevCase = session.mode === "cable" ? readCaseMeta(dstAbs) : null;
+  const prepare =
+    session.mode === "cable"
+      ? (tmp) => {
+          const meta = buildCaseMeta(prevCase, body, {
+            name,
+            fallbackSourceTemplate: session.rehydratedFrom || "",
+          });
+          fs.writeFileSync(path.join(tmp, CASE_FILE), JSON.stringify(meta, null, 1), "utf8");
+        }
+      : null;
+  // 複製期間鎖 busy:換名重試會 await,不鎖的話同時進來的回合可能改寫頂層檔。
+  const busyToken = acquireBusy(session);
+  let swap;
+  try {
+    swap = await writeProjectTreeAtomic(session.workdir, dstAbs, { merge: inPlace, prepare });
+  } catch (err) {
+    sendJson(res, 500, { ok: false, error: `儲存失敗:${scrubPaths(String(err?.message || err))}` });
+    return;
+  } finally {
+    releaseBusy(session, busyToken);
   }
-  sendJson(res, 200, { ok: true, dir: name });
+  // 綁定跟著儲存走:另存 → 綁到新名(origin saved);就地 → 只推進 ver(origin 不變)。
+  session.project = {
+    dir: name,
+    ver: session.version,
+    origin: inPlace ? session.project.origin : "saved",
+  };
+  persistSession(session); // 綁定落盤 + touch 頂層 mtime(防啟動 GC 誤判)
+  sendJson(res, 200, { ok: true, dir: name, inPlace, project: session.project, swap });
 }
 
 // POST /api/validate {sessionId} — 對 session 當前頂層產物跑「完整」幾何驗證(含運動掃掠),

@@ -286,6 +286,29 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
     per_layer PARAMS)讓 build 只要 ~35s;真電纜件一次 build 要 1–2 分鐘。
     fixture 的 PARAMS **必須是完整規格**(L1..LN + width + head_h + mount_h +
     bottom_leg),否則 `/api/cable/check` KeyError,即時檢核整段測不到。
+- **專案綁定 + 「儲存」就地覆寫(2026-09-15)**:session 綁 `models/<dir>`
+  (`session.project={dir,ver,origin}`,落 session.json;open-project 綁來源、save-project
+  綁目標),Header chip `● 未儲存/✓ 已儲存` + `⤓ 儲存`/Ctrl+S 走 `save-project
+  {inPlace:true}`。動它之前先知道:
+  - **綁定規則在 `shouldBindOnOpen`(純函數)**:範本(TEMPLATE_META 且無 case.json)、
+    帶 params/spec 開(填規格→直接生成、複製成新案)、來源不在可寫層(per-user 從
+    fixtures 層開)三種**不綁**。dev 的 fixtures 與 models 同根 → tracked fixture 開了就
+    綁得到,煙測**絕不對 fixture 就地儲存**:先另存暫名再 inPlace(smoke_versions §2b/§4)。
+  - **寫入一律 `writeProjectTreeAtomic`(暫存 → 換名;`cad/projectTree.mjs`)**:目的地
+    在完整替代品就位前絕不消失;就地 = 合併(只換產生器家族檔,tracked .dxf/PDF/
+    子資料夾保留;case.json 走 `buildCaseMeta` 合併,沒帶 customer 不清空)。
+    動它 → `projectTree.test.js`(注入 copy/prepare/rename 製造中途失敗)。
+  - **dirty 前端現算**(`lib/projectState.js`:最新生成版 > savedVer;回退也 +1 版 = dirty),
+    savedVer **以伺服端回應為準**(滑桿重生的 version 事件可能還在路上)。
+  - **煙測雷**:綁定且 dirty 的頁面掛了 `beforeunload` → `page.reload()/goto()` 前必
+    `page.on("dialog", accept)` 或先 `SET_PROJECT null`,否則 Playwright 預設 dismiss
+    = 留在頁面,整支卡到 timeout;「新對話」/切模式/中途開專案在 dirty 時先出
+    `.confirm-dialog`(確認鈕 has_text「捨棄」、取消 `.save-cancel`)。`newChat` 已拆成
+    `resetChat`(既有三個確認框內部用)+ 守衛版,別再把確認塞回 resetChat。
+  - 迴歸:L1 `projectState/projectTree/templates(buildCaseMeta)/sessions.persist/
+    project.openmode/chatStore` + L3 `smoke_versions`(§1b/§2b/§4)、`smoke_restore`
+    (D/C/E 段)、`smoke_open_project`(A chip/B 確認框)、`smoke_cable_workbench`
+    (A 範本負案/C 未綁/D2 Ctrl+S 保 case.json/E)、`smoke_demo`(儲存鈕禁用)。
 
 - **per-user 資料隔離(2026-07-15,VM 部署啟用)**:反代注入 `X-Remote-User` →
   `req.cadchat={user,modelsRoot,sessionsRoot}`(`middleware/userContext.mjs`,鏈首位);
