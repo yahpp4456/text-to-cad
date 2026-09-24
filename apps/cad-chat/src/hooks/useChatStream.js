@@ -5,10 +5,11 @@
 import { useCallback, useRef } from "react";
 
 import { handleEvent } from "../state/events.js";
+import { isMode, modeLabel } from "../lib/chatModes.js";
 import { apiUrl } from "@/lib/apiBase";
 
-// modeRef(可選):App 端的 { current: "design"|"sketch" }——每次 POST 帶上當前
-// 模式(per-session 恆定;新 session 據此 mint,既有 session 相符通過/不符 400)。
+// modeRef(可選):App 端的 { current: <chatModes.MODES 之一> }——每次 POST 帶上
+// 當前模式(per-session 恆定;新 session 據此 mint,既有 session 相符通過/不符 400)。
 export function useChatStream(dispatch, modeRef) {
   const ctrlRef = useRef(null);
   const sessionIdRef = useRef(null);
@@ -76,8 +77,17 @@ export function useChatStream(dispatch, modeRef) {
             queueRef.current.unshift({ ...payload, _retries: (payload._retries || 0) + 1 });
             return; // 「稍候自動重送」提示由 finally 排程時 dispatch(END_RUN 會清 live,先發必被蓋掉)
           }
+          // mode 不符:session 的 mode 是出生恆定屬性,切換器與它分歧時所有回合
+          // (含滑桿 paramsOnly 重生)都會被擋。把切換器校正回 session 真相,使用者
+          // 重送即可——沒有這段就只剩一句「伺服器錯誤 HTTP 400」的死路。
+          if (j.error === "mode_mismatch" && isMode(j.mode)) {
+            dispatch({ type: "SET_MODE", mode: j.mode });
+          }
           const msg =
-            j.error === "agent_not_ready"
+            j.error === "mode_mismatch"
+              ? `這個對話是「${modeLabel(j.mode)}」模式的 session(模式在對話建立時就固定了),` +
+                `模式切換器已校正回去;剛才那則請再送一次。`
+              : j.error === "agent_not_ready"
               ? j.warnings?.[0] || "agent 尚未就緒(請設定訂閱 token)。"
               : j.error === "session busy"
                 ? "session 忙碌中(可能被另一個分頁占用),請稍候再試。"

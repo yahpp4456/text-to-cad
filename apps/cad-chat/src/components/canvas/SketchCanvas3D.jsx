@@ -16,6 +16,7 @@ export default function SketchCanvas3D({
   dispatch,
   running,
   live,
+  pending,
   stageIdx,
   toolFeed,
   clarify,
@@ -214,10 +215,10 @@ export default function SketchCanvas3D({
           <>
             <span className="model-ghost">{(canvas.name || "SKETCH").toUpperCase()}</span>
             <div className="viewport" ref={mountRef} />
-            {running && (
+            {(running || pending) && (
               <div className="canvas-progress-strip">
                 <span className="live-dot" />
-                <span>{live?.text || "回合進行中…"}</span>
+                <span>{running ? live?.text || "回合進行中…" : pending.text}</span>
               </div>
             )}
             {canvas.status === "loading" && (

@@ -23,6 +23,10 @@ Geometry approximations (declared, like gear.py):
   ``pocket_w + 1``) intersect at natural waist points, end pockets run to
   their tips at y=0, so total width == N*(pocket_w+1)+3 in closed form
   (matches the EHSL catalog for the 16-series: 2->37, 6->105, 7->122);
+  ``pocket_w`` may be a per-pocket list (mixed widths; per-junction waist
+  angles), and ``web``/``edge`` override the catalog waist gap / end margin
+  for measured OEM bands (total width generalizes to
+  ``2*edge + sum(bore_w) + (N-1)*web``, EHSL defaults degenerate exactly);
 - bores: one full ellipse per pocket, ``bore_w = pocket_w - 2*wall_t``,
   ``bore_h = outer_h - 2*wall_t`` (exact match to the measured OEM
   16-series cross-section: bore 14.0 x 4.7 in a 6.7-high band, wall 1.0);
@@ -564,42 +568,108 @@ def swept_solid(
 # cleanroom sleeve (Elocab EHSL style)
 # ---------------------------------------------------------------------------
 def sleeve_dims(
-    pockets: int, pocket_w: float, *, wall_t: float = 1.0, outer_h: float | None = None
+    pockets: int,
+    pocket_w: float | list[float] | tuple[float, ...],
+    *,
+    wall_t: float = 1.0,
+    outer_h: float | None = None,
+    web: float | None = None,
+    edge: float | None = None,
 ) -> dict[str, Any]:
     """Closed-form sleeve cross-section dimensions (shared by the profile
-    builder, generators and the tests)."""
+    builder, generators and the tests).
+
+    ``pocket_w`` is a single float (uniform pockets, the original API) or a
+    per-pocket width list (mixed widths, ``len == pockets``). ``web`` is the
+    bore-to-bore gap at the waist and ``edge`` the outer margin beyond the end
+    bores; both default to the EHSL catalog closed form (``1 + 2*wall_t`` /
+    ``2 + wall_t``), override them when a measured band deviates. Mixed-width
+    closed form (uniform + defaults degenerates to the original formulas):
+
+        bore_rx_i = (w_i - 2*wall_t) / 2
+        rx_i      = bore_rx_i + edge
+        pitch_i   = bore_rx_i + bore_rx_{i+1} + web
+        cos(theta_i) = pitch_i / (rx_i + rx_{i+1})
+        total_w   = 2*edge + sum(2*bore_rx_i) + (N-1)*web
+
+    Always returns the per-pocket keys ``pocket_ws`` / ``rx_list`` /
+    ``bore_rx_list`` / ``pitch_list`` (len N-1) / ``theta_w_list`` (len N-1)
+    plus ``web`` / ``edge``; the legacy scalar keys (``pocket_w`` / ``rx`` /
+    ``pitch`` / ``bore_rx`` / ``theta_w``) are present only when the widths
+    are uniform."""
     if not isinstance(pockets, int) or pockets < 1:
         raise ValueError("pockets 必須是 >= 1 的整數")
-    if pocket_w < 6.0:
-        raise ValueError("pocket_w 過小(< 6mm)")
+    if isinstance(pocket_w, (list, tuple)):
+        ws = [float(w) for w in pocket_w]
+        if len(ws) != pockets:
+            raise ValueError(
+                f"pocket_w 清單長度({len(ws)})必須等於 pockets({pockets})")
+    else:
+        ws = [float(pocket_w)] * pockets
+    for w in ws:
+        if w < 6.0:
+            raise ValueError("pocket_w 過小(< 6mm)")
     if outer_h is None:
-        outer_h = 6.7 * pocket_w / 16.0  # declared approximation (see docstring)
+        outer_h = 6.7 * max(ws) / 16.0  # declared approximation (see docstring)
     if wall_t <= 0 or wall_t >= outer_h / 2.0:
         raise ValueError("wall_t 必須在 (0, outer_h/2) 內")
-    rx = (pocket_w + 4.0) / 2.0
+    if web is None:
+        web = 1.0 + 2.0 * wall_t  # EHSL: pitch == pocket_w + 1
+    if edge is None:
+        edge = 2.0 + wall_t  # EHSL: rx == (pocket_w + 4) / 2
+    if web <= 0 or edge <= 0:
+        raise ValueError("web/edge 必須為正")
+    if pockets > 1 and web >= 2.0 * edge:
+        # waist angle needs pitch < rx_i + rx_j, i.e. web < 2*edge
+        raise ValueError(f"web({web:g})須小於 2*edge({2 * edge:g}),鄰袋弧才有交點")
     ry = outer_h / 2.0
-    pitch = pocket_w + 1.0
-    total_w = (pockets - 1) * pitch + 2.0 * rx  # == pockets*(pocket_w+1)+3
-    bore_rx = (pocket_w - 2.0 * wall_t) / 2.0
     bore_ry = ry - wall_t
-    if bore_rx <= 0 or bore_ry <= 0:
+    bore_rx_list = [(w - 2.0 * wall_t) / 2.0 for w in ws]
+    if min(bore_rx_list) <= 0 or bore_ry <= 0:
         raise ValueError("wall_t 過大,內腔尺寸歸零")
-    theta_w = math.degrees(math.acos((pitch / 2.0) / rx))  # waist angle
-    cx0 = -total_w / 2.0 + rx
-    return {
+    rx_list = [b + edge for b in bore_rx_list]
+    pitch_list = [
+        bore_rx_list[i] + bore_rx_list[i + 1] + web for i in range(pockets - 1)
+    ]
+    total_w = 2.0 * edge + 2.0 * sum(bore_rx_list) + (pockets - 1) * web
+    theta_w_list = [
+        math.degrees(math.acos(pitch_list[i] / (rx_list[i] + rx_list[i + 1])))
+        for i in range(pockets - 1)
+    ]
+    centers = [-total_w / 2.0 + rx_list[0]]
+    for p in pitch_list:
+        centers.append(centers[-1] + p)
+    dims: dict[str, Any] = {
         "pockets": pockets,
-        "pocket_w": float(pocket_w),
+        "pocket_ws": ws,
         "wall_t": float(wall_t),
         "outer_h": float(outer_h),
+        "web": float(web),
+        "edge": float(edge),
         "total_w": total_w,
-        "rx": rx,
         "ry": ry,
-        "pitch": pitch,
-        "bore_rx": bore_rx,
         "bore_ry": bore_ry,
-        "theta_w": theta_w,
-        "pocket_centers": [cx0 + i * pitch for i in range(pockets)],
+        "rx_list": rx_list,
+        "bore_rx_list": bore_rx_list,
+        "pitch_list": pitch_list,
+        "theta_w_list": theta_w_list,
+        "pocket_centers": centers,
     }
+    if all(abs(w - ws[0]) < _TOL for w in ws):
+        dims.update(
+            pocket_w=ws[0],
+            rx=rx_list[0],
+            pitch=(pitch_list[0] if pitch_list else 2.0 * bore_rx_list[0] + web),
+            bore_rx=bore_rx_list[0],
+            theta_w=(
+                theta_w_list[0]
+                if theta_w_list
+                else math.degrees(
+                    math.acos(min(1.0, (2.0 * bore_rx_list[0] + web) / (2.0 * rx_list[0])))
+                )
+            ),
+        )
+    return dims
 
 
 def _sleeve_faces(dims: dict[str, Any]):
@@ -614,29 +684,31 @@ def _sleeve_faces(dims: dict[str, Any]):
     )
 
     cxs = dims["pocket_centers"]
-    rx, ry, theta_w = dims["rx"], dims["ry"], dims["theta_w"]
+    ry = dims["ry"]
+    rxs, brxs, ths = dims["rx_list"], dims["bore_rx_list"], dims["theta_w_list"]
     n = dims["pockets"]
 
     def outer_arcs():
         # NEVER end_angle= (0.11 crash); one CCW upper + one lower arc per
-        # pocket, meeting neighbours exactly at the waist points.
+        # pocket, meeting neighbours exactly at the waist points (per-junction
+        # waist angles support mixed pocket widths).
         for i, cx in enumerate(cxs):
-            a_left = 180.0 if i == 0 else 180.0 - theta_w
-            a_right = 0.0 if i == n - 1 else theta_w
+            a_left = 180.0 if i == 0 else 180.0 - ths[i - 1]
+            a_right = 0.0 if i == n - 1 else ths[i]
             EllipticalCenterArc(
-                (cx, 0), rx, ry, start_angle=a_right, arc_size=a_left - a_right
+                (cx, 0), rxs[i], ry, start_angle=a_right, arc_size=a_left - a_right
             )
             EllipticalCenterArc(
-                (cx, 0), rx, ry, start_angle=-a_left, arc_size=a_left - a_right
+                (cx, 0), rxs[i], ry, start_angle=-a_left, arc_size=a_left - a_right
             )
 
     with BuildSketch() as sk:
         with BuildLine():
             outer_arcs()
         make_face()
-        for cx in cxs:
+        for cx, brx in zip(cxs, brxs):
             with Locations((cx, 0)):
-                Ellipse(dims["bore_rx"], dims["bore_ry"], mode=Mode.SUBTRACT)
+                Ellipse(brx, dims["bore_ry"], mode=Mode.SUBTRACT)
     holed = sk.sketch
 
     with BuildSketch() as sko:
@@ -646,22 +718,51 @@ def _sleeve_faces(dims: dict[str, Any]):
     outer = sko.sketch
 
     inners = []
-    for cx in cxs:
+    for cx, brx in zip(cxs, brxs):
         with BuildSketch() as skb:
             with Locations((cx, 0)):
-                Ellipse(dims["bore_rx"], dims["bore_ry"])
+                Ellipse(brx, dims["bore_ry"])
         inners.append(skb.sketch)
     return holed, outer, inners
 
 
 def sleeve_profile(
-    pockets: int, pocket_w: float, *, wall_t: float = 1.0, outer_h: float | None = None
+    pockets: int,
+    pocket_w: float | list[float] | tuple[float, ...],
+    *,
+    wall_t: float = 1.0,
+    outer_h: float | None = None,
+    web: float | None = None,
+    edge: float | None = None,
 ) -> Any:
     """The hollow sleeve cross-section as a 2D face (exposed for tests to
     measure widths/walls without paying a sweep)."""
-    dims = sleeve_dims(pockets, pocket_w, wall_t=wall_t, outer_h=outer_h)
+    dims = sleeve_dims(
+        pockets, pocket_w, wall_t=wall_t, outer_h=outer_h, web=web, edge=edge
+    )
     holed, _outer, _inners = _sleeve_faces(dims)
     return holed
+
+
+def sleeve_outer_profile(
+    pockets: int,
+    pocket_w: float | list[float] | tuple[float, ...],
+    *,
+    wall_t: float = 1.0,
+    outer_h: float | None = None,
+    web: float | None = None,
+    edge: float | None = None,
+) -> Any:
+    """The sleeve outer silhouette as a solid 2D face (no bores) -- what a
+    clamp/rack window that hugs the band needs to subtract. Same closed form
+    as :func:`sleeve_profile` (mixed widths and web/edge overrides included);
+    cutting with this face gives zero-volume tangent contact against the
+    matching swept band."""
+    dims = sleeve_dims(
+        pockets, pocket_w, wall_t=wall_t, outer_h=outer_h, web=web, edge=edge
+    )
+    _holed, outer, _inners = _sleeve_faces(dims)
+    return outer
 
 
 def default_bend_r(pocket_w: float, *, factor: float = 10.0) -> float:
@@ -673,25 +774,32 @@ def default_bend_r(pocket_w: float, *, factor: float = 10.0) -> float:
 
 def cleanroom_sleeve(
     pockets: int,
-    pocket_w: float,
+    pocket_w: float | list[float] | tuple[float, ...],
     *,
     wall_t: float = 1.0,
     outer_h: float | None = None,
+    web: float | None = None,
+    edge: float | None = None,
     path: dict | None = None,
     at=None,
     label: str = "sleeve",
 ) -> Any:
     """Hollow N-pocket cleanroom cable sleeve swept along ``path``.
 
-    Default path is a drag-chain U (straights 300, bend radius from the
-    catalog rule). The returned solid is labeled ``label``.
+    ``pocket_w`` accepts a per-pocket width list (mixed widths) and
+    ``web``/``edge`` override the EHSL waist/margin closed form -- see
+    :func:`sleeve_dims`. Default path is a drag-chain U (straights 300, bend
+    radius from the catalog rule on the widest pocket). The returned solid is
+    labeled ``label``.
     """
-    dims = sleeve_dims(pockets, pocket_w, wall_t=wall_t, outer_h=outer_h)
+    dims = sleeve_dims(
+        pockets, pocket_w, wall_t=wall_t, outer_h=outer_h, web=web, edge=edge
+    )
     if path is None:
         path = {
             "kind": "drag_chain",
             "straight_a": 300.0,
-            "bend_r": default_bend_r(pocket_w),
+            "bend_r": default_bend_r(max(dims["pocket_ws"])),
             "straight_b": 300.0,
         }
     segs = _resolve_path(path)
@@ -819,46 +927,53 @@ def _extend(loop: list, pts: list) -> None:
 
 def sleeve_profile_loops(
     pockets: int,
-    pocket_w: float,
+    pocket_w: float | list[float] | tuple[float, ...],
     *,
     wall_t: float = 1.0,
     outer_h: float | None = None,
+    web: float | None = None,
+    edge: float | None = None,
     samples_per_arc: int = 24,
 ) -> list[list[list[float]]]:
     """Sleeve cross-section as closed 2D loops (display-only, for the viewer's
     sweep-window profile pane): ``[outer, bore_0, ..., bore_{N-1}]``.
 
-    Mirrors ``_sleeve_faces`` term-for-term (same ellipse arcs cut at the waist
-    angle from :func:`sleeve_dims`), but samples pure analytic points -- no
-    build123d import, so generators can build SWEEP_VIEW cheaply even under
-    ``validate.py --motion-only``. Loops are implicitly closed (no repeated
-    first point).
+    Mirrors ``_sleeve_faces`` term-for-term (same ellipse arcs cut at the
+    per-junction waist angles from :func:`sleeve_dims`), but samples pure
+    analytic points -- no build123d import, so generators can build SWEEP_VIEW
+    cheaply even under ``validate.py --motion-only``. Loops are implicitly
+    closed (no repeated first point).
     """
     if not isinstance(samples_per_arc, int) or samples_per_arc < 4:
         raise ValueError("samples_per_arc 至少要 4")
-    dims = sleeve_dims(pockets, pocket_w, wall_t=wall_t, outer_h=outer_h)
+    dims = sleeve_dims(
+        pockets, pocket_w, wall_t=wall_t, outer_h=outer_h, web=web, edge=edge
+    )
     cxs = dims["pocket_centers"]
-    rx, ry, theta_w = dims["rx"], dims["ry"], dims["theta_w"]
+    ry = dims["ry"]
+    rxs, brxs, ths = dims["rx_list"], dims["bore_rx_list"], dims["theta_w_list"]
     n = dims["pockets"]
 
     outer: list[list[float]] = []
     # top side, left -> right (phi decreasing 180 -> 0 across pockets)
     for i, cx in enumerate(cxs):
-        a_left = 180.0 if i == 0 else 180.0 - theta_w
-        a_right = 0.0 if i == n - 1 else theta_w
-        _extend(outer, _ellipse_arc(cx, rx, ry, a_left, a_right, samples_per_arc))
+        a_left = 180.0 if i == 0 else 180.0 - ths[i - 1]
+        a_right = 0.0 if i == n - 1 else ths[i]
+        _extend(outer, _ellipse_arc(cx, rxs[i], ry, a_left, a_right, samples_per_arc))
     # bottom side, right -> left (phi decreasing 0 -> -180)
     for i in range(n - 1, -1, -1):
-        a_left = 180.0 if i == 0 else 180.0 - theta_w
-        a_right = 0.0 if i == n - 1 else theta_w
-        _extend(outer, _ellipse_arc(cxs[i], rx, ry, -a_right, -a_left, samples_per_arc))
+        a_left = 180.0 if i == 0 else 180.0 - ths[i - 1]
+        a_right = 0.0 if i == n - 1 else ths[i]
+        _extend(
+            outer, _ellipse_arc(cxs[i], rxs[i], ry, -a_right, -a_left, samples_per_arc)
+        )
     # closing point duplicates the first (phi -180 == 180) -> drop it
     if math.hypot(outer[-1][0] - outer[0][0], outer[-1][1] - outer[0][1]) < 1e-9:
         outer.pop()
 
     loops = [outer]
-    for cx in cxs:
-        bore = _ellipse_arc(cx, dims["bore_rx"], dims["bore_ry"], 0.0, 360.0, 2 * samples_per_arc)
+    for cx, brx in zip(cxs, brxs):
+        bore = _ellipse_arc(cx, brx, dims["bore_ry"], 0.0, 360.0, 2 * samples_per_arc)
         bore.pop()  # implicit close
         loops.append(bore)
     return loops

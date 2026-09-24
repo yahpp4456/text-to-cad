@@ -17,6 +17,7 @@ const CONTENT_TYPES = {
   ".3mf": "model/3mf",
   ".zip": "application/zip",
   ".dxf": "image/vnd.dxf",
+  ".pdf": "application/pdf",
   ".png": "image/png",
   ".gif": "image/gif",
   ".jpg": "image/jpeg",

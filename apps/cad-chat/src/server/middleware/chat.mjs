@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { isMode } from "../../lib/chatModes.js";
+import { isDesignLike, isMode } from "../../lib/chatModes.js";
 import { demoReady, resolveAuth, resolveDemoQuota } from "../config.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
 import { acquireBusy, getOrCreateSession, persistSession, releaseBusy } from "../sessions.mjs";
@@ -91,7 +91,7 @@ export function chatMiddleware() {
     const img = readImageBlocks(body, session);
     const steps = readStepRefs(body, session);
     const paramsOnly =
-      session.mode === "design" && // 只有設計模式有 PARAMS 產生器(防禦)
+      isDesignLike(session.mode) && // 只有設計鏈模式有 PARAMS 產生器(防禦)
       body.params &&
       Object.keys(body.params).length > 0 &&
       (!body.message || !String(body.message).trim()) &&
@@ -241,11 +241,13 @@ export function readImageBlocks(body, session) {
 
 // body.stepRefs(輕量 rel,如 "uploads/xxx.step")→ 驗證後只把「路徑清單」寫進
 // userText 註記(STEP 不進 content blocks——模型不需要位元組,library_preview /
-// library_add 吃路徑)。雙重沙箱鏡射 readImageBlocks:強制 uploads/ 前綴 +
-// resolveInside + 檔頭重嗅探;**非 library session 直接回空**(模式邊界,防多分頁
-// race 把 STEP 塞進設計/草模回合)。
+// library_add / cad_import 吃路徑)。雙重沙箱鏡射 readImageBlocks:強制 uploads/
+// 前綴 + resolveInside + 檔頭重嗅探;**非 library/cable session 直接回空**
+// (模式邊界,防多分頁 race 把 STEP 塞進設計/草模回合)。
 export function readStepRefs(body, session) {
-  if (session?.mode !== "library") return { names: [], missing: [] };
+  if (session?.mode !== "library" && session?.mode !== "cable") {
+    return { names: [], missing: [] };
+  }
   const refs = Array.isArray(body?.stepRefs) ? body.stepRefs.slice(0, 4) : [];
   const names = [];
   const missing = [];
@@ -304,10 +306,14 @@ export function buildUserText(body, session, img, steps) {
   if (img?.missing?.length) {
     t += `\n（附圖 ${img.missing.join("、")} 已遺失,未內嵌。）`;
   }
-  // 上傳 STEP 註記(僅 library session;readStepRefs 已驗證沙箱與檔頭):
-  // 給 agent 的是路徑不是位元組——library_preview/library_add 吃路徑。
+  // 上傳 STEP 註記(僅 library/cable session;readStepRefs 已驗證沙箱與檔頭):
+  // 給 agent 的是路徑不是位元組——library 走 library_preview/library_add,
+  // cable 走 cad_import(pipeline 已收 uploads/ 來源)當參考件量測擬合。
   if (steps?.names?.length) {
-    t += `\n（已上傳 STEP 檔 ${steps.names.length} 件:${steps.names.join("、")}——先用 library_preview 預覽並量測,訪談後用 library_add 收庫。）`;
+    t +=
+      session?.mode === "cable"
+        ? `\n（已上傳客戶參考 STEP ${steps.names.length} 件:${steps.names.join("、")}——先用 cad_import 匯入取得 bbox 事實,對照工程圖量測擬合,再照無塵電纜範本寫參數化產生器。）`
+        : `\n（已上傳 STEP 檔 ${steps.names.length} 件:${steps.names.join("、")}——先用 library_preview 預覽並量測,訪談後用 library_add 收庫。）`;
   }
   if (steps?.missing?.length) {
     t += `\n（上傳檔 ${steps.missing.join("、")} 已遺失。）`;
@@ -340,6 +346,16 @@ export function buildUserText(body, session, img, steps) {
   // 對既有產物零語境。
   if (session?._rehydrateNote) {
     t = `${session._rehydrateNote}\n${t}`;
+  }
+  // PARAMS 現值一行(設計鏈模式、已有產生器、且不是 rehydrate 首回合):滑桿與
+  // 規格表單的決定性重生**不進 SDK transcript**——agent 只知道 rehydrate 當下那組
+  // 值,使用者拉過十次滑桿後它仍以為是舊值,回答與改碼都會用錯基準。每回合現讀
+  // 磁碟一行注入即收斂(rehydrateNote 本身已含現值,不重複)。
+  if (isDesignLike(session?.mode) && session?.lastName && !session?._rehydrateNote) {
+    const vals = paramValuesFromGenerator(session, session.lastName);
+    if (vals && Object.keys(vals).length) {
+      t = `（產生器 ${session.lastName}.py 的 PARAMS 現值:${JSON.stringify(vals)}——以這組為準,不要沿用先前對話裡的舊值。）\n${t}`;
+    }
   }
   return t || "（空訊息）";
 }

@@ -3,8 +3,23 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { normalizeMode } from "../lib/chatModes.js";
+import { validateProjectDir } from "./cad/projectTree.mjs";
 import { DATA_ROOT, SESSIONS_ROOT } from "./config.mjs";
 import { USER_RE, rootsFor } from "./users.mjs";
+
+// session 綁定的專案目錄(「儲存」就地覆寫的目標;open-project / save-project 設):
+//   { dir: "cases/20260825_XY", ver: 3, origin: "opened"|"saved" }
+// dir = models 相對 posix 路徑;ver = 綁定當下的 session.version(開啟=1、儲存後=當下版);
+// dirty = session.version > ver。壞值一律 null(未綁定),絕不半套。
+export function normalizeProject(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const dir = typeof raw.dir === "string" ? raw.dir : "";
+  if (!validateProjectDir(dir)) return null;
+  const ver = Math.trunc(Number(raw.ver));
+  if (!Number.isFinite(ver) || ver < 0) return null;
+  const origin = raw.origin === "opened" ? "opened" : "saved";
+  return { dir, ver, origin };
+}
 
 // registry key 含使用者維度:同 id 不同 user = 不同 session(B 送 A 的 id 只會在
 // B 的空間 mint 全新 session,拿不到 A 的物件或目錄)。\n 不可能出現在兩段中。
@@ -57,6 +72,7 @@ export function getOrCreateSession(sessionId, opts = {}) {
       lastPartCount: 0, // 最近一次驗證的零件數(規模分級:≥8 視為大型組合件)
       rehydratedFrom: null, // 開啟既有專案時的來源目錄(models 相對;prompt 條件段用)
       imports: [], // 本 session 匯入的元件 rel 清單(imported/x.step;prompt 條件段用)
+      project: null, // 綁定的專案目錄 {dir, ver, origin}(見 normalizeProject;落盤)
       lastBuildMeta: null, // build sidecar 收割 {name,parts,partCount,motion,motionErrs}(transient 不落盤;rehydrate 後首次設計驗證走 --motion-only fallback)
       _lastValidate: null, // 最近一次驗證判定 {full,ok}(versionStamp 用;transient,runStep 開跑即清)
       _geomDirty: false, // 頂層基準是否已漂移(runStep 開跑=true、emitPresent=false;精算回 stale 用)
@@ -115,6 +131,7 @@ export function persistSession(session) {
           lastPartCount: session.lastPartCount || 0,
           rehydratedFrom: session.rehydratedFrom || null,
           imports: session.imports || [],
+          project: normalizeProject(session.project),
           savedAt: Date.now(),
         },
         null,
@@ -144,7 +161,8 @@ function hydrateSession(session) {
   // 產物守衛 mode-aware:草模 session 的真相源是 <name>.sketch.json,不是 .py
   // (不分流則草模重掛必 bail → version 歸零 → v-id 相撞)。零件庫 session 無建模
   // 產物(lastName 恆 null),artifact=null 跳過檢查——防禦:萬一 lastName 被寫入,
-  // 不分流會 bail 丟掉 sdkSessionId,對話記憶蒸發。
+  // 不分流會 bail 丟掉 sdkSessionId,對話記憶蒸發。cable(設計特化)走 else 的
+  // .py 分支,與 design 同款。
   const artifact =
     session.mode === "sketch"
       ? `${lastName}.sketch.json`
@@ -163,6 +181,9 @@ function hydrateSession(session) {
   );
   session.sdkSessionId =
     typeof meta.sdkSessionId === "string" && meta.sdkSessionId ? meta.sdkSessionId : null;
+  // 專案綁定在產物守衛**之後**還原:產物不在就沒有可儲存的東西,綁定跟著作廢
+  // (否則 chip 會說「已儲存」而 save-project 回 400)。
+  session.project = normalizeProject(meta.project);
   // 標記「resume 靠的是磁碟還原」:首個 turn 若 resume 失敗,runner 走降級接續。
   session._resumedFromDisk = !!session.sdkSessionId;
 }
@@ -193,7 +214,12 @@ export function probeSessionOnDisk(id, user = null) {
   const hasGenerator = !!lastName && fs.existsSync(path.join(workdir, `${lastName}.py`));
   // 草模 session 的「還救得回來」訊號(前端開機還原用 hasGenerator||hasSketch 放行)
   const hasSketch = !!lastName && fs.existsSync(path.join(workdir, `${lastName}.sketch.json`));
-  return { exists: true, lastName, version, mode, hasGenerator, hasSketch };
+  // 專案綁定與「未儲存」:live 為準(它已經過 hydrate 的產物守衛),否則讀 meta——但
+  // 產物不在時 meta 的綁定同樣作廢(與 hydrate 同一條規則)。
+  const rawProject = live ? live.project : hasGenerator ? meta?.project : null;
+  const project = normalizeProject(rawProject);
+  const dirty = !!project && version > project.ver;
+  return { exists: true, lastName, version, mode, hasGenerator, hasSketch, project, dirty };
 }
 
 // 啟動時 GC:刪掉超過 maxAgeDays 沒動過的 session 目錄(models/.cadchat/*)。

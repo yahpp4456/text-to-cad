@@ -376,8 +376,8 @@ export function buildCadchatServer({ session, emit, signal }) {
       ),
       tool(
         "cad_export",
-        "匯出 stl/3mf/glb/dxf(下游,需要才用)。dxf=鈑金展開圖:產生器須有 gen_dxf()(SheetMetal 件回 sm.dxf())。",
-        { name: z.string().optional(), format: z.enum(["stl", "3mf", "glb", "dxf"]) },
+        "匯出 stl/3mf/glb/dxf/pdf(下游,需要才用)。dxf=鈑金展開圖:產生器須有 gen_dxf()(SheetMetal 件回 sm.dxf())。pdf=四視圖工程圖(俯/前/側/等角+包絡尺寸標註)。",
+        { name: z.string().optional(), format: z.enum(["stl", "3mf", "glb", "dxf", "pdf"]) },
         async ({ name, format }) => {
           const gated = clarifyGate();
           if (gated) return gated;
@@ -425,14 +425,21 @@ export function buildCadchatServer({ session, emit, signal }) {
               });
             }
           }
-          // dxf 走 skills/dxf CLI 跑 gen_dxf()(寫兄弟檔 <part>.dxf);其餘走
-          // scripts/step 的 mesh sidecar
+          // dxf 走 skills/dxf CLI 跑 gen_dxf()(寫兄弟檔 <part>.dxf);pdf 走
+          // drawing_pdf.py 對既有 STEP 做 HLR 四視圖;其餘走 scripts/step 的
+          // mesh sidecar
           const res = isDxf
             ? await spawnPython("skills/dxf/scripts/dxf", [target], { session, signal })
-            : await spawnPython("skills/cad/scripts/step", [target, flag, out, "--force"], {
-                session,
-                signal,
-              });
+            : format === "pdf"
+              ? await spawnPython(
+                  "apps/cad-chat/src/server/cad/drawing_pdf.py",
+                  [`${session.workdirRel}/${part}.step`, "--out", out],
+                  { session, signal },
+                )
+              : await spawnPython("skills/cad/scripts/step", [target, flag, out, "--force"], {
+                  session,
+                  signal,
+                });
           const ok = res.code === 0;
           emit("tool", {
             id,

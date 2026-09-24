@@ -27,6 +27,9 @@ docs/public/hero/**/*.glb !filter !diff !merge -text
 apps/cad-chat/docs/guide/img/*.png filter=lfs diff=lfs merge=lfs -text
 # ref/ 原廠型錄/手冊 PDF(MB 級二進位):走 LFS。
 ref/**/*.pdf filter=lfs diff=lfs merge=lfs -text
+# models/ 下的工程圖 PDF(匯出品/客戶圖面)與交付 zip:二進位不可 diff,與 .step/.glb 同走 LFS。
+models/**/*.pdf filter=lfs diff=lfs merge=lfs -text
+models/**/*.zip filter=lfs diff=lfs merge=lfs -text
 # Force LF for shell scripts so core.autocrlf=true (Windows) does not check them
 # out as CRLF, which would break them under Git Bash.
 *.sh text eol=lf

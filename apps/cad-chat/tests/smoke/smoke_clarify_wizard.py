@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """兩步澄清精靈煙測(免 LLM):__cadDispatch 注入含 specs 的 clarify → 步驟閘門/
 inline 修改/合成回覆。/api/chat 用 page.route stub 掉(空 SSE),可安全點擊送出並
-截 POST body 斷「規格修正:」合成格式(clarifyText.composeClarifyReply 的端到端驗證)。"""
+截 POST body 斷「規格修正:」合成格式(clarifyText.composeClarifyReply 的端到端驗證)。
+G/H 段鎖 SpecChips 的提交語意:失焦即提交(直接點確認不丟草稿)、✓ 提交、Escape 取消。"""
 import json
 
 from playwright.sync_api import sync_playwright
@@ -120,6 +121,55 @@ with sync_playwright() as p:
                 posted[2].get("message", ""))
     else:
         c.check("無修改點建議 → 原樣送 suggested", False, f"posted={len(posted)}")
+
+    # ── G. 失焦即提交:打字後直接點「確認規格 →」(不按 Enter、不點 ✓)——使用者最自然
+    #   的操作。修前(2026-09-23 使用者回報「改 1500 仍建 1000」):換步卸載 SpecChips,
+    #   草稿靜默丟棄 → 步驟 2 無「已修正」→ 送出只剩選項原文(內嵌 AI 原值)。
+    page.wait_for_timeout(300)
+    page.evaluate(INJECT_TWO_STEP)
+    page.wait_for_timeout(200)
+    card = page.locator(".canvas-clarify")
+    card.locator(".cw-chip[data-assumed]").click()
+    card.locator(".cw-chip-input").fill("HGR30")
+    card.locator(".cw-confirm").click()
+    page.wait_for_timeout(120)
+    c.check("G: 直接點確認 → 步驟 2 仍顯示已修正(失焦提交)",
+            card.locator(".cw-edited").count() == 1
+            and "導軌 改為 HGR30" in card.locator(".cw-edited").inner_text())
+    card.locator(".canvas-clarify-opt").first.click()
+    page.wait_for_timeout(400)
+    c.check("G: 送出帶「規格修正:導軌 改為 HGR30」",
+            len(posted) >= 4 and posted[3].get("message", "").startswith("規格修正:導軌 改為 HGR30"),
+            posted[3].get("message", "") if len(posted) >= 4 else f"posted={len(posted)}")
+
+    # ── H. ✓ 鈕提交(mousedown 攔焦點轉移:不得先 blur 提交再被 ✓ 的空草稿刪掉)
+    #   + Escape 取消(卸載期補的 blur 不得翻成提交)──
+    page.wait_for_timeout(300)
+    page.evaluate(INJECT_TWO_STEP)
+    page.wait_for_timeout(200)
+    card = page.locator(".canvas-clarify")
+    card.locator(".cw-chip[data-assumed]").click()
+    card.locator(".cw-chip-input").fill("HGR35")
+    card.locator(".cw-chip-ok").click()
+    page.wait_for_timeout(120)
+    c.check("H: 點 ✓ → chip 標已修正 HGR35",
+            card.locator(".cw-chip[data-edited]").count() == 1
+            and "HGR35" in card.locator(".cw-chip[data-edited]").inner_text())
+    card.locator(".cw-chip[data-edited]").click()
+    card.locator(".cw-chip-input").fill("HGR40")
+    card.locator(".cw-chip-input").press("Escape")
+    page.wait_for_timeout(120)
+    edited_txt = card.locator(".cw-chip[data-edited]").inner_text() if card.locator(".cw-chip[data-edited]").count() else ""
+    c.check("H: Escape 取消 → 修正維持 HGR35、草稿 HGR40 丟棄",
+            card.locator(".cw-chip-input").count() == 0 and "HGR35" in edited_txt and "HGR40" not in edited_txt,
+            edited_txt)
+    card.locator(".cw-confirm").click()
+    page.wait_for_timeout(120)
+    card.locator(".canvas-clarify-opt").first.click()
+    page.wait_for_timeout(400)
+    c.check("H: 送出帶 HGR35 而非 HGR40",
+            len(posted) >= 5 and posted[4].get("message", "").startswith("規格修正:導軌 改為 HGR35"),
+            posted[4].get("message", "") if len(posted) >= 5 else f"posted={len(posted)}")
 
     c.check("無 JS 頁面錯誤", not errors, "; ".join(errors[:3]))
     page.screenshot(path=out_path("smoke_clarify_wizard.png"))

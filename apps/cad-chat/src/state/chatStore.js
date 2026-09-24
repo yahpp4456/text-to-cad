@@ -1,6 +1,7 @@
 // 頂層狀態(useReducer),鏡射設計稿 DCLogic.state。
 import { normalizeMode } from "../lib/chatModes.js";
 import { pendingClarifyFromItems } from "../lib/clarifyText.js";
+import { normalizeProjectBinding } from "../lib/projectState.js";
 
 export const initialState = {
   _seq: 0,
@@ -10,6 +11,18 @@ export const initialState = {
   mode: "design",
   phase: "idle", // idle | running | done
   running: false,
+  // 同步伺服端工作(開專案/回退=Python 重建+驗證,大型件 1–2 分鐘)的等待指示:
+  // {text, since}|null。非 running(不鎖 composer 語意),只驅動 live-row/畫布進度條
+  // 讓使用者知道還活著;暫態,RESTORE/RESET 不還原。
+  pending: null,
+  // 無塵電纜規格表單(工作台選了範本/案件後的草稿)。放 store 不放元件本地:
+  // clarify 待答時視圖面板會整個讓位卸載,本地 state 一卸即丟草稿。
+  // 暫態——RESTORE 不還原(跨重整重選一次範本即可,不為草稿加快照 schema)。
+  cableForm: null,
+  // 專案綁定(「儲存」就地覆寫的目標;伺服端 session.project 的鏡射):
+  // {dir, savedVer, origin, sessionId} | null。dirty 由 lib/projectState 依 versions 現算,
+  // 不另存一份旗標。跨 session 殘留視為未綁定(SET_SESSION 換 id 即清)。
+  project: null,
   stageIdx: -1, // 驅動 StageStepper(D)
   items: [], // 對話 transcript
   // verified 由 server versionStamp 發(三態:undefined=未知,舊快照/opened 檔)
@@ -56,8 +69,18 @@ function patchTool(items, id, patch) {
 
 export function reducer(state, action) {
   switch (action.type) {
-    case "SET_SESSION":
-      return { ...state, sessionId: action.sessionId ?? state.sessionId };
+    case "SET_SESSION": {
+      const sessionId = action.sessionId ?? state.sessionId;
+      // 換了 session 就解除綁定(舊綁定對新 session 是死引用);open-project 回應會再 SET_PROJECT
+      return { ...state, sessionId, project: sessionId === state.sessionId ? state.project : null };
+    }
+
+    // 專案綁定(open-project / save-project 回應、開機 session-info 校正);null = 解除
+    case "SET_PROJECT":
+      return {
+        ...state,
+        project: normalizeProjectBinding(action.project, action.sessionId ?? state.sessionId),
+      };
 
     // 模式切換(切換器/開機還原/伺服端 session 事件校正);非法值收斂 design。
     case "SET_MODE":
@@ -404,6 +427,11 @@ export function reducer(state, action) {
           : { ...initialState.params },
         motion: s.motion?.dofs?.length ? s.motion : null,
         clarify: pendingClarify ? { id: `c_restored_${items.length}`, ...pendingClarify } : null,
+        // 專案綁定:只認同 session 的(舊快照無欄位 → null;開機由 session-info 校正重綁)
+        project: (() => {
+          const p = normalizeProjectBinding(s.project);
+          return p && p.sessionId && p.sessionId === (s.sessionId || null) ? p : null;
+        })(),
         stageIdx: versions.length ? 4 : -1,
         phase: versions.length ? "done" : "idle",
       };
@@ -419,6 +447,7 @@ export function reducer(state, action) {
         versions: [],
         activeVer: null,
         motion: null,
+        project: null, // 舊 session 的綁定對新 session 是死引用;open-project 回應再綁
         params: { ...initialState.params },
         // 換 session=換設計:舊 spec 卡標 stale(latestSpecItem 會跳過)——否則
         // 舊設計的「解析規格」面板浮在新專案上,「套用修正」會把無關鍵值以
@@ -430,6 +459,29 @@ export function reducer(state, action) {
 
     // 「新對話」:回到初始狀態(對話/版本/畫布/參數/選取/運動/選擇題全清)。
     // mode 保留:正在草模腦暴的人開新對話,多半還要草模(切模式走 SET_MODE)。
+    // 開表單(form=null 關閉);PATCH_CABLE_FORM 淺層合併(values/unsure/note/error)
+    case "SET_CABLE_FORM":
+      return { ...state, cableForm: action.form || null };
+
+    case "PATCH_CABLE_FORM":
+      if (!state.cableForm) return state;
+      return { ...state, cableForm: { ...state.cableForm, ...(action.patch || {}) } };
+
+    case "SET_CABLE_FORM_VALUE": {
+      if (!state.cableForm) return state;
+      const values = { ...state.cableForm.values, [action.key]: action.value };
+      return { ...state, cableForm: { ...state.cableForm, values, error: null } };
+    }
+
+    case "SET_PENDING":
+      // 設:{text, since};清:null。since 由呼叫端給(reducer 保持純函數)。
+      return {
+        ...state,
+        pending: action.pending
+          ? { text: String(action.pending.text || "處理中…"), since: Number(action.pending.since) || 0 }
+          : null,
+      };
+
     case "RESET":
       return { ...initialState, mode: state.mode };
 

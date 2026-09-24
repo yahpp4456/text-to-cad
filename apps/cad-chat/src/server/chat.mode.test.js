@@ -76,3 +76,23 @@ test("library:mode 缺席時沿用 library", () => {
   const session = { mode: "library", sdkSessionId: "x" };
   assert.deepEqual(resolveTurnMode({}, session), { ok: true, mode: "library" });
 });
+
+test("cable:處女 design session 可採納 cable(upload 先 mint 情境)", () => {
+  const session = { mode: "design", sdkSessionId: null, lastName: null, version: 0 };
+  assert.deepEqual(resolveTurnMode({ mode: "cable" }, session), {
+    ok: true,
+    mode: "cable",
+    adopt: true,
+  });
+});
+
+test("cable:有歷史的 cable session 拒絕 design;相符通過;缺席沿用", () => {
+  const session = { mode: "cable", sdkSessionId: "x" };
+  assert.deepEqual(resolveTurnMode({ mode: "design" }, session), {
+    ok: false,
+    error: "mode_mismatch",
+    mode: "cable",
+  });
+  assert.deepEqual(resolveTurnMode({ mode: "cable" }, session), { ok: true, mode: "cable" });
+  assert.deepEqual(resolveTurnMode({}, session), { ok: true, mode: "cable" });
+});

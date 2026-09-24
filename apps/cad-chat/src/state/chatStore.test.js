@@ -459,3 +459,63 @@ test("RESTORE:library snapshot 還原 library mode", () => {
   });
   assert.equal(s.mode, "library");
 });
+
+// ── 同步重建等待指示(開專案/回退)──
+test("SET_PENDING:設 {text,since} / 清 null;RESET 與 RESTORE 都不殘留(暫態)", () => {
+  const s1 = reducer(initialState, { type: "SET_PENDING", pending: { text: "重建中…", since: 1000 } });
+  assert.deepEqual(s1.pending, { text: "重建中…", since: 1000 });
+  assert.equal(s1.running, false, "pending 不是 running(不鎖 composer 語意)");
+  // CLEAR_WORKSPACE(open-project 中途換 session)不得清 pending——指示要撐到 finally
+  const s2 = reducer(s1, { type: "CLEAR_WORKSPACE" });
+  assert.deepEqual(s2.pending, { text: "重建中…", since: 1000 });
+  const s3 = reducer(s2, { type: "SET_PENDING", pending: null });
+  assert.equal(s3.pending, null);
+  assert.equal(reducer(s1, { type: "RESET" }).pending, null);
+  assert.equal(reducer(s1, { type: "RESTORE", snapshot: { items: [], pending: { text: "x", since: 1 } } }).pending, null);
+  // 缺欄位的防呆:text 給預設、since 非數字歸 0
+  assert.deepEqual(reducer(initialState, { type: "SET_PENDING", pending: {} }).pending, { text: "處理中…", since: 0 });
+});
+
+// ── 專案綁定(SET_PROJECT / 換 session / 快照往返)──
+const PROJ = { dir: "cases/x", ver: 2, origin: "opened" };
+
+test("SET_PROJECT:收伺服端形 {dir,ver,origin} 綁到目前 session;null 解除;垃圾 → null", () => {
+  let s = reducer(initialState, { type: "SET_SESSION", sessionId: "s1" });
+  s = reducer(s, { type: "SET_PROJECT", project: PROJ });
+  assert.deepEqual(s.project, { dir: "cases/x", savedVer: 2, origin: "opened", sessionId: "s1" });
+  // 顯式 sessionId(open-project 回應帶新 id)
+  s = reducer(s, { type: "SET_PROJECT", project: PROJ, sessionId: "s2" });
+  assert.equal(s.project.sessionId, "s2");
+  s = reducer(s, { type: "SET_PROJECT", project: null });
+  assert.equal(s.project, null);
+  s = reducer(s, { type: "SET_PROJECT", project: { dir: "", ver: 1 } });
+  assert.equal(s.project, null);
+});
+
+test("SET_SESSION:同 id 保留綁定;換 id 解除(舊綁定對新 session 是死引用)", () => {
+  let s = reducer(initialState, { type: "SET_SESSION", sessionId: "s1" });
+  s = reducer(s, { type: "SET_PROJECT", project: PROJ });
+  s = reducer(s, { type: "SET_SESSION", sessionId: "s1" });
+  assert.ok(s.project);
+  s = reducer(s, { type: "SET_SESSION", sessionId: "s2" });
+  assert.equal(s.project, null);
+});
+
+test("CLEAR_WORKSPACE / RESET 清綁定;ADD_VERSION 不動綁定(dirty 由 versions 現算)", () => {
+  let s = reducer(initialState, { type: "SET_SESSION", sessionId: "s1" });
+  s = reducer(s, { type: "SET_PROJECT", project: PROJ });
+  const v = reducer(s, { type: "ADD_VERSION", version: { id: "v3", name: "p", glbUrl: "/g" } });
+  assert.deepEqual(v.project, s.project);
+  assert.equal(reducer(s, { type: "CLEAR_WORKSPACE" }).project, null);
+  assert.equal(reducer(s, { type: "RESET" }).project, null);
+});
+
+test("RESTORE:同 session 的綁定回灌;跨 session / 舊快照無欄位 → null", () => {
+  const bound = { dir: "cases/x", savedVer: 2, origin: "saved", sessionId: "s1" };
+  const same = reducer(initialState, { type: "RESTORE", snapshot: { sessionId: "s1", project: bound } });
+  assert.deepEqual(same.project, bound);
+  const other = reducer(initialState, { type: "RESTORE", snapshot: { sessionId: "s2", project: bound } });
+  assert.equal(other.project, null);
+  const legacy = reducer(initialState, { type: "RESTORE", snapshot: { sessionId: "s1", versions: [] } });
+  assert.equal(legacy.project, null);
+});

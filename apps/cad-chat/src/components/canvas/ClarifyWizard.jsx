@@ -42,7 +42,7 @@ export default function ClarifyWizard({ clarify, onSubmitText, initialEdits }) {
           {/* 換步即卸載 SpecChips → 未確認的 inline 草稿自然丟棄(舊行為) */}
           <SpecChips specs={specs} edits={edits} onEdits={setEdits} />
           <div className="cw-foot">
-            <span className="cw-hint">標「假設」的值可點擊修改;確認後才進入選項。</span>
+            <span className="cw-hint">標「假設」的值可點擊修改(離開欄位或按 Enter 即確認);確認後才進入選項。</span>
             <a className="cw-confirm" onClick={() => setStep(2)}>
               確認規格 →
             </a>

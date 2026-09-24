@@ -16,6 +16,9 @@ import {
   listLibraryParts,
 } from "../cad/library.mjs";
 import { pathIsInside, resolveInside, resolveModelRead } from "../cad/paths.mjs";
+import { listWorkbench } from "../cad/templates.mjs";
+import { pickGenerator, readCableSpec } from "../cad/pipeline.mjs";
+import { spawnPython } from "../cad/python.mjs";
 import { resolveImportSource } from "../cad/pipeline.mjs";
 import { scrubPaths } from "../cad/python.mjs";
 import { ensureStepGlb, inspectFactsAbs } from "../cad/stepPreview.mjs";
@@ -262,6 +265,56 @@ async function handleLibraryAdd(body, res, ctx = {}) {
   sendJson(res, 200, result.ok ? { ...result, bboxMm: result.meta.bboxMm } : result);
 }
 
+
+const CABLE_CHECK_PY = "apps/cad-chat/src/server/cad/cable_check.py";
+const CABLE_CHECK_TIMEOUT_MS = 15_000;
+
+// 規格表單的即時檢核:對 models/<dir> 的 CABLE_SPEC 跑 OCP-free 閉式(~0.3s spawn)。
+// **不 import 產生器**(那要 16s 冷啟 build123d);閉式與 build 時的 _check_params
+// 是同一份 cadpy.parts.cable_spec,所以不會「表單綠、build 紅」。
+async function handleCableCheck(body, res, ctx = {}) {
+  const clean = normalizeRel(body?.dir);
+  let absDir;
+  try {
+    absDir = resolveModelRead(clean, { modelsRoot: ctx.modelsRoot });
+  } catch {
+    sendJson(res, 403, { ok: false, error: "路徑超出 models/" });
+    return;
+  }
+  const name = clean ? pickGenerator(absDir) : null;
+  // body.spec:表單改了層數/帶型時的暫時結構(還沒寫進任何 .py)——即時檢核要對
+  // 「將要生成的那個結構」算,不是對範本原樣算。
+  const override = body?.spec && typeof body.spec === "object" && !Array.isArray(body.spec) ? body.spec : null;
+  const spec = override || (name ? readCableSpec({ workdir: absDir }, name) : null);
+  if (!spec) {
+    sendJson(res, 200, { ok: false, error: "此範本沒有 CABLE_SPEC 宣告(無法即時檢核)" });
+    return;
+  }
+  if (!body?.params || typeof body.params !== "object") {
+    sendJson(res, 400, { ok: false, error: "params 必須是 {鍵: 數值} 物件" });
+    return;
+  }
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), CABLE_CHECK_TIMEOUT_MS);
+  let r;
+  try {
+    r = await spawnPython(CABLE_CHECK_PY, [JSON.stringify({ spec, params: body.params })], {
+      signal: ac.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+  if (r.code !== 0 && !r.stdout) {
+    sendJson(res, 200, { ok: false, error: scrubPaths(r.stderr || "檢核失敗").slice(-300) });
+    return;
+  }
+  try {
+    sendJson(res, 200, JSON.parse(r.stdout));
+  } catch {
+    sendJson(res, 200, { ok: false, error: "檢核輸出無法解析" });
+  }
+}
+
 export function filesMiddleware() {
   return function files(req, res, next) {
     const url = parseUrl(req);
@@ -282,6 +335,25 @@ export function filesMiddleware() {
       // 每個子目錄列各自的 project 旗標(可編輯專案 → 整列一鍵開)在 listDir 已標;
       // 當前目錄不再進得去專案(option C:專案目錄整列開啟不導航),故無需回當前目錄旗標。
       sendJson(res, 200, { ok: true, dir: relDir, entries });
+      return;
+    }
+
+    // 工作台清單(無塵電纜:範本卡 + 案件卡;免 LLM、零 spawn,真相在產生器 .py)
+    if (url.pathname === "/api/templates" && req.method === "GET") {
+      try {
+        const modelsRoot = req.cadchat?.modelsRoot || MODELS_ROOT;
+        const family = url.searchParams.get("family") || undefined;
+        sendJson(res, 200, { ok: true, family: family || null, ...listWorkbench(modelsRoot, { family }) });
+      } catch (err) {
+        sendJson(res, 500, { ok: false, error: scrubPaths(String(err?.message || err)) });
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/cable/check" && req.method === "POST") {
+      readJsonBody(req)
+        .then((body) => handleCableCheck(body, res, req.cadchat))
+        .catch((err) => sendJson(res, 400, { ok: false, error: scrubPaths(String(err?.message || err)) }));
       return;
     }
 

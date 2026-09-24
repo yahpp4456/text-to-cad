@@ -257,6 +257,65 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `/api/library-glb` 補轉路(等 data: URL,timeout 放寬)。動 shelf/縮圖/端點 →
   smoke_library_mode F 段 + library.test(list/delete)。
 
+- **換過依賴(lockfile 變動)後,第一個起的 dev server 別拿來跑煙測**:vite 開機印
+  「Re-optimizing dependencies because lockfile has changed」的那個實例,實測(2026-09-23
+  升 Agent SDK)整套跑完只有 `smoke_library_mode` E 段(localStorage 回灌)紅、同實例單跑
+  仍紅,但重起後的全新實例單跑/整套三次全綠——實例綁定的假紅,不是產品也不是順序依賴。
+  規矩:lockfile 動過就先起一次讓它優化完、再重起(或再起一個)跑煙測;看到只有回灌類
+  斷言紅先懷疑這根,別急著改產品。
+- **L1 與 L3 不要同時跑**:`asset.user.test.js` 會自己起一個臨時埠的 server,
+  煙測(dev server + Playwright + Python build)在跑時 CPU/埠壓力下它會偶發紅
+  (單跑必綠、閒置時連跑三輪也綠)。看到它紅先確認有沒有背景煙測在跑。
+- **無塵電纜工作台(2026-08-25,Phase 0–4)**:cable 主線改成零 LLM 的
+  「選範本 → 填規格 → 直接生成」。動它之前先知道這幾根:
+  - **範本/結構的真相在產生器 .py 頂部的 JSON 相容宣告**(`TEMPLATE_META` /
+    `CABLE_SPEC` / `PARAM_LABELS` / `PARAM_NOTES`),解析走
+    `pipeline.readFlatJsonDecl` 的 **JSON.parse**(文法:單行或多行、收尾 `}`
+    頂第 0 欄、雙引號、無尾逗號、**不得有 True/False/None**——布林用 1/0、
+    「不覆寫」用 0)。**別再手刻 regex**:`paramRangesFromGenerator` 那支只吃
+    數值三元組,中繼含中文/巢狀/逗號必誤切。
+  - **閉式與護欄的單一真相是 `cadpy.parts.cable_spec`(OCP-free,import 0.08s)**:
+    產生器的 `_check_params`、`/api/cable/check`、表單即時檢核全走它 → 動它必跑
+    `tests/python/packages/cadpy/test_cable_spec.py`,而且**先 sync-vendored**
+    (venv editable 指向 vendored 複本,不同步 = 測到舊碼)。回報的下限/上限
+    **必須餵回去就過**(往上/往下取到 0.1;餘隙上限另做二分)。
+  - **幾何實作在 `cadpy.parts.cable_assembly`**(規格驅動,兩份 per_layer 範本
+    共用);改它 → 兩支範本的 `__main__` 全跑(含 Y 的 OEM 等價 golden)。
+  - **`rewriteSpec` 是第二個 .py 寫入者**(第一個是 rewriteParams):改層數時
+    PARAMS **整塊替換不 merge**(merge 會留幽靈 L 鍵 → 幽靈滑桿)、PARAM_RANGES
+    必須一起重寫、CABLE_SPEC 用多行 JSON。動它 → `pipeline.params.test.js`
+    的 rewriteSpec 段 + `smoke_cable_workbench.py` E 段(真 build)。
+  - **`session.mode` 在 open-project mint 時就要帶**(`resolveOpenMode`):不帶
+    → cable 段開專案後每個 `/api/chat`(含滑桿)400 `mode_mismatch`,實測過的
+    死路,回歸鎖在 `smoke_cable_mode.py` A2 段。
+  - 煙測用**輕量 fixture 範本**(TEMPLATE_META family=cable + 一顆盒子 + 完整的
+    per_layer PARAMS)讓 build 只要 ~35s;真電纜件一次 build 要 1–2 分鐘。
+    fixture 的 PARAMS **必須是完整規格**(L1..LN + width + head_h + mount_h +
+    bottom_leg),否則 `/api/cable/check` KeyError,即時檢核整段測不到。
+- **專案綁定 + 「儲存」就地覆寫(2026-09-15)**:session 綁 `models/<dir>`
+  (`session.project={dir,ver,origin}`,落 session.json;open-project 綁來源、save-project
+  綁目標),Header chip `● 未儲存/✓ 已儲存` + `⤓ 儲存`/Ctrl+S 走 `save-project
+  {inPlace:true}`。動它之前先知道:
+  - **綁定規則在 `shouldBindOnOpen`(純函數)**:範本(TEMPLATE_META 且無 case.json)、
+    帶 params/spec 開(填規格→直接生成、複製成新案)、來源不在可寫層(per-user 從
+    fixtures 層開)三種**不綁**。dev 的 fixtures 與 models 同根 → tracked fixture 開了就
+    綁得到,煙測**絕不對 fixture 就地儲存**:先另存暫名再 inPlace(smoke_versions §2b/§4)。
+  - **寫入一律 `writeProjectTreeAtomic`(暫存 → 換名;`cad/projectTree.mjs`)**:目的地
+    在完整替代品就位前絕不消失;就地 = 合併(只換產生器家族檔,tracked .dxf/PDF/
+    子資料夾保留;case.json 走 `buildCaseMeta` 合併,沒帶 customer 不清空)。
+    動它 → `projectTree.test.js`(注入 copy/prepare/rename 製造中途失敗)。
+  - **dirty 前端現算**(`lib/projectState.js`:最新生成版 > savedVer;回退也 +1 版 = dirty),
+    savedVer **以伺服端回應為準**(滑桿重生的 version 事件可能還在路上)。
+  - **煙測雷**:綁定且 dirty 的頁面掛了 `beforeunload` → `page.reload()/goto()` 前必
+    `page.on("dialog", accept)` 或先 `SET_PROJECT null`,否則 Playwright 預設 dismiss
+    = 留在頁面,整支卡到 timeout;「新對話」/切模式/中途開專案在 dirty 時先出
+    `.confirm-dialog`(確認鈕 has_text「捨棄」、取消 `.save-cancel`)。`newChat` 已拆成
+    `resetChat`(既有三個確認框內部用)+ 守衛版,別再把確認塞回 resetChat。
+  - 迴歸:L1 `projectState/projectTree/templates(buildCaseMeta)/sessions.persist/
+    project.openmode/chatStore` + L3 `smoke_versions`(§1b/§2b/§4)、`smoke_restore`
+    (D/C/E 段)、`smoke_open_project`(A chip/B 確認框)、`smoke_cable_workbench`
+    (A 範本負案/C 未綁/D2 Ctrl+S 保 case.json/E)、`smoke_demo`(儲存鈕禁用)。
+
 - **per-user 資料隔離(2026-07-15,VM 部署啟用)**:反代注入 `X-Remote-User` →
   `req.cadchat={user,modelsRoot,sessionsRoot}`(`middleware/userContext.mjs`,鏈首位);
   資料根切 `DATA_ROOT/users/<u>/models(/.cadchat)`。**dev/無 header = legacy 全域根,
