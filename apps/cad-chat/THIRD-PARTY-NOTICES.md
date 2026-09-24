@@ -93,7 +93,7 @@ THE SOFTWARE.
 
 ## 伺服端執行期依賴(不進前端 bundle,隨部署散布時列)
 
-### @anthropic-ai/claude-agent-sdk v0.3.195 — Anthropic 專有授權
+### @anthropic-ai/claude-agent-sdk v0.3.280 — Anthropic 專有授權
 
 © Anthropic PBC. All rights reserved. 使用受 Anthropic 法律協議約束:
 <https://code.claude.com/docs/en/legal-and-compliance>

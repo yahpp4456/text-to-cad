@@ -136,9 +136,16 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
             : mode === "cable"
               ? buildCableSystemPrompt(session)
               : buildSystemPrompt(session),
+        // SDK ≥0.3.267 預設 snapshot:true = 系統提示只在對話首回合錄製一次,之後 resume
+        // 一律送錄製版——append 變了也要等 compaction 才生效。cad-chat 的 append 每回合
+        // 都會變(累積教訓摘要、已匯入元件註記、rehydrate 接續註記),必須每回合現算。
+        snapshot: false,
       },
       mcpServers: { cadchat: mcp },
-      allowedTools: allowed,
+      // 不傳 allowedTools:裸名單會在 canUseTool 之前直接放行(SDK ≥0.3.198 每次 query
+      // 對此發 CLAUDE_SDK_CAN_USE_TOOL_SHADOWED warning)。白名單語意全收進 makeToolGuard
+      // (allow 集合同一份 `allowed`),每個工具呼叫都經守衛;harness 層繞過守衛的
+      // 非同步/編排工具仍靠 disallowedTools 整個移除。
       disallowedTools: DISALLOWED,
       permissionMode: "default",
       canUseTool: makeToolGuard(allowed, { mode }),

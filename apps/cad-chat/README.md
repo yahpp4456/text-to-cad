@@ -123,7 +123,12 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
   (`emit_*` 推進 UI + `cad_import/cad_build/cad_validate/cad_source_part/cad_present/
   cad_measure/cad_align/cad_export` 實跑 `.venv` 的 `scripts/step`、`scripts/inspect`、
   `geometry_checks`)。產物寫 `models/.cadchat/<session>/`。工具只允許
-  Read/Glob/Grep + cad 工具(canUseTool 沙箱)。
+  Read/Glob/Grep + cad 工具(canUseTool 沙箱)。**SDK 版本相依的兩個釘子**(runner.mjs;
+  升級 Agent SDK 時要回頭看):① `systemPrompt.snapshot:false`——SDK ≥0.3.267 預設把系統
+  提示錄製一次、resume 一律送錄製版,cad-chat 的 append 每回合現算(教訓摘要/匯入註記/
+  rehydrate 註記),不關掉會被凍結到 compaction;② 不傳 `allowedTools` 裸名單——它會在
+  canUseTool 之前直接放行(SDK ≥0.3.198 每次 query 發 `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`
+  warning),白名單語意全在 `makeToolGuard`,harness 層繞過守衛的工具靠 `disallowedTools`。
 - **前端**(`src/`,React + Vite):還原 SUIYAO 6 區;3D 用 `packages/cadjs` three.js
   載入真實 GLB;物件屬性 / 幾何點選來自 GLB 內嵌的 STEP topology。
 
@@ -888,9 +893,14 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
   答完自動出下一張;`answered:"pending"`(POST 進行中)留在原卡顯示「加入中…」)。
   按鈕仍走 App 的 `onLessonOffer`(樂觀收鈕/防雙擊/失敗回滾邏輯不動)。聊天
   LessonOfferCard 未答顯示「請在右側畫布回答 ▸」,答過顯示結果(隨 RESTORE 存活)。
-- **chips 編輯器抽共用 `SpecChips.jsx`**(受控 edits;inline 草稿自持,卸載即棄):
+- **chips 編輯器抽共用 `SpecChips.jsx`**(受控 edits;inline 草稿自持,**失焦即提交**):
   ClarifyWizard 步驟 1 與 SpecPanel 共用;`editableAll` 開關(精靈只讓「假設」可改,
   面板全開)。編輯中 chip 的視覺從硬編碼 `data-assumed="true"` 改 `data-editing`。
+  提交語意(2026-09-23 修):Enter / 點 ✓ / **離開欄位(blur)** 三者都算確認,Escape
+  取消。修前只認 Enter/✓,使用者打完 1500 直接點「確認規格 →」時換步卸載把草稿
+  靜默丟掉,送出的只剩選項原文(內嵌 AI 原值)→ 第一次建模仍用舊值(使用者回報)。
+  守衛:✓ 在 mousedown 攔焦點轉移(否則先 blur 提交再被 ✓ 的空草稿刪掉)、`doneRef`
+  擋收尾後卸載期補的 blur(Escape 不得翻成提交)。回歸:`smoke_clarify_wizard` G/H 段。
 - **讓位規則**:clarify 待答時兩個面板都隱藏(`!clarify`)——精靈步驟 1 本身就是
   規格確認面,scrim 也會蓋住下層互動,不重複、不誤觸。**面板未套用的草稿會轉交
   精靈續用**(SpecPanel `onEditsChange` → App `specDraftRef` → ClarifyWizard

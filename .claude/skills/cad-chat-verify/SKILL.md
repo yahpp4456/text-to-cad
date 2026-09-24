@@ -257,6 +257,12 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `/api/library-glb` 補轉路(等 data: URL,timeout 放寬)。動 shelf/縮圖/端點 →
   smoke_library_mode F 段 + library.test(list/delete)。
 
+- **換過依賴(lockfile 變動)後,第一個起的 dev server 別拿來跑煙測**:vite 開機印
+  「Re-optimizing dependencies because lockfile has changed」的那個實例,實測(2026-09-23
+  升 Agent SDK)整套跑完只有 `smoke_library_mode` E 段(localStorage 回灌)紅、同實例單跑
+  仍紅,但重起後的全新實例單跑/整套三次全綠——實例綁定的假紅,不是產品也不是順序依賴。
+  規矩:lockfile 動過就先起一次讓它優化完、再重起(或再起一個)跑煙測;看到只有回灌類
+  斷言紅先懷疑這根,別急著改產品。
 - **L1 與 L3 不要同時跑**:`asset.user.test.js` 會自己起一個臨時埠的 server,
   煙測(dev server + Playwright + Python build)在跑時 CPU/埠壓力下它會偶發紅
   (單跑必綠、閒置時連跑三輪也綠)。看到它紅先確認有沒有背景煙測在跑。

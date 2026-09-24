@@ -63,7 +63,7 @@ export default function SpecPanel({ spec, readOnly, onSubmitText, onEditsChange 
                 套用修正({editCount})→
               </a>
             ) : (
-              <span className="cw-hint">點任一值即可修改;套用後按修正重生。</span>
+              <span className="cw-hint">點任一值即可修改(離開欄位或按 Enter 即確認);套用後按修正重生。</span>
             )}
           </div>
         </>
