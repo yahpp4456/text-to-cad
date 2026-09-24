@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isDesignLike, isMode, MODES, normalizeMode } from "./chatModes.js";
+import { DEMO_HIDDEN_MODES, isDemoAllowedMode, isDesignLike, isMode, MODES, normalizeMode } from "./chatModes.js";
 
 test("MODES:鎖定聊天模式與順序", () => {
   assert.deepEqual(MODES, ["design", "sketch", "library", "cable"]);
@@ -32,5 +32,13 @@ test("isDesignLike:cable 是設計特化,草模/零件庫/垃圾值都不是", (
   assert.equal(isDesignLike("cable"), true);
   for (const value of ["sketch", "library", "bogus", undefined, null]) {
     assert.equal(isDesignLike(value), false);
+  }
+});
+
+test("isDemoAllowedMode:demo 藏 cable,其餘模式(含缺席=沿用 session)放行", () => {
+  assert.deepEqual(DEMO_HIDDEN_MODES, ["cable"]);
+  assert.equal(isDemoAllowedMode("cable"), false);
+  for (const value of ["design", "sketch", "library", undefined, null]) {
+    assert.equal(isDemoAllowedMode(value), true);
   }
 });

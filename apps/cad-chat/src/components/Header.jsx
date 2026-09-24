@@ -61,7 +61,7 @@ export default function Header({
         )}
       </div>
       {/* 模式切換器:Header 正中央(絕對置中,不擠佔左右功能區) */}
-      {onSwitchMode && <ModeSwitch mode={mode} running={running} onSwitch={onSwitchMode} />}
+      {onSwitchMode && <ModeSwitch mode={mode} running={running} onSwitch={onSwitchMode} demo={demo} />}
       <div className="hdr-right">
         <TypeBadge type={canvasType} partCount={canvasPartCount} />
         {onNewChat && (

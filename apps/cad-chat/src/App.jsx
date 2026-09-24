@@ -14,7 +14,7 @@ import SketchCanvas3D from "./components/canvas/SketchCanvas3D.jsx";
 import VersionTimeline from "./components/versions/VersionTimeline.jsx";
 import { useChatStream } from "./hooks/useChatStream.js";
 import { composeCableSpecText } from "./lib/cableSpec.js";
-import { isDesignLike, normalizeMode } from "./lib/chatModes.js";
+import { isDemoAllowedMode, isDesignLike, normalizeMode } from "./lib/chatModes.js";
 import { isProjectDirty, projectChipLabel } from "./lib/projectState.js";
 import { latestSpecItem, pendingLessonOffer } from "./lib/clarifyText.js";
 import { DEMO_TIP } from "./lib/demo.js";
@@ -1073,6 +1073,7 @@ export default function App() {
   const switchMode = useCallback(
     (next) => {
       if (state.running || next === state.mode) return;
+      if (demo && !isDemoAllowedMode(next)) return; // demo 沒這個分頁;直呼也不放行
       const hasContent = state.items.length > 0 || state.versions.length > 0;
       if (!hasContent) {
         dispatch({ type: "SET_MODE", mode: next });
@@ -1100,8 +1101,16 @@ export default function App() {
         },
       });
     },
-    [state.running, state.mode, state.items.length, state.versions.length, resetChat, projectDirty, state.project],
+    [state.running, state.mode, state.items.length, state.versions.length, resetChat, projectDirty, state.project, demo],
   );
+
+  // demo 校正:持久化快照若殘留 demo 不開放的 mode(cable 分頁對 demo 是藏的),
+  // 一律拉回 design 並開新對話——否則切換器沒有亮著的分段、每則 /api/chat 都 403。
+  useEffect(() => {
+    if (!demo || isDemoAllowedMode(state.mode) || state.running) return;
+    resetChat();
+    dispatch({ type: "SET_MODE", mode: "design" });
+  }, [demo, state.mode, state.running, resetChat]);
 
   // 草模 → 正式設計(升級路徑):切設計模式開新對話,把場景規格摘要 prefill 進
   // composer(不自動送出——AI 動手前,人先過目;匯入元件流程的同一哲學)。

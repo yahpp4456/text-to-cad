@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { isDesignLike, isMode } from "../../lib/chatModes.js";
+import { isDemoAllowedMode, isDesignLike, isMode } from "../../lib/chatModes.js";
 import { demoReady, resolveAuth, resolveDemoQuota } from "../config.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
 import { acquireBusy, getOrCreateSession, persistSession, releaseBusy } from "../sessions.mjs";
@@ -59,7 +59,17 @@ export function chatMiddleware() {
       return;
     }
 
+    // DEMO 不開放的模式(無塵電纜):在 mint session 之前就擋,不留 cable session 落盤。
+    // 前端已藏分頁,這裡是防直呼 API 的伺服器端底線(同 demoGuard 的定位)。
+    if (req.cadchat?.demo && !isDemoAllowedMode(body.mode)) {
+      sendJson(res, 403, { error: "demo_mode_forbidden", mode: body.mode });
+      return;
+    }
     const session = getOrCreateSession(body.sessionId, { mode: body.mode, user: req.cadchat?.user });
+    if (req.cadchat?.demo && !isDemoAllowedMode(session.mode)) {
+      sendJson(res, 403, { error: "demo_mode_forbidden", mode: session.mode });
+      return;
+    }
     // mode 檢查在 busy 409「之前」:mismatch 的請求沒有排隊等鎖的意義。
     // 正常 UI 流程走不到 mismatch(切換 toggle 即開新對話);這是防多分頁/race
     // 的誠實護欄——不靜默改道,回 400 讓前端把 toggle 校正回 session 真相。

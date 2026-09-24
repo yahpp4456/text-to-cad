@@ -16,3 +16,8 @@ export const modeLabel = (v) => MODE_LABELS[v] || String(v || "");
 export const isMode = (v) => MODES.includes(v);
 export const normalizeMode = (v) => (isMode(v) ? v : "design");
 export const isDesignLike = (v) => v === "design" || v === "cable";
+// DEMO(展示身分)不開放的模式:無塵電纜是客戶案件專用工作流(範本/案件/工程圖
+// 都在 demoGuard BLOCKED 名單),對 demo 連分頁都不出——前端 ModeSwitch 藏分段、
+// App 校正持久化殘值,後端 chat.mjs 以此拒絕 cable 回合(403 demo_mode_forbidden)。
+export const DEMO_HIDDEN_MODES = ["cable"];
+export const isDemoAllowedMode = (v) => !DEMO_HIDDEN_MODES.includes(v);

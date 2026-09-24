@@ -123,6 +123,10 @@ def main():
             new_chat = _find(hdr, "新對話")
             C.check("「＋ 新對話」對 demo 不禁用", new_chat and new_chat["disabled"] is None, str(new_chat))
 
+            # 模式切換器:「無塵電纜」分段對 demo 是**藏**(不是禁用)——客戶案件工作流不對展示身分露出
+            C.check("ModeSwitch 無「無塵電纜」分段(藏)", page.locator(".mode-seg[data-mode='cable']").count() == 0)
+            C.check("ModeSwitch 仍有 草模/設計/零件庫 三段", page.locator(".mode-seg").count() == 3)
+
             # 「儲存」(專案綁定)鈕:demo 一樣渲染但禁用;Ctrl+S 不打 /api/save-project。
             # 注入綁定+產物讓鈕出現;斷言完解除綁定,免得之後 reload 被 beforeunload 攔住。
             page.evaluate(
