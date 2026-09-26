@@ -380,21 +380,15 @@ def main() -> int:
     # 4) 運動掃掠干涉 — 產生器宣告 MOTION 時真跑 cadpy sweep;未宣告誠實跳過
     motion, motion_errs = _read_motion(gen_module, named)
     if motion_errs:
-        if motion_only:
-            checks.append({
-                "id": "motion_sweep",
-                "label": _MOTION_LABEL,
-                "ok": True,
-                "skipped": True,
-                "note": "設計模式:略過掃掠;MOTION 宣告無效,運動示意不可用: " + "; ".join(motion_errs[:2]),
-            })
-        else:
-            checks.append({
-                "id": "motion_sweep",
-                "label": _MOTION_LABEL,
-                "ok": False,
-                "note": "MOTION 宣告無效: " + "; ".join(motion_errs[:3]),
-            })
+        # 宣告已知錯誤 = 真 fail(兩條路徑一致;--motion-only 也不偽裝成 skipped,
+        # 否則 agent 的「非 skipped 且 fail 才自修」永遠不觸發)。note 前綴與
+        # pipeline.designChecksFromMeta / lessons signature 同字。
+        checks.append({
+            "id": "motion_sweep",
+            "label": _MOTION_LABEL,
+            "ok": False,
+            "note": "MOTION 宣告無效: " + "; ".join(motion_errs[: 2 if motion_only else 3]),
+        })
     elif motion is None:
         checks.append({
             "id": "motion_sweep",

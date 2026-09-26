@@ -237,6 +237,17 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
   validator 鎖住防漂移);工具集 `agent/tools.sketch.mjs` = 共用 emit_stage/spec/
   clarify/retry(`tools.shared.mjs` 抽取)+ `sketch_present`(驗證失敗回 errors 給
   agent 自修 ≤3 次,不寫檔不 bump;**無 Read/Glob/Grep、無 cad_***)。
+- **可達性預檢(2026-09-26)**:`sketch_present` 在 compile 後、寫檔前跑
+  `findUnreachable`(`sketchEval.js`):每個 drive 掃 `[min,max]` 61 點(其餘停 home,
+  兩 drive 再補四角),任一 `pin_on_line` 派生點 `degenerate`(判別式 < −1e-6·len²,
+  切點附近浮點抖動不算)→ 走同一失敗契約回 `errors[{path:"derived.<id>", message}]`
+  (訊息帶驅動值/桿長/銷到導線最短距離),不寫檔不 bump。播放端仍鉗到切點畫圖
+  (永不 NaN),但「桿長已被違反」不能再當成功呈現。
+- **⇪ 轉為正式設計的 prefill 帶原始場景檔路徑(2026-09-26)**:`lib/promoteText.js`
+  從 `sceneUrl` 的 `file=` 取相對路徑(`models/.cadchat/<id>/versions/vN/<name>.sketch.json`,
+  相對 DATA_ROOT;dev 下 = repo 根 = design agent 的 cwd,`Read` 直接可讀)寫進
+  prefill,叫 design agent 先讀原檔取鉸點/桿長/行程,不憑 label+驅動範圍摘要猜。
+  已知限制:per-user 部署(VM)的路徑相對 DATA_ROOT 而非 agent cwd,可能讀不到。
 - **驅動/傳動先問(2026-07-14)**:需求含運動軸而**未指明「驅動方式(汽缸/馬達)」
   或「傳動呈現(皮帶/齒輪齒條/直接耦合的加工幾何)」→ 必 emit_clarify**(拓撲級
   選擇,猜錯整台重搭;紀律搬自設計模式 prompt 的「未指明驅動必列澄清」)。一次整合
@@ -592,6 +603,11 @@ cable 模式原本只有對話一條路(範例/打字/上傳 STEP 全要 LLM)。
 (b) `cad_validate` / 滑桿重生後一律 `emit("motion")`,前端畫布出現「▶ 運動示意」
 (三角波往復、多 DOF 疊加=ride-along 依宣告序矩陣疊加、非物理模擬);
 (c) travel/angle_deg 引用 `PARAMS` → 滑桿重生後 import 重解析,播放與掃掠自動跟新值。
+**宣告無效(label/axis/couple 引用錯)= 真 fail**(2026-09-26):快路徑
+`designChecksFromMeta` 與 `validate.py --motion-only` 的 `motion_sweep` 列都回
+`ok:false`(非 skipped,note 前綴 `MOTION 宣告無效: `),`runValidateDesign` overall
+跟著 false → agent 的「非 skipped 且 fail 才自修」條件觸發;以前偽裝成 skipped,自修
+永不啟動。「宣告已知錯誤」與「尚未掃掠」是兩件事。
 
 支援兩種 dof:`linear`(沿 axis 平移 travel)與 `revolute`(繞「過 pivot、方向 axis」的軸
 旋轉 angle_deg;= URDF revolute 關節語義)。**嚙合傳動(齒輪齒條/齒輪對)加
@@ -665,7 +681,9 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
   權威 parts,原子寫 `.{name}.step.meta.json` sidecar;`runStep` 讀進 `session.lastBuildMeta`,
   `cad_validate` / 滑桿重生走 `runValidateDesign` **不 spawn 任何 Python**(spawn 路徑
   ≈12s → ~10ms)。checks 六列全 skipped(文案與 `--motion-only` 逐字一致,
-  `designChecksFromMeta` 註解標對照行)、MOTION 照 `emit("motion")` 供「▶ 運動示意」、
+  `designChecksFromMeta` 註解標對照行;例外:MOTION 宣告無效那列是真 fail,見 MOTION 段)、
+  驗證卡標題依覆蓋率(`lib/validateVerdict.js`:全 SKIP=「未執行檢查」灰、部分跑=
+  「N 項通過 · M 項未驗證」、有 fail=「偵測到問題」;skipped 不是通過)、MOTION 照 `emit("motion")` 供「▶ 運動示意」、
   asm manifest 照寫。缺 sidecar(rehydrate 後沒 build 過)退回 `validate.py --motion-only`
   spawn fallback。空洞綠**不**閉環教訓迴圈(閉環由 build 綠的 `noteBuildSuccess` 承擔)。
   注意 build 本身仍執行產生器自帶的 `check_geometry`(cadpy `generation.py` 的 opt-in 閘):
@@ -719,8 +737,15 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
   → 跨回合新 clarify 自動 remount 歸零):
   - 步驟 1/2「確認解析規格」:chips 全列,標「假設」的(琥珀 badge)可點開 **inline 輸入框**
     修改(累積在元件 local state 的 `edits`);按 `確認規格 →` 才進步驟 2(閘門)。
-  - 步驟 2/2「需要你決定」:q + 選項 + 建議組合列;有修改時多「僅套用修正」鈕與修正摘要,
-    `← 返回規格` 可回頭。所有送出走 `composeClarifyReply`(`src/lib/clarifyText.js` 純函式)
+  - 步驟 2/2「選擇配置」(2026-09-26 重設計,回饋「五個動作擠一起看不懂、150 N 與
+    建議組合裡的 100 N 打架」):① 綠框「你改過的值 · 優先套用」列 `k 改為 v` 並明說會蓋掉
+    選項/建議裡的同名項;② 選項改整列卡片,**label 當標題、value 當說明**(prompt 規定
+    value 是完整人話內容,以前只顯示 label 看不到內容),label 尾「(建議)」轉成 AI 建議
+    badge;③ 一顆主按鈕「照 AI 建議組合進行」——有修改時同一顆變「套用我改的值,其餘照
+    AI 建議組合」(送 `submit(null)`,併掉舊的「僅套用修正」連結,回覆語意本來相同);
+    `← 返回修改規格` 回頭。選擇器契約不變(`.canvas-clarify-opt` / `.canvas-clarify-suggest`
+    / `.cw-fixes-only` 有修改才存在 / `.cw-edited` / `.cw-back`),煙測零改動全綠。
+    所有送出走 `composeClarifyReply`(`src/lib/clarifyText.js` 純函式)
     合成一則人話回覆:`規格修正:導軌 改為 HGR20。\n其餘採用:{選項 value}`——
     「規格修正:」前綴是 prompt 契約(個別修正**優先於**選項文字內嵌的假設值)。
 - **「假設」偵測**:emit_spec chips schema 加 `assumed: z.boolean().optional()`(結構化
@@ -738,7 +763,11 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
   前端 events.js 同 helper 防禦一次 + CSS `.clarify-q`/`.canvas-clarify-q` 加
   `white-space: pre-line`(真換行才真的斷行)。
 - **prompt 消冗**:`emit_clarify` 的 question 改為「一兩句描述決策點本身」,不再要求列出
-  各假設值(chips 已承載、精靈步驟 1 會呈現)。
+  各假設值(chips 已承載、精靈步驟 1 會呈現)。2026-09-26 再收:推薦選項 label 尾加
+  「(建議)」(UI 轉 badge)、value 就是完整建議組合;`suggested` **只在沒有任何 option
+  等於完整建議組合時才給**,否則省略——以前 suggested 恆抄一份推薦選項的內容,精靈
+  步驟 2 並排出現兩份一樣的東西。三份 prompt(design/sketch/library)同步;L4 一回合
+  實測(單軸滑台規格不全)→ 4 選項皆帶說明、1 個 AI 建議 badge、suggested 省略。
 
 ### 圖片附件(上傳工程圖跟 AI 討論)
 

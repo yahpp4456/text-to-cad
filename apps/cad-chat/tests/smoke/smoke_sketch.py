@@ -332,6 +332,26 @@ try:
             and page.locator(".version-dl", has_text="精算").count() == 0
             and page.locator(".version-dl", has_text="STEP").count() == 0,
         )
+        # ⇪ 轉為正式設計:確認後切 design 開新對話,prefill 必帶原始場景檔路徑
+        # (審查 F6:只帶 label/驅動範圍會丟掉連桿桿長/鉸點;design agent 要 Read 原檔)
+        page.locator(".version-promote").click()
+        page.wait_for_selector(".confirm-dialog", timeout=5000)
+        page.locator(".confirm-dialog .save-btn:not(.save-cancel)").click()
+        page.wait_for_function(
+            "() => (document.querySelector('textarea.composer-input') || {}).value?.includes('.sketch.json')",
+            timeout=5000,
+        )
+        prefill = page.evaluate("() => document.querySelector('textarea.composer-input').value")
+        c.check(
+            "⇪ 轉為正式設計:切 design + prefill 帶「原始場景檔=models/.cadchat/…/*.sketch.json」+ 機構件/驅動",
+            page.get_attribute(".mode-seg[data-mode=design]", "data-on") == "true"
+            and "原始場景檔=models/.cadchat/" in prefill
+            and ".sketch.json" in prefill
+            and "先 Read 它" in prefill
+            and "驅動=" in prefill,
+            prefill[:160],
+        )
+
         # 混排(防禦):design 模式注入 sketch 版 → type 守衛仍不亮匯出鈕
         page.evaluate(
             """(su) => {

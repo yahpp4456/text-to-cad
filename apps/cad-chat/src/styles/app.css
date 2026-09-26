@@ -2140,8 +2140,8 @@
   display: flex;
   flex-direction: column;
   gap: 9px;
-  width: min(460px, 82%);
-  max-height: 80%;
+  width: min(520px, 86%);
+  max-height: 84%;
   overflow-y: auto; /* 長選項清單保險:超高就卡內捲動,不溢出畫布 */
   background: rgba(255, 255, 255, 0.97);
   border: 1px solid color-mix(in oklab, var(--emit) 55%, #dde2ec);
@@ -2185,18 +2185,23 @@
   color: var(--ink);
   white-space: pre-line; /* 同 .clarify-q:真換行要斷行 */
 }
+/* 選項列(2026-09-26 重設計):整列可點、label 當標題、value 當說明——prompt 規定
+   value 是完整人話內容(會直接當回覆送出),以前只顯示 label 使用者看不到選項內容。 */
 .canvas-clarify-opts {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
 }
 .canvas-clarify-opt {
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   font-size: 12px;
   background: #f4f7fb;
   border: 1px solid #dfe6f0;
-  padding: 6px 12px;
-  clip-path: var(--chamfer-pill);
+  border-left: 3px solid #dfe6f0;
+  padding: 8px 12px;
   transition: 0.15s;
   user-select: none;
 }
@@ -2204,13 +2209,79 @@
   border-color: var(--emit);
   background: color-mix(in oklab, var(--emit) 8%, #fff);
 }
+.canvas-clarify-opt[data-recommended] {
+  border-left-color: var(--emit);
+}
+.cw-opt-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.cw-opt-desc {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.cw-badge {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 8.5px;
+  letter-spacing: 1px;
+  color: #fff;
+  background: var(--emit);
+  padding: 1px 6px;
+  clip-path: var(--chamfer-pill);
+}
+/* 主按鈕:照 AI 建議組合(有修改時同一顆併掉舊的「僅套用修正」,語意相同) */
 .canvas-clarify-suggest {
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   font-size: 12px;
-  color: var(--emit);
+  color: var(--ink);
+  background: color-mix(in oklab, var(--emit) 9%, #fff);
+  border: 1px solid color-mix(in oklab, var(--emit) 55%, #dfe6f0);
+  border-left: 3px solid var(--emit);
+  padding: 8px 12px;
+  transition: 0.15s;
   user-select: none;
 }
-.canvas-clarify-suggest:hover { text-decoration: underline; }
+.canvas-clarify-suggest:hover {
+  background: color-mix(in oklab, var(--emit) 16%, #fff);
+  border-color: var(--emit);
+}
+.cw-suggest-title {
+  font-weight: 700;
+  color: var(--emit);
+}
+.cw-suggest-desc {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.cw-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cw-section {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+}
+.cw-or {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  text-align: center;
+}
 /* ---- 兩步精靈(ClarifyWizard;容器沿用 .canvas-clarify) ---- */
 .cw-head {
   display: flex;
@@ -2315,19 +2386,38 @@
   clip-path: var(--chamfer-pill);
   user-select: none;
 }
+/* 你改過的值(優先套用)區塊:綠框說清楚它會蓋掉選項/建議裡的同名值 */
+.cw-edits {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 12px;
+  background: color-mix(in oklab, var(--part) 6%, #fff);
+  border: 1px solid color-mix(in oklab, var(--part) 45%, #dfe6f0);
+  border-left: 3px solid var(--part);
+}
+.cw-edits .cw-section {
+  color: color-mix(in oklab, var(--part) 75%, var(--ink));
+}
+.cw-edits-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
 .cw-edited {
-  font-size: 11.5px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.cw-edited b {
   color: color-mix(in oklab, var(--part) 70%, var(--ink));
 }
-.cw-fixes-only {
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--part);
-  user-select: none;
+.cw-edits-note {
+  font-size: 11px;
+  color: var(--text-muted);
 }
-.cw-fixes-only:hover { text-decoration: underline; }
 .cw-back {
   cursor: pointer;
+  align-self: flex-start;
   font-size: 11px;
   color: var(--text-muted);
   user-select: none;

@@ -18,6 +18,7 @@ import { isDesignLike, normalizeMode } from "./lib/chatModes.js";
 import { isProjectDirty, projectChipLabel } from "./lib/projectState.js";
 import { latestSpecItem, pendingLessonOffer } from "./lib/clarifyText.js";
 import { DEMO_TIP } from "./lib/demo.js";
+import { buildPromoteText } from "./lib/promoteText.js";
 import { apiUrl } from "@/lib/apiBase";
 import { initialState, reducer } from "./state/chatStore.js";
 
@@ -1114,27 +1115,19 @@ export default function App() {
         actionLabel: "切換並帶入規格",
         accent: "var(--sketch)",
         onConfirm: async () => {
-          let specText = `照草模「${v.title || v.name}」做正式設計:沿用其關節配置與行程;截面、材料與軸承配置由你建議,先列規格再動工。`;
+          // 摘要 + 原始場景檔路徑(design agent 先 Read 取回鉸點/桿長/行程,不憑摘要猜)
+          let doc = null;
           try {
             const r = await fetch(v.sceneUrl);
-            if (r.ok) {
-              const doc = await r.json();
-              const drives = (doc.drives || [])
-                .map((d) => `${d.label || d.id} ${d.min}~${d.max}${d.unit || ""}`)
-                .join("、");
-              const bodies = (doc.bodies || [])
-                .filter((b) => b?.label)
-                .map((b) => b.label)
-                .join("、");
-              specText =
-                `照機構草模「${doc.title || v.name}」做正式設計:` +
-                (bodies ? `機構件=${bodies};` : "") +
-                (drives ? `驅動=${drives};` : "") +
-                `沿用其關節配置與行程,截面、材料與軸承配置由你建議,先列規格再動工。`;
-            }
+            if (r.ok) doc = await r.json();
           } catch {
-            /* fetch 失敗用降級摘要 */
+            /* fetch 失敗用降級摘要(仍帶路徑) */
           }
+          const specText = buildPromoteText({
+            doc,
+            sceneUrl: v.sceneUrl,
+            fallbackName: v.title || v.name,
+          });
           resetChat();
           dispatch({ type: "SET_MODE", mode: "design" });
           dispatch({ type: "SET_PREFILL", text: specText });

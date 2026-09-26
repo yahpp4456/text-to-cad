@@ -7,7 +7,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { anchorWorld, compileSketch, evalPose, evalProgram } from "./sketchEval.js";
+import { anchorWorld, compileSketch, evalPose, evalProgram, findUnreachable } from "./sketchEval.js";
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const load = (name) => JSON.parse(readFileSync(join(FIX, name), "utf8"));
@@ -207,4 +207,49 @@ test("steering:rack 位移 = −17.5·θ(rad)(scale 閉式);pinion 轉動", () =
     evalPose(c, { theta: 45 }, c.attachInitials).readouts.map((r) => [r.label, r]),
   );
   close(byLabel["齒條位移"].value, -17.5 * (Math.PI / 4), 1e-3);
+});
+
+// ---------------------------------------------------------------------------
+// G. findUnreachable:可達性預檢(審查 F1——無解連桿被鉗到切點仍「成功」)
+// ---------------------------------------------------------------------------
+
+test("findUnreachable:四個既有 fixture 全程可達 → 空陣列", () => {
+  for (const f of ["cylinder_tilt.json", "gripper_pickplace.json", "belt_drive.json", "steering_rack.json"]) {
+    const c = compileSketch(load(f));
+    assert.deepEqual(findUnreachable(c), [], f);
+  }
+});
+
+test("findUnreachable:cylinder_tilt 桿長改 1 → derived.pinC 無解,訊息帶驅動值/桿長/最短距離", () => {
+  const doc = load("cylinder_tilt.json");
+  doc.derived.find((e) => e.id === "pinC").link.len = 1;
+  const c = compileSketch(doc);
+  const errs = findUnreachable(c);
+  assert.equal(errs.length, 1); // 每個派生點只報第一筆
+  assert.equal(errs[0].path, "derived.pinC");
+  // θ=0 時銷與導線同高(最短距離 0)仍可達;掃到 ≈12.8° 才首次無解(最短距離 > 1)
+  assert.match(errs[0].message, /連桿 pinC 在 theta=12\.79° 時無解/);
+  assert.match(errs[0].message, /桿長 1 mm 短於銷心到導線最短距離 1\.0\d mm/);
+});
+
+test("evalPose:degenerate 帶相對容差(切點附近 1e-9 級抖動不算無解),minLen 為銷到導線距離", () => {
+  const doc = load("cylinder_tilt.json");
+  // θ=0 時銷 B=(110,25,54)、導線 z=54 → 最短距離 0;桿長 35 綽綽有餘
+  const c = compileSketch(doc);
+  const f0 = evalPose(c, { theta: 0 }, c.attachInitials);
+  assert.equal(f0.derivedPose.pinC.degenerate, false);
+  close(f0.derivedPose.pinC.minLen, 0, 1e-9);
+  // θ=30:B 的 z 差 = 42(1−cos30°) ≈ 5.627 → minLen 即此值
+  const f30 = evalPose(c, { theta: 30 }, c.attachInitials);
+  close(f30.derivedPose.pinC.minLen, 42 * (1 - Math.cos(Math.PI / 6)), 1e-9);
+  // 桿長剛好等於最短距離(切點)減去 1e-9 級 → 相對容差內不判無解
+  const dTangent = load("cylinder_tilt.json");
+  const minLen30 = 42 * (1 - Math.cos(Math.PI / 6));
+  dTangent.derived.find((e) => e.id === "pinC").link.len = minLen30 * (1 - 1e-9);
+  const ct = compileSketch(dTangent);
+  assert.equal(evalPose(ct, { theta: 30 }, ct.attachInitials).derivedPose.pinC.degenerate, false);
+  // 明顯短(差 1%)→ 無解
+  dTangent.derived.find((e) => e.id === "pinC").link.len = minLen30 * 0.99;
+  const cs = compileSketch(dTangent);
+  assert.equal(evalPose(cs, { theta: 30 }, cs.attachInitials).derivedPose.pinC.degenerate, true);
 });
