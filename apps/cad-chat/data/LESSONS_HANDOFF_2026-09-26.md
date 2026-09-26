@@ -2,6 +2,27 @@
 
 給在 VM 上做整合判斷用。整合完可以刪掉這份檔。
 
+## 進度(2026-09-26 晚,兩機各做了什麼)
+
+- **VM 已完成 §4**:VM 活庫是三份快照的超集(12 條 / 101 案,含 VM 獨有 LS-10
+  `manual:motion-phase-couple`、LS-11 `manual:planetary-motion-decompose`、LS-12
+  `build:TypeError`),LS-1/LS-5 已在 VM 活庫與 `data/lessons.vm.json` disable。
+  **VM 沒有 push 憑證**:更新後的 `data/lessons.vm.json` 與本機分支 `vm_debug`
+  (merge commit 350567c = ce4fe94 + 9dd5db1)都還在 VM 上。
+- **sam 已做**:用 7 月 16 日的舊 `lessons.vm.json` 跑了 `merge-lessons --machine sam`,
+  LS-6~LS-9 進活庫、原 pending 5 筆自動連上;刪掉兩筆 ANSI 垃圾案例;`git rm` legacy
+  `data/lessons.json`;disable LS-7、LS-9(VM 建議,與 sam 判斷一致)與 LS-4(為了讓
+  LS-8 塞進 digest)。**LS-10~12 要等 VM 的新快照到這邊再 merge 一次才會進來**;
+  pending 剩 1 筆 `manual:motion-phase-couple`(就是 LS-10 的原始案例,到時自動連上)。
+- **digest 實際容量修正**:`buildDigest` 預算 1000 字元、每條約 200 字,**只塞得下 4~5 條**
+  (不是 §5 寫的 9 條)。sam 現在 active = LS-2、LS-3、LS-6、LS-8,digest 全進。
+  VM 那邊若 LS-4 仍 active,下次合併 union 會把它復活 → VM 也請 disable LS-4,或告訴我
+  你要留 LS-4 捨 LS-8。
+- **把 VM 快照弄過來的最省事做法**:VM 上 `git bundle create /tmp/vm.bundle 9dd5db1..vm_debug`
+  再 scp 到 sam,或最少 scp `apps/cad-chat/data/lessons.vm.json` 一個檔;到 sam 後
+  `merge-lessons --machine sam` 再跑一次(idempotent)。ce4fe94 是 VM 獨有的 commit,
+  裡面有什麼要 VM 說明,不在本筆記範圍。
+
 ## 0. 一句話
 
 sam 機在 2026-09-26 把兩條過期教訓(`build:KeyError`、MOTION 僅 linear)改成 `disabled`,

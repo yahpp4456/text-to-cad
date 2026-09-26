@@ -1678,7 +1678,7 @@
     {
       "id": "LS-4",
       "signature": "build:edits-failed",
-      "status": "active",
+      "status": "disabled",
       "title": "edit錨點勿選含行內註解的整行",
       "rootCause": "以含行內註解(全形空白、易被截斷)的整行當比對錨點,無法與檔案逐字匹配。",
       "rule": "建構cad_build(edits)時,錨點只取不含「#」行內註解、無尾隨空白的穩定程式碼片段(如def行或純賦值左式),並從當前code逐字複製;送出前先確認該錨點在檔中存在且唯一,避免用帶註解或可能被截斷的長行當match目標。",
@@ -1723,7 +1723,7 @@
     {
       "id": "LS-7",
       "signature": "validate:interference",
-      "status": "active",
+      "status": "disabled",
       "title": "預期貼合接觸須同步宣告於模組層",
       "rootCause": "建 seated/貼合介面時未在 harness 讀取的模組層同步宣告 INTENDED_CONTACT,對稱雙指各漏一對,驗證即報未宣告干涉。",
       "rule": "凡零件以面貼合/seated 方式坐進母件,建該幾何的同一步即在模組頂層宣告 INTENDED_CONTACT 對(harness 只讀模組層,勿放函式內);對稱多實例(jaw_a/jaw_b 等)每實例各列一對;展示姿態參數(如 opening)須被行程上限夾住再擺位。",
@@ -1753,7 +1753,7 @@
     {
       "id": "LS-9",
       "signature": "build:Standard_ConstructionError",
-      "status": "active",
+      "status": "disabled",
       "title": "驅動缸須偏置出擺臂旋轉平面",
       "rootCause": "把驅動氣缸軸線放在翻轉臂的旋轉平面內,粗長缸體包絡與臂全擺弧同平面必然重疊。",
       "rule": "以氣缸驅動繞銷旋轉臂時,先比較缸體外徑包絡與臂擺弧包絡:同平面重疊者,將整支氣缸沿橫向(如Y)偏置到臂旋轉平面外並留淨距,臂側做曲折牛腿伸到缸下方承接;桿端與牛腿以clevis銷+長槽連接並宣告INTENDED_CONTACT加公差,勿用間隙凸輪點;掃掠只追移動件對固定件。",
