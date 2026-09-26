@@ -286,19 +286,48 @@ curl -s -u sam:<密碼> 'https://<DOMAIN>/api/files?dir=' | head -c 400         
 - GCP Console 對 VM 磁碟設**快照排程**(最省事);或
 - cron:`tar czf /srv/backups/cadchat-$(date +\%F).tgz /srv/cadchat/data`(週期+保留 N 份)。
 
-## 10. 日常更新 runbook(部署完成後,新功能上線只做這個)
+## 10. 日常更新 runbook(部署完成後,新功能上線只做這個;2026-07-17 實戰修訂)
+
+> 分支一律「開發」(VM部屬 是舊分支,不理)。機器上無 GitHub 憑證:
+> 讀取走匿名(repo public),push 由 Sam 親自做,agent 不經手 token。
 
 ```bash
-cd /opt/cadchat/repo && sudo git pull               # 情況 A 記得先更新來源 checkout
-cd apps/cad-chat
-sudo npm ci && sudo env CADCHAT_BASE_PATH=/cad npm run build  # 必帶 base path;package.json 沒動可跳過 npm ci
-sudo systemctl restart cadchat
-curl -s http://127.0.0.1:8788/api/health            # authMode:"apikey" = 完成
+# 1) 拉更新(merge 必帶 GIT_LFS_SKIP_SMUDGE,否則 LFS smudge 卡憑證 merge 做一半)
+sudo git -C /opt/cadchat/repo fetch origin
+sudo git -C /opt/cadchat/repo log --oneline 開發..origin/開發          # 先看有什麼新的
+sudo env GIT_LFS_SKIP_SMUDGE=1 git -C /opt/cadchat/repo merge --ff-only origin/開發
+
+# 2) 盤點變更,決定下面哪些步要做
+sudo git -C /opt/cadchat/repo diff --stat <舊tip>..開發 -- \
+  apps/cad-chat/package.json apps/cad-chat/package-lock.json packages/cadpy models
+
+# 3) models/** 有新檔 → LFS 實體化(⚠ .lfsconfig 的 fetchexclude 含 models/**,
+#    普通 lfs pull 會「靜默不抓」exit 0;必須覆寫 fetchexclude + 匿名 access)
+cd /opt/cadchat/repo && sudo git -c lfs.fetchexclude= \
+  -c 'lfs.https://github.com/yahpp4456/text-to-cad.git/info/lfs.access=none' \
+  lfs pull --include="models/**"
+sudo git lfs ls-files -I 'models/**' | grep -c ' - '   # 期望 0(殘留 pointer 數)
+
+# 4) packages/cadpy 有動 → 重裝 + 煙測(新增子模組記得加進 import 清單)
+sudo /opt/cadchat/pyenv/bin/pip install --no-deps --force-reinstall /opt/cadchat/repo/packages/cadpy
+sudo -u cadchat /opt/cadchat/pyenv/bin/python -c "import OCP, build123d, ezdxf, cadpy.geometry_checks, cadpy.glb, cadpy.parts, cadpy.motion_decl; print('PY-OK')"
+sudo rm -rf /opt/cadchat/repo/packages/cadpy/build     # pip 殘留物,清掉保持工作樹乾淨
+
+# 5) 前端 build(⚠ 必帶 base path;sudo 會清環境變數,必須寫 sudo env)
+cd /opt/cadchat/repo/apps/cad-chat
+sudo npm ci                                            # package.json/lock 沒動可跳過
+sudo env CADCHAT_BASE_PATH=/cad npm run build
+sudo grep -o 'src="/cad/assets/index-[^"]*"' dist/index.html   # 確認 /cad 前綴
+
+# 6) 重啟 + 驗證(server-only 變更如 prompt.mjs 也要 restart,node 不熱載)
+sudo systemctl restart cadchat && sleep 3
+curl -s http://127.0.0.1:8788/api/health              # ok:true, agentReady:true(authMode 現為 "oauth")
+curl -s 'http://127.0.0.1:8788/api/files?dir='        # fixtures 列表 = 免 LLM pipeline 活著
 ```
 
-只有動到**基礎設施層**才回頭補做:新 Python 依賴 → §4c 的 pyenv 補裝(改了
-`packages/cadpy` 就重跑 `pip install --no-deps` 那行);新必要 env → `/etc/cadchat/env`
-+ restart;換網域/埠 → §7。
+注意:對外 `https://<DOMAIN>/cad/...` 回 401 是登入保護的**預期行為**,驗證走
+本機 127.0.0.1:8788。只有動到**基礎設施層**才回頭補做:新 Python 第三方依賴 →
+§4c 的 pyenv 補裝;新必要 env → `/etc/cadchat/env` + restart;換網域/埠 → §7。
 
 ## 11. 安全模型與誠實殘餘風險
 
