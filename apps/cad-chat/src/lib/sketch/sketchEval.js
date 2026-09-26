@@ -252,11 +252,18 @@ export function evalPose(compiled, driveValues, attachStates) {
       const oa = vSub(e.line.origin, A);
       const b_ = vDot(dn, oa);
       const c_ = vDot(oa, oa) - e.link.len * e.link.len;
-      const disc = Math.max(0, b_ * b_ - c_); // 負值=構型脫離,鉗到切點(仿 ref 防呆)
+      const rawDisc = b_ * b_ - c_;
+      const disc = Math.max(0, rawDisc); // 負值=構型脫離,鉗到切點(仿 ref 防呆;渲染永不 NaN)
       const t = -b_ + (e.branch === "+" ? 1 : -1) * Math.sqrt(disc);
       const P = vAdd(e.line.origin, vScale(dn, t));
       points[id] = P;
-      derivedPose[id] = { point: P, degenerate: b_ * b_ - c_ < 0 };
+      // degenerate 帶相對容差(切點附近的浮點抖動不算無解);minLen=銷心到導線的
+      // 最短距離(桿長至少要這麼長才有解),給 findUnreachable 組可修訊息用。
+      derivedPose[id] = {
+        point: P,
+        degenerate: rawDisc < -1e-6 * e.link.len * e.link.len,
+        minLen: Math.sqrt(Math.max(0, vDot(oa, oa) - b_ * b_)),
+      };
     } else if (e.type === "actuator") {
       const F = resolveAnchor(e.from);
       const T = resolveAnchor(e.to);
@@ -312,6 +319,56 @@ export function evalPose(compiled, driveValues, attachStates) {
   });
 
   return { drives: { ...driveValues }, attach, bodyWorld, jointValues, points, derivedPose, readouts };
+}
+
+// ---------------------------------------------------------------------------
+// findUnreachable:可達性預檢(呈現前的閘;純函數、零 LLM)
+//   每個 drive 在 [min,max] 等距取樣、其餘 drive 停 home(同軌跡預取樣的掃法),
+//   兩 drive 再補四個角落;任一 pin_on_line 派生點 degenerate 即為「連桿無解」——
+//   渲染端會鉗到切點照畫,但宣告桿長已被違反,不能當成功呈現。回 errors[]
+//   (與 validateSketch 同形 {path,message}),每個派生點只報第一筆。
+// ---------------------------------------------------------------------------
+
+export function findUnreachable(compiled, { samples = 61 } = {}) {
+  const errors = [];
+  const seen = new Set();
+  const pins = compiled.doc.derived.filter((e) => e.type === "pin_on_line");
+  if (!pins.length) return errors;
+  const drives = compiled.doc.drives;
+  const fmt = (x) => (Math.round(x * 100) / 100).toString();
+  const probe = (driveValues, where) => {
+    const frame = evalPose(compiled, driveValues, compiled.attachInitials);
+    for (const e of pins) {
+      if (seen.has(e.id)) continue;
+      const pose = frame.derivedPose[e.id];
+      if (!pose?.degenerate) continue;
+      seen.add(e.id);
+      errors.push({
+        path: `derived.${e.id}`,
+        message:
+          `連桿 ${e.id} 在 ${where} 時無解:桿長 ${fmt(e.link.len)} mm 短於銷心到導線最短距離 ` +
+          `${fmt(pose.minLen)} mm,請加長桿、移鉸點或縮小行程`,
+      });
+    }
+  };
+  for (const d of drives) {
+    for (let i = 0; i <= samples; i++) {
+      const v = d.min + ((d.max - d.min) * i) / samples;
+      probe({ ...compiled.homeDrives, [d.id]: v }, `${d.id}=${fmt(v)}${d.unit || ""}`);
+    }
+  }
+  if (drives.length === 2) {
+    const [a, b] = drives;
+    for (const va of [a.min, a.max]) {
+      for (const vb of [b.min, b.max]) {
+        probe(
+          { [a.id]: va, [b.id]: vb },
+          `${a.id}=${fmt(va)}${a.unit || ""}、${b.id}=${fmt(vb)}${b.unit || ""}`,
+        );
+      }
+    }
+  }
+  return errors;
 }
 
 // anchor → 世界座標(給軌跡/外部 UI 用;frame 為 evalPose 輸出)

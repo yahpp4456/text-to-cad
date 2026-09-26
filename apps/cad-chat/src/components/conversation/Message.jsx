@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { isAssumedChip, stripAssumedTag } from "../../lib/clarifyText.js";
+import { VERDICT_COLOR, verdictFor } from "../../lib/validateVerdict.js";
 import TypeBadge from "../TypeBadge.jsx";
 
 // AI 氣泡的 markdown 元件覆寫:連結一律新分頁 + 安全 rel;表格包一層可橫向捲動的盒
@@ -167,7 +168,9 @@ function ToolCard({ it, onToggle }) {
 }
 
 function ValidateCard({ it }) {
-  const accent = it.ok ? "var(--part)" : "var(--danger)";
+  // 標題依覆蓋率:全 SKIP=未執行檢查(灰)、部分跑=N 項通過 · M 項未驗證、有 fail=偵測到問題
+  const verdict = verdictFor(it);
+  const accent = VERDICT_COLOR[verdict.tone];
   return (
     <div className="card validate-card" style={{ "--ac": accent }}>
       <div className="card-head validate-head">
@@ -177,8 +180,8 @@ function ValidateCard({ it }) {
           {it.partCount > 1 ? ` · ${it.partCount} 件` : ""}
         </span>
         {it.ms != null && <span className="tool-dur">{(it.ms / 1000).toFixed(1)} s</span>}
-        <span className="validate-verdict" style={{ color: accent }}>
-          {it.ok ? "全部通過" : "偵測到問題"}
+        <span className="validate-verdict" style={{ color: accent }} data-tone={verdict.tone}>
+          {verdict.text}
         </span>
       </div>
       <div className="validate-list">

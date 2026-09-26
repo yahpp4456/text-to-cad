@@ -102,15 +102,18 @@ test("designChecksFromMeta:單件 / 無 MOTION / MOTION 錯誤三分支", () => 
   assert.equal(by1.interference.note, "單一零件,無需檢查");
   assert.equal(by1.motion_sweep.note, "未提供運動學");
 
-  // motionErrs 取前 2 條(agent 自修 MOTION 的回饋通道)
+  // motionErrs 取前 2 條,且是**真 fail**(非 skipped)——agent 自修 MOTION 的回饋
+  // 通道靠「非 skipped 且 fail」觸發;偽裝成 skipped 就永遠不修(審查 F2)。
   const errs = designChecksFromMeta({
     ...META, motion: null, motionErrs: ["e1", "e2", "e3"],
   });
   const by2 = Object.fromEntries(errs.map((c) => [c.id, c]));
-  assert.equal(
-    by2.motion_sweep.note,
-    "設計模式:略過掃掠;MOTION 宣告無效,運動示意不可用: e1; e2",
-  );
+  assert.equal(by2.motion_sweep.note, "MOTION 宣告無效: e1; e2");
+  assert.equal(by2.motion_sweep.ok, false);
+  assert.equal(by2.motion_sweep.skipped, false);
+  assert.equal(by2.motion_sweep.label, "運動掃掠干涉 motion-sweep");
+  // 其餘五列仍是 skipped(宣告錯誤不牽連別的檢查)
+  assert.ok(errs.filter((c) => c.id !== "motion_sweep").every((c) => c.skipped && c.ok));
 });
 
 // ---------------------------------------------------------------------------
@@ -140,6 +143,24 @@ test("runValidateDesign:零 spawn 組結果 + 寫 asm manifest + _lastValidate �
     assert.equal(manifest.partCount, 3);
     // 空洞綠 ≠ verified:stamp 必須是 false;_lastValidate 綁 name(memo 中毒防護)
     assert.deepEqual(s._lastValidate, { name: "foo", full: false, ok: true });
+    assert.equal(versionStamp(s, "foo").verified, false);
+  } finally {
+    fs.rmSync(s.workdir, { recursive: true, force: true });
+  }
+});
+
+test("runValidateDesign:MOTION 宣告無效 → overall ok=false(非硬編 true)、_lastValidate.ok=false", async () => {
+  const s = tmpSession("rvd-err");
+  try {
+    fs.writeFileSync(path.join(s.workdir, "foo.py"), "PARAMS = {}\n", "utf8");
+    s.lastBuildMeta = { name: "foo", ...META, motion: null, motionErrs: ["unknown moving label"] };
+    const val = await runValidateDesign(s, "foo", {});
+    assert.equal(val.ok, false);
+    assert.equal(val.design, true);
+    const ms = val.checks.find((c) => c.id === "motion_sweep");
+    assert.equal(ms.ok, false);
+    assert.equal(ms.skipped, false);
+    assert.deepEqual(s._lastValidate, { name: "foo", full: false, ok: false });
     assert.equal(versionStamp(s, "foo").verified, false);
   } finally {
     fs.rmSync(s.workdir, { recursive: true, force: true });

@@ -1,0 +1,428 @@
+{
+ "schemaVersion": 1,
+ "name": "cylinder_tilt_platform",
+ "title": "水平氣缸推式平台前傾 30°",
+ "bodies": [
+  {
+   "id": "base",
+   "label": "機架",
+   "role": "frame",
+   "parent": "world",
+   "origin": [
+    0,
+    0,
+    0
+   ],
+   "joint": {
+    "type": "fixed",
+    "axis": [
+     0,
+     0,
+     1
+    ],
+    "drive": null,
+    "scale": 1,
+    "offset": 0
+   },
+   "partsFrom": null,
+   "parts": [
+    {
+     "type": "box",
+     "size": [
+      520,
+      260,
+      10
+     ],
+     "at": [
+      110,
+      100,
+      5
+     ]
+    },
+    {
+     "type": "plate",
+     "size": [
+      50,
+      65
+     ],
+     "t": 10,
+     "r": 10,
+     "axis": "y",
+     "at": [
+      100,
+      -20,
+      37.5
+     ]
+    },
+    {
+     "type": "plate",
+     "size": [
+      50,
+      65
+     ],
+     "t": 10,
+     "r": 10,
+     "axis": "y",
+     "at": [
+      100,
+      220,
+      37.5
+     ]
+    },
+    {
+     "type": "cylinder",
+     "axis": "y",
+     "r": 5,
+     "len": 270,
+     "at": [
+      100,
+      100,
+      60
+     ],
+     "role": "pin"
+    },
+    {
+     "type": "box",
+     "size": [
+      40,
+      60,
+      45
+     ],
+     "at": [
+      330,
+      100,
+      32.5
+     ]
+    },
+    {
+     "type": "box",
+     "size": [
+      24,
+      60,
+      30
+     ],
+     "at": [
+      -112,
+      100,
+      25
+     ]
+    },
+    {
+     "type": "hole",
+     "axis": "z",
+     "r": 5,
+     "depth": 6,
+     "at": [
+      -130,
+      -10,
+      10
+     ]
+    },
+    {
+     "type": "hole",
+     "axis": "z",
+     "r": 5,
+     "depth": 6,
+     "at": [
+      -130,
+      210,
+      10
+     ]
+    },
+    {
+     "type": "hole",
+     "axis": "z",
+     "r": 5,
+     "depth": 6,
+     "at": [
+      350,
+      -10,
+      10
+     ]
+    },
+    {
+     "type": "hole",
+     "axis": "z",
+     "r": 5,
+     "depth": 6,
+     "at": [
+      350,
+      210,
+      10
+     ]
+    }
+   ]
+  },
+  {
+   "id": "platform",
+   "label": "平台(輸出)",
+   "role": "output",
+   "parent": "world",
+   "origin": [
+    100,
+    100,
+    60
+   ],
+   "joint": {
+    "type": "revolute",
+    "axis": [
+     0,
+     -1,
+     0
+    ],
+    "drive": "theta",
+    "scale": 1,
+    "offset": 0
+   },
+   "partsFrom": null,
+   "parts": [
+    {
+     "type": "cylinder",
+     "axis": "y",
+     "r": 10,
+     "len": 226,
+     "at": [
+      0,
+      0,
+      0
+     ],
+     "role": "clevis"
+    },
+    {
+     "type": "plate",
+     "size": [
+      300,
+      200
+     ],
+     "t": 10,
+     "r": 12,
+     "axis": "z",
+     "at": [
+      130,
+      0,
+      0
+     ]
+    },
+    {
+     "type": "box",
+     "size": [
+      16,
+      20,
+      50
+     ],
+     "at": [
+      0,
+      0,
+      -20
+     ]
+    },
+    {
+     "type": "pin_clevis",
+     "axis": "y",
+     "at": [
+      0,
+      0,
+      -35
+     ]
+    }
+   ]
+  },
+  {
+   "id": "rodend",
+   "label": "連桿銷",
+   "role": "pin",
+   "parent": {
+    "point": "pinC"
+   },
+   "origin": [
+    0,
+    0,
+    0
+   ],
+   "joint": {
+    "type": "fixed",
+    "axis": [
+     0,
+     0,
+     1
+    ],
+    "drive": null,
+    "scale": 1,
+    "offset": 0
+   },
+   "partsFrom": null,
+   "parts": [
+    {
+     "type": "cylinder",
+     "axis": "y",
+     "r": 5,
+     "len": 36,
+     "at": [
+      0,
+      0,
+      0
+     ]
+    }
+   ]
+  }
+ ],
+ "drives": [
+  {
+   "id": "theta",
+   "label": "前傾角 θ",
+   "unit": "°",
+   "min": 0,
+   "max": 30,
+   "home": 0,
+   "speed": 10
+  }
+ ],
+ "derived": [
+  {
+   "type": "pin_on_line",
+   "id": "pinC",
+   "line": {
+    "origin": [
+     0,
+     100,
+     25
+    ],
+    "dir": [
+     1,
+     0,
+     0
+    ]
+   },
+   "link": {
+    "to": {
+     "body": "platform",
+     "at": [
+      0,
+      0,
+      -35
+     ]
+    },
+    "len": 120
+   },
+   "branch": "-"
+  },
+  {
+   "type": "actuator",
+   "id": "cyl",
+   "from": {
+    "body": "base",
+    "at": [
+     -100,
+     100,
+     25
+    ]
+   },
+   "to": {
+    "point": "pinC"
+   },
+   "look": {
+    "bore": 25,
+    "label": "汽缸",
+    "role": "actuator"
+   }
+  },
+  {
+   "type": "coupler",
+   "id": "link",
+   "from": {
+    "point": "pinC"
+   },
+   "to": {
+    "body": "platform",
+    "at": [
+     0,
+     0,
+     -35
+    ]
+   },
+   "look": {
+    "eyeR": 8,
+    "label": "連桿",
+    "role": "coupler"
+   }
+  }
+ ],
+ "program": {
+  "mode": "pingpong"
+ },
+ "readouts": [
+  {
+   "kind": "drive",
+   "drive": "theta",
+   "label": "前傾角 θ",
+   "id": "r0",
+   "decimals": 1,
+   "factor": 1,
+   "unit": ""
+  },
+  {
+   "kind": "stroke",
+   "actuator": "cyl",
+   "label": "缸桿行程",
+   "id": "r1",
+   "decimals": 2,
+   "unit": "mm"
+  },
+  {
+   "kind": "angle",
+   "at": {
+    "body": "platform",
+    "at": [
+     0,
+     0,
+     -35
+    ]
+   },
+   "arms": [
+    {
+     "body": "platform",
+     "at": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "point": "pinC"
+    }
+   ],
+   "label": "傳動角 μ",
+   "thresholds": [
+    30,
+    45
+   ],
+   "id": "r2",
+   "fold": true,
+   "decimals": 1,
+   "unit": ""
+  }
+ ],
+ "annotations": [
+  {
+   "type": "trace",
+   "point": {
+    "body": "platform",
+    "at": [
+     280,
+     0,
+     5
+    ]
+   },
+   "drive": "theta",
+   "samples": 40
+  }
+ ],
+ "camera": {
+  "target": [
+   110,
+   100,
+   80
+  ],
+  "distance": 820
+ }
+}

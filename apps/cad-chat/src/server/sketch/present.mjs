@@ -10,7 +10,7 @@ import { BASE_PATH, resolveMaxSnapshots } from "../config.mjs";
 import { persistSession } from "../sessions.mjs";
 import { pruneSnapshots, sanitizeName, snapshotDir } from "../cad/pipeline.mjs";
 import { scrubPaths } from "../cad/python.mjs";
-import { compileSketch } from "../../lib/sketch/sketchEval.js";
+import { compileSketch, findUnreachable } from "../../lib/sketch/sketchEval.js";
 import { validateSketch } from "../../lib/sketch/sketchSchema.js";
 
 export function sketchFileName(name) {
@@ -25,14 +25,19 @@ export function presentSketch(session, { name, scene }, emit) {
   if (!res.ok) return { ok: false, errors: res.errors, warnings: res.warnings };
   // 驗證過但求值器編不動(理論上不該發生)也走同一失敗契約,別寫下viewer
   // 打不開的場景。compile 是純 JS(毫秒級),同時預跑致動器配尺寸/軌跡取樣。
+  let compiled;
   try {
-    compileSketch(res.doc);
+    compiled = compileSketch(res.doc);
   } catch (err) {
     const errors = Array.isArray(err?.errors)
       ? err.errors
       : [{ path: "", message: String(err?.message || err) }];
     return { ok: false, errors, warnings: res.warnings };
   }
+  // 可達性預檢:連桿在行程內任一點無解(求值器會鉗到切點照畫,但宣告桿長已被
+  // 違反)→ 同一失敗契約回 agent 自修,不能當成功呈現。
+  const unreachable = findUnreachable(compiled);
+  if (unreachable.length) return { ok: false, errors: unreachable, warnings: res.warnings };
   const part = sanitizeName(name || res.doc.name || "sketch");
   writeSketchScene(session, part, res.doc);
   const out = emitSketchPresent(session, part, emit);

@@ -43,7 +43,7 @@ emit_clarify 的 question/options/suggested、emit_spec 的 chips)就用哪種�
 1 訪談:emit_stage(1) → \`emit_spec\` 列你已知/推測的中繼資料 chips(名稱/型號、
   family、廠牌/來源、備註;凡是你自行推測的一律標 \`assumed:true\`)→
   \`emit_clarify\` **一次問齊**缺的欄位(question 一兩句;options 給 family 或型號
-  候選;suggested 給你最有把握的完整答案)→ 結束回合等回答。使用者的回答可能是
+  候選,你最有把握的那個 label 尾加「(建議)」;suggested 只在沒有任何 option 等於你的完整答案時才給,別把推薦選項再抄一份)→ 結束回合等回答。使用者的回答可能是
   「規格修正:<k> 改為 <v>;…」形——照修正值採納,不再重問。全部欄位已明給 →
   免問直接進 2。
 2 收庫:emit_stage(2) → \`library_add(file, label, slug, family, notes, source?)\` →

@@ -294,6 +294,26 @@ with sync_playwright() as p:
             page.locator(".user-bubble").count() == 1
             and page.locator(".user-bubble[data-mode]").count() == 0)
 
+    # 驗證卡標題依覆蓋率(審查 F8):全 SKIP 不得顯示「全部通過」
+    page.evaluate(
+        "() => window.__cadDispatch({ type: 'ADD_ITEM', item: { type: 'validate', ok: true, attempt: 1, ms: 3,"
+        " partCount: 1, checks: ['a','b','c'].map((id) => ({ label: id, icon: '–', color: '#a3acba', note: 'SKIP', skipped: true })) } })"
+    )
+    page.wait_for_selector(".validate-verdict", timeout=5000)
+    c.check("D: 全 SKIP 的快速驗證卡 → 標題「未執行檢查」(muted),非「全部通過」",
+            page.locator(".validate-verdict").last.inner_text().strip() == "未執行檢查"
+            and page.locator(".validate-verdict").last.get_attribute("data-tone") == "muted",
+            page.locator(".validate-verdict").last.inner_text())
+    page.evaluate(
+        "() => window.__cadDispatch({ type: 'ADD_ITEM', item: { type: 'validate', ok: true, attempt: 1, ms: 3,"
+        " partCount: 1, checks: [1,2,3,4].map(() => ({ label: 'p', icon: '✓', color: '#34ab86', note: 'PASS', skipped: false }))"
+        ".concat([1,2].map(() => ({ label: 's', icon: '–', color: '#a3acba', note: 'SKIP', skipped: true }))) } })"
+    )
+    page.wait_for_function("() => document.querySelectorAll('.validate-verdict').length >= 2", timeout=5000)
+    c.check("D: 4 過 + 2 略過 → 標題「4 項通過 · 2 項未驗證」",
+            page.locator(".validate-verdict").last.inner_text().strip() == "4 項通過 · 2 項未驗證",
+            page.locator(".validate-verdict").last.inner_text())
+
     c.check("D 頁無 JS 錯誤", not errs_d, "; ".join(errs_d[:3]))
     page.screenshot(path=out_path("smoke_verify_gate_ui.png"))
     page.close()

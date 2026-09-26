@@ -587,19 +587,27 @@ export async function runValidate(session, name, { signal, motionOnly = false } 
 // validate.py --motion-only spawn。實際模式/精算一律走上面的 runValidate。
 // ---------------------------------------------------------------------------
 
-// 六列全 skipped 的 checks。文案逐字對齊 validate.py --motion-only 的輸出
+// 六列 checks(正常全 skipped)。文案逐字對齊 validate.py --motion-only 的輸出
 // (validate.py 的 _check_* 各分支;pipeline.design.test.js 釘死,改一邊必改另一邊)
-// ——motion_sweep 列帶 motionErrs 前 2 條是 agent 自修 MOTION 宣告錯誤的回饋通道。
+// ——motion_sweep 列在 motionErrs 非空時是**真 fail**(非 skipped):「宣告已知錯誤」
+// 與「尚未做掃掠」是兩件事,前者要觸發 agent 的自修條件(prompt 只對非 skipped 的
+// fail 自修;審查 F2)。note 前綴與 validate.py full 模式、lessons signature 同字。
 export function designChecksFromMeta(meta) {
   const skip = (id, label, note) => ({ id, label, ok: true, skipped: true, note });
-  let motionNote;
+  const MOTION_LABEL = "運動掃掠干涉 motion-sweep";
+  let motionRow;
   if (meta.motionErrs.length) {
-    motionNote =
-      "設計模式:略過掃掠;MOTION 宣告無效,運動示意不可用: " + meta.motionErrs.slice(0, 2).join("; ");
+    motionRow = {
+      id: "motion_sweep",
+      label: MOTION_LABEL,
+      ok: false,
+      skipped: false,
+      note: "MOTION 宣告無效: " + meta.motionErrs.slice(0, 2).join("; "),
+    };
   } else if (!meta.motion) {
-    motionNote = "未提供運動學";
+    motionRow = skip("motion_sweep", MOTION_LABEL, "未提供運動學");
   } else {
-    motionNote = "設計模式:略過掃掠(未驗證)";
+    motionRow = skip("motion_sweep", MOTION_LABEL, "設計模式:略過掃掠(未驗證)");
   }
   return [
     skip("valid_solid", "封閉性 / 有效實體 (watertight)", "設計模式:略過驗證(未驗證)"),
@@ -609,7 +617,7 @@ export function designChecksFromMeta(meta) {
       "零件干涉 interference",
       meta.partCount >= 2 ? "設計模式:略過驗證(未驗證)" : "單一零件,無需檢查",
     ),
-    skip("motion_sweep", "運動掃掠干涉 motion-sweep", motionNote),
+    motionRow,
     skip("wall_thickness", "壁厚 wall-thickness", "pipeline 未支援"),
     // 零 spawn 後沒有 inspect 的 bbox/faceCount:誠實標 SKIP(精算此版會補真值)
     skip("facts", "拓撲 / 尺寸 topology", "設計模式:略過檢查(未驗證)"),
@@ -627,9 +635,12 @@ export async function runValidateDesign(session, name, { signal } = {}) {
     } catch {
       // manifest 寫失敗不影響(type 有 lastPartCount fallback)
     }
-    session._lastValidate = { name: sanitizeName(name), full: false, ok: true }; // 全 skipped 的空洞綠 ≠ verified
+    // 與 runValidate 同式:skipped 視為通過(空洞綠 ≠ verified,stamp 另管),
+    // 但 MOTION 宣告無效那列是真 fail → overall false,agent 自修才會啟動。
+    const ok = checks.every((c) => c.skipped || c.ok);
+    session._lastValidate = { name: sanitizeName(name), full: false, ok };
     return {
-      ok: true, // 與 --motion-only「全 skipped → overall true」語意一致
+      ok,
       checks,
       motion: meta.motion || null,
       partCount: meta.partCount,

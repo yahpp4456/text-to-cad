@@ -1481,7 +1481,7 @@
     {
       "id": "LS-1",
       "signature": "build:KeyError",
-      "status": "active",
+      "status": "disabled",
       "title": "參數重生須合併非取代",
       "rootCause": "參數重生用局部 edit dict 覆蓋整個 PARAMS,丟失產生器仍引用的既有鍵(如 jaw_stroke)",
       "rule": "參數重生時把使用者提供的局部鍵合併到現有完整 PARAMS 之上,保留所有原鍵,絕不用局部 dict 重建 PARAMS;且產生器引用的每個 PARAMS 鍵都要有預設值,使部分重生不會 KeyError。",
@@ -1544,7 +1544,7 @@
     {
       "id": "LS-5",
       "signature": "turn:agent_error",
-      "status": "active",
+      "status": "disabled",
       "title": "迴轉/齒條/弧槽輸出勿硬塞線性MOTION且勿一次生成過大碼",
       "rootCause": "輸出為旋轉/齒條/弧槽等非線性運動且規格龐雜時,代理硬塞進僅支援linear的MOTION v1並單次生成過大程式,觸發執行或tool call解析失敗",
       "rule": "當輸出運動為旋轉、齒條-小齒輪或弧形導槽等MOTION v1(僅linear)無法表達者,勿宣告不支援的運動對;只宣告驅動缸的線性DOF,旋轉輸出以靜態幾何(角度常數)呈現,並即使未達8件也按子系統拆分builder、分段小量emit,避免單次過長tool call被截斷或執行失敗",

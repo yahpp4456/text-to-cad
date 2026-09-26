@@ -1,0 +1,63 @@
+{
+ "schemaVersion": 1,
+ "parts": [
+  "frame",
+  "platform",
+  "link",
+  "knuckle",
+  "hinge_pin",
+  "pin_plat",
+  "pin_rod",
+  "cyl_body",
+  "cyl_rod"
+ ],
+ "partCount": 9,
+ "motion": {
+  "schemaVersion": 1,
+  "dofs": [
+   {
+    "id": "theta",
+    "label": "前傾角 θ",
+    "type": "revolute",
+    "axis": [
+     0.0,
+     -1.0,
+     0.0
+    ],
+    "moving": [
+     "platform",
+     "pin_plat"
+    ],
+    "period_s": 4.0,
+    "pivot": [
+     100.0,
+     100.0,
+     70.0
+    ],
+    "angle_deg": 25.0
+   },
+   {
+    "id": "rod",
+    "label": "缸桿行程",
+    "type": "linear",
+    "axis": [
+     1.0,
+     0.0,
+     0.0
+    ],
+    "moving": [
+     "cyl_rod",
+     "knuckle",
+     "pin_rod",
+     "link"
+    ],
+    "period_s": 4.0,
+    "travel": 14.836453081677424,
+    "couple": "theta"
+   }
+  ]
+ },
+ "motionErrs": [],
+ "sweepPaths": [],
+ "sweepView": null
+}

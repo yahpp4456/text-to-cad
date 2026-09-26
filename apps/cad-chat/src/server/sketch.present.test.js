@@ -56,6 +56,26 @@ test("非法 scene → {ok:false, errors};不寫檔、不 bump、零事件(無�
   }
 });
 
+test("無解連桿(桿長 1)→ {ok:false, errors[derived.pinC]};不寫檔、不 bump、零事件(可達性預檢)", () => {
+  const s = makeSession("unreach");
+  const { events, emit } = collector();
+  try {
+    const scene = JSON.parse(JSON.stringify(FIXTURE));
+    scene.derived.find((e) => e.id === "pinC").link.len = 1;
+    const r = presentSketch(s, { name: "bad2", scene }, emit);
+    assert.equal(r.ok, false);
+    assert.equal(r.errors.length, 1);
+    assert.equal(r.errors[0].path, "derived.pinC");
+    assert.match(r.errors[0].message, /無解/);
+    assert.equal(fs.existsSync(path.join(s.workdir, "bad2.sketch.json")), false);
+    assert.equal(s.version, 0);
+    assert.equal(s.lastName, null);
+    assert.deepEqual(events, []);
+  } finally {
+    fs.rmSync(s.workdir, { recursive: true, force: true });
+  }
+});
+
 test("合法 scene → 寫檔+快照+三事件(type:sketch、sceneUrl、無 glbUrl/verified/mode)", () => {
   const s = makeSession("ok");
   const { events, emit } = collector();
