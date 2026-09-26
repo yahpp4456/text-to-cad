@@ -34,6 +34,9 @@ const BASE = normalizeBase(process.env.CADCHAT_BASE_PATH || "/cad");
 const WEBAUTH = process.env.CADCHAT_WEBAUTH || "/etc/cadchat/webauth";
 const DEMO_PW_FILE = process.env.CADCHAT_DEMO_PASSWORD_FILE || "/etc/cadchat/demo-password";
 const DEMO_PW2_FILE = process.env.CADCHAT_DEMO_PASSWORD2_FILE || "/etc/cadchat/demo-password2";
+const DEMO_PW3_FILE = process.env.CADCHAT_DEMO_PASSWORD3_FILE || "/etc/cadchat/demo-password3";
+const DEMO_PW4_FILE = process.env.CADCHAT_DEMO_PASSWORD4_FILE || "/etc/cadchat/demo-password4";
+const DEMO_PW5_FILE = process.env.CADCHAT_DEMO_PASSWORD5_FILE || "/etc/cadchat/demo-password5";
 const DEMO_SECRET_FILE = process.env.CADCHAT_DEMO_SECRET_FILE || "/etc/cadchat/demo-secret";
 const DEMO_TTL = Number.parseInt(process.env.CADCHAT_DEMO_TTL_SECONDS || "7200", 10);
 // demo 同時在線人數上限(CADCHAT_DEMO_MAX_USERS,預設 50,0=不限)。閒置超過
@@ -138,13 +141,50 @@ function readDemoPasswordHash2() {
     return null;
   }
 }
-function checkDemoPassword(input) {
+// 第三組臨時密碼(選配):檔案不存在即略過。輪換腳本不動此檔——要限時效,
+// 用排程(systemd-run 一次性單元)到點刪檔即可,proxy 每請求即時讀檔立即失效。
+function readDemoPasswordHash3() {
+  try {
+    return fs.readFileSync(DEMO_PW3_FILE, "utf8").trim().toLowerCase();
+  } catch {
+    return null;
+  }
+}
+// 第四組臨時密碼(選配):同第三組,獨立檔案、獨立到期排程。
+function readDemoPasswordHash4() {
+  try {
+    return fs.readFileSync(DEMO_PW4_FILE, "utf8").trim().toLowerCase();
+  } catch {
+    return null;
+  }
+}
+// 第五組臨時密碼(選配):同第三、四組。
+function readDemoPasswordHash5() {
+  try {
+    return fs.readFileSync(DEMO_PW5_FILE, "utf8").trim().toLowerCase();
+  } catch {
+    return null;
+  }
+}
+// 回傳命中的密碼槽名(pw1=輪換主密碼 / pw2=永久 / pw3~pw5=臨時),未命中回 null;
+// 登入 log 帶槽名,方便日後查「某組臨時密碼有沒有人用過」。
+function matchDemoPassword(input) {
   const stored = readDemoPasswordHash();
-  if (!stored) return false;
+  if (!stored) return null;
   const got = crypto.createHash("sha256").update(String(input), "utf8").digest("hex");
-  if (safeEqual(got, stored)) return true;
+  if (safeEqual(got, stored)) return "pw1";
   const stored2 = readDemoPasswordHash2();
-  return !!stored2 && safeEqual(got, stored2);
+  if (!!stored2 && safeEqual(got, stored2)) return "pw2";
+  const stored3 = readDemoPasswordHash3();
+  if (!!stored3 && safeEqual(got, stored3)) return "pw3";
+  const stored4 = readDemoPasswordHash4();
+  if (!!stored4 && safeEqual(got, stored4)) return "pw4";
+  const stored5 = readDemoPasswordHash5();
+  if (!!stored5 && safeEqual(got, stored5)) return "pw5";
+  return null;
+}
+function checkDemoPassword(input) {
+  return matchDemoPassword(input) !== null;
 }
 function mintCookie() {
   const vid = crypto.randomBytes(8).toString("hex"); // 16 hex → demo-<16hex> = 21 字元,過 USER_RE
@@ -615,7 +655,8 @@ function handle(req, res) {
       }
       readForm(req, (form) => {
         const ua = String(req.headers["user-agent"] || "").slice(0, 120);
-        if (form && checkDemoPassword(form.password)) {
+        const slot = form ? matchDemoPassword(form.password) : null;
+        if (slot) {
           if (demoAtCapacity()) {
             console.log(`demo 登入擋下(已滿 ${demoMaxUsers()})· IP ${ip}`);
             res.writeHead(503, { "content-type": "text/html; charset=utf-8" });
@@ -627,7 +668,7 @@ function handle(req, res) {
           setCookie(res, value, DEMO_TTL);
           res.writeHead(302, { location: `${BASE}/` });
           res.end();
-          console.log(`demo 登入 OK · IP ${ip} · 在線 ${demoOnlineCount()}/${demoMaxUsers() || "∞"} · UA ${ua}`);
+          console.log(`demo 登入 OK(${slot})· IP ${ip} · 在線 ${demoOnlineCount()}/${demoMaxUsers() || "∞"} · UA ${ua}`);
         } else {
           console.log(`demo 登入失敗(密碼錯)· IP ${ip}`);
           res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
