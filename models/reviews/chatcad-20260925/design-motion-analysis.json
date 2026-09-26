@@ -1,0 +1,90 @@
+{
+  "method": "Generated MOTION evaluated with production frameMatrix; local initial pin and eye centers from generator",
+  "samples": [
+    {
+      "u": 0,
+      "angleDeg": 0,
+      "platformPin": [
+        100,
+        100,
+        35
+      ],
+      "linkEye": [
+        100,
+        100,
+        35
+      ],
+      "centerErrorMm": 0,
+      "renderedRodTravelMm": 0,
+      "closedFormRodTravelMm": 0
+    },
+    {
+      "u": 0.25,
+      "angleDeg": 7.5,
+      "platformPin": [
+        104.56841672770182,
+        100,
+        35.29942985191663
+      ],
+      "linkEye": [
+        104.39791266726381,
+        100,
+        35
+      ],
+      "centerErrorMm": 0.3445720111161974,
+      "renderedRodTravelMm": 4.3979126672638165,
+      "closedFormRodTravelMm": 4.568790304267537
+    },
+    {
+      "u": 0.5,
+      "angleDeg": 15,
+      "platformPin": [
+        109.05866657858823,
+        100,
+        36.19259607988262
+      ],
+      "linkEye": [
+        108.79582533452763,
+        100,
+        35
+      ],
+      "centerErrorMm": 1.2212169869972795,
+      "renderedRodTravelMm": 8.795825334527633,
+      "closedFormRodTravelMm": 9.06459291413492
+    },
+    {
+      "u": 0.75,
+      "angleDeg": 22.5,
+      "platformPin": [
+        113.39392013277813,
+        100,
+        37.66421636210498
+      ],
+      "linkEye": [
+        113.19373800179144,
+        100,
+        35
+      ],
+      "centerErrorMm": 2.671726353815875,
+      "renderedRodTravelMm": 13.193738001791449,
+      "closedFormRodTravelMm": 13.423498981663172
+    },
+    {
+      "u": 1,
+      "angleDeg": 30,
+      "platformPin": [
+        117.5,
+        100,
+        39.68911086754464
+      ],
+      "linkEye": [
+        117.59165066905527,
+        100,
+        35
+      ],
+      "centerErrorMm": 4.690006457699557,
+      "renderedRodTravelMm": 17.591650669055266,
+      "closedFormRodTravelMm": 17.59165066905527
+    }
+  ]
+}
