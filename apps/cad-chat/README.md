@@ -1096,7 +1096,8 @@ LFS,須在能連 `lfs.github.com` 的環境才推得上去)。以 **DEMO 身分*
 agent 回合由腳本以 store action 重演;幾何全是 `scripts/step` 真產物:`models/flip_gripper`
 及其 v2/v3 參數變體、`models/sheet_box_flat_test`(攤平 GLB 以修復後的 `flat_glb.py` 重產,
 tracked fixture 那份是修復前無拓撲的)、`models/stewart_platform`;草模場景用
-`src/lib/sketch/fixtures/gripper_pickplace.json`)。前置與指令見檔頭註解;字幕/游標/章節卡
+`src/lib/sketch/fixtures/gripper_pickplace.json`)。重演的 AI 文字遵守對外措辭契約(`agent/wording.mjs`,不出現內部工具名/副檔名/「產生器」),
+驗證卡列與快路徑 `designChecksFromMeta` 逐字對齊。前置與指令見檔頭註解;字幕/游標/章節卡
 都疊在頁面內,錄出的 webm 直接 ffmpeg 轉 mp4。
 
 ## 煙測(Playwright,`tests/smoke/`)
