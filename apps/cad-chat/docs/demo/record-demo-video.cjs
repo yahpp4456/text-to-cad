@@ -23,6 +23,12 @@ const OUT = process.argv[2] || path.join(__dirname, "video-out");
 fs.mkdirSync(OUT, { recursive: true });
 const W = 1920, H = 1080;
 const SPEED = Number(process.env.DEMO_SPEED || 1); // >1 = 快轉(除錯用)
+// DEMO_RAW=1:不在頁面內疊字幕/章節卡/框選(只留游標),改把時間點記到 <outDir>/cues.json,
+// 交給後製(Remotion)做動態圖層;時間以 t0(頁面建立)為零點,≈ 錄影零點。
+const RAW = !!process.env.DEMO_RAW;
+const cues = [];
+let t0 = Date.now();
+const now = () => (Date.now() - t0) / 1000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms / SPEED));
 const glb = (rel, v) => `/api/asset?file=${encodeURIComponent(rel)}${v ? `&v=${v}` : ""}`;
@@ -255,6 +261,7 @@ const INSTALL = () => {
     extraHTTPHeaders: { "X-Remote-User": process.env.DEMO_USER || "demo" },
   });
   const page = await ctx.newPage();
+  t0 = Date.now();
   const errs = [];
   page.on("pageerror", (e) => errs.push(String(e)));
   page.on("console", (m) => { if (m.type() === "error") errs.push("console: " + m.text()); });
@@ -282,9 +289,22 @@ const INSTALL = () => {
   const bbox = async (sel) => { const b = await $(sel).boundingBox(); if (!b) throw new Error("no bbox: " + sel); return b; };
   const demo = (fn, ...args) => page.evaluate(({ fn, args }) => window.__demo[fn](...args), { fn, args });
   const ev = (type, d) => page.evaluate(({ type, d }) => window.__demo.ev(type, d), { type, d });
-  const cap = async (html, ms = 0) => { await demo("caption", html); if (ms) await sleep(ms); };
-  const capOff = () => demo("caption", "");
-  const card = async (o, ms) => { await demo("card", o); await sleep(ms); await demo("card", null); await sleep(600); };
+  const cap = async (html, ms = 0) => { cues.push({ t: now(), kind: "cap", html }); if (!RAW) await demo("caption", html); if (ms) await sleep(ms); };
+  const capOff = async () => { cues.push({ t: now(), kind: "capOff" }); if (!RAW) await demo("caption", ""); };
+  const card = async (o, ms) => {
+    cues.push({ t: now(), kind: "card", ms: ms / SPEED, ...o });
+    if (!RAW) await demo("card", o);
+    await sleep(ms);
+    cues.push({ t: now(), kind: "cardOff" });
+    if (!RAW) await demo("card", null);
+    await sleep(600);
+  };
+  const hl = async (sel, label) => {
+    const rect = await page.evaluate((q) => { const el = document.querySelector(q); if (!el) return null; const b = el.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; }, sel);
+    cues.push({ t: now(), kind: "hl", label, rect });
+    if (!RAW) await demo("highlight", sel, label);
+  };
+  const hlClear = async () => { cues.push({ t: now(), kind: "hlClear" }); if (!RAW) await demo("clearHighlights"); };
   let cx = 960, cy = 600;
   const moveTo = async (x, y, ms = 450) => { cx = x; cy = y; await demo("cursor", x, y); await page.mouse.move(x, y, { steps: 10 }); await sleep(ms); };
   const clickAt = async (x, y, after = 500) => { await moveTo(x, y); await demo("click", x, y); await page.mouse.click(x, y); await sleep(after); };
@@ -319,6 +339,7 @@ const INSTALL = () => {
   await page.evaluate(() => { localStorage.clear(); });
   await page.evaluate(INSTALL);
   await page.waitForFunction(() => !!window.__cadDispatch);
+  cues.push({ t: now(), kind: "ready" });
   await sleep(300);
   await card({ kicker: "SUIYAO · CONVERSATIONAL CAD", title: "對話式 CAD", sub: "用「講的」做 CAD:從一句話,到可製造的模型", lines: ["功能介紹 · 草模模式 × 設計模式"] }, 5200);
 
@@ -332,8 +353,8 @@ const INSTALL = () => {
     [".paramsbar", "⑤ 參數列:改尺寸即時重生", 1500],
     [".versions", "⑥ 版本時間軸:切換 · 回退 · 匯出", 1500],
   ];
-  for (const [sel, label, ms] of regions) { await demo("clearHighlights"); await demo("highlight", sel, label); await sleep(ms); }
-  await demo("clearHighlights");
+  for (const [sel, label, ms] of regions) { await hlClear(); await hl(sel, label); await sleep(ms); }
+  await hlClear();
   await cap("每個對話一出生就決定模式:<b>草模</b> 幾秒搭出會動的機構示意;<b>設計</b> 產出精確、可匯出的真實 CAD。", 2600);
   await hoverSel(".mode-switch", 900);
   await capOff();
@@ -637,7 +658,7 @@ const INSTALL = () => {
   await sleep(500);
 
   // ================= 6. 壓軸:史都華平台 =================
-  await card({ kicker: "06 · FINALE", title: "史都華平台", sub: "六軸並聯機構:一句話,到 14 件真實組合件", lines: ["底座 + 動平台 + 六支液壓缸,兩端球鉸", "同一條流程:解析規格 → 產生器 → STEP / GLB → 運動示意"] }, 5000);
+  await card({ kicker: "06 · FINALE", title: "史都華平台", sub: "六軸並聯機構:一句話,到 14 件真實組合件", lines: ["底座 + 動平台 + 六支液壓缸,兩端球鉸", "同一條流程:解析規格 → 模型 → STEP / GLB → 運動示意"] }, 5000);
   await clickSel('.hdr-btn:has-text("新對話")', 500);
   if (await page.locator(".confirm-dialog").count()) await clickSel(".confirm-dialog .save-btn", 600);
   await typeInto(".composer-input", "六軸並聯史都華平台(Stewart platform):底座 Ø340、動平台 Ø240、平台高 230mm,六支液壓缸兩端球鉸,平台要能升降與俯仰");
@@ -691,6 +712,8 @@ const INSTALL = () => {
     "從夾爪到史都華平台,同一條流程",
   ] }, 7000);
 
+  cues.push({ t: now(), kind: "end" });
+  fs.writeFileSync(path.join(OUT, "cues.json"), JSON.stringify({ fps: 25, width: W, height: H, raw: RAW, cues }, null, 1));
   await page.close();
   const videoPath = await page.video().path();
   await ctx.close();

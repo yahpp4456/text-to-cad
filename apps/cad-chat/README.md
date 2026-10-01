@@ -1097,8 +1097,19 @@ agent 回合由腳本以 store action 重演;幾何全是 `scripts/step` 真產�
 及其 v2/v3 參數變體、`models/sheet_box_flat_test`(攤平 GLB 以修復後的 `flat_glb.py` 重產,
 tracked fixture 那份是修復前無拓撲的)、`models/stewart_platform`;草模場景用
 `src/lib/sketch/fixtures/gripper_pickplace.json`)。重演的 AI 文字遵守對外措辭契約(`agent/wording.mjs`,不出現內部工具名/副檔名/「產生器」),
-驗證卡列與快路徑 `designChecksFromMeta` 逐字對齊。前置與指令見檔頭註解;字幕/游標/章節卡
-都疊在頁面內,錄出的 webm 直接 ffmpeg 轉 mp4。
+驗證卡列與快路徑 `designChecksFromMeta` 逐字對齊。前置與指令見檔頭註解。
+
+兩種輸出:
+- **直出版**:字幕/游標/章節卡疊在頁面內,錄出的 webm 直接 ffmpeg 轉 mp4。
+- **動態圖層版(cinematic,現行交付)**:`DEMO_RAW=1` 錄原始畫面(只留游標)並輸出
+  `cues.json`(每句字幕/章節卡/框選的時間與座標),再由 `docs/demo/cinematic/`(Remotion)
+  後製:三層(背景漸層+顆粒+六角環 / 錄影視窗推拉鏡+章節卡退焦 / 字卡、字幕、框選、
+  章節 chip、進度條),spring 進場帶預備動作、逐段 stagger、描邊 draw-on、琥珀面板 wipe、
+  退場比進場快;全部由 frame 驅動(無 CSS animation)。流程:`npm i` → `node prep.cjs <rawDir>`
+  (webm→mp4、cues→`src/timeline.json`、尾端對齊校正、裁掉開場前的載入段)→
+  `npx remotion render src/index.tsx Demo out/demo-master.mp4 --concurrency=4 --crf 20`
+  (Linux 無 GPU 時加 `--gl=swiftshader --browser-executable <headless_shell>`)。
+  動態規則出自使用者提供的 cinematic-video skill(三層/鏡頭/spring/stagger/延續元素/次要動態)。
 
 ## 煙測(Playwright,`tests/smoke/`)
 

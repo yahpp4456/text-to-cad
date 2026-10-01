@@ -1,0 +1,17 @@
+{
+  "name": "cad-chat-demo-cinematic",
+  "private": true,
+  "description": "cad-chat 功能介紹影片的 Remotion 後製合成(字卡/字幕/框選/鏡頭/章節 chip),素材=record-demo-video.cjs 以 DEMO_RAW=1 錄的原始畫面 + cues.json",
+  "scripts": {
+    "prep": "node prep.cjs ../raw",
+    "render": "remotion render src/index.tsx Demo out/demo-master.mp4 --concurrency=4 --crf 20",
+    "studio": "remotion studio src/index.tsx"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.532",
+    "@remotion/transitions": "^4.0.532",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "remotion": "^4.0.532"
+  }
+}
