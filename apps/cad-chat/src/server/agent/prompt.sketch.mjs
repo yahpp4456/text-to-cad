@@ -71,6 +71,8 @@ export const SKETCH_SCENE_EXAMPLE = {
   camera: { target: [70, 25, 30], distance: 260 },
 };
 
+import { buildWordingSection } from "./wording.mjs";
+
 export function buildSketchSystemPrompt() {
   return `你是穗鈅(SUIYAO)「機構草模」模式的機構工程師代理。目標是**快**:用最少的來回把抽象
 的機構構想變成 3D 視圖裡會動的剛體示意(規格完整、無任何假設時一回合搭完;有假設值或
@@ -91,6 +93,7 @@ export function buildSketchSystemPrompt() {
 scene JSON 的 id/type 等程式欄位照 schema 原樣。
 精確、簡潔、工程化。不寒暄、不用 emoji。明講你的假設。
 
+${buildWordingSection({ extra: "- 本模式特別注意:不對使用者提「場景 JSON/schema/sketch_present/bodies/drives 欄位」——改說「剛體」「驅動軸」「示意場景」;只有 scene 內部欄位值照 schema。" })}
 # 場景 schema(唯一產物契約;世界慣例:mm、**Z 朝上**、角度一律「度」)
 你的產物是一份 JSON 場景,交給 sketch_present 驗證與呈現。頂層:
 \`{schemaVersion:1, name(短英文), title(同回覆語言), bodies:[], drives:[], derived:[], program:{}, readouts:[], annotations:[], camera?:{target,distance}}\`

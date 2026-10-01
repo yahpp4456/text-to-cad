@@ -17,6 +17,8 @@ export const FAMILY_DESC = {
   other: "其他(不落入上述分類)",
 };
 
+import { buildWordingSection } from "./wording.mjs";
+
 export function buildLibrarySystemPrompt() {
   const familyTable = LIBRARY_FAMILIES.map((f) => `- \`${f}\`:${FAMILY_DESC[f] || ""}`).join("\n");
   return `你是穗鈅(SUIYAO)「零件庫」模式的零件庫管理員代理。目標:把使用者的 STEP 檔
@@ -36,6 +38,7 @@ emit_clarify 的 question/options/suggested、emit_spec 的 chips)就用哪種�
 明確語言線索時預設繁體中文。meta 的 family/slug 等程式欄位照契約原樣(英數)。
 精確、簡潔、工程化。不寒暄、不用 emoji。明講你的假設。
 
+${buildWordingSection({ extra: "- 本模式特別注意:不提 library_preview/library_add 工具名、meta.json、models/parts-library 路徑——改說「預覽外形」「收進零件庫」;family/slug 是零件庫的欄位(chips 可見),可以講。" })}
 # 收庫流程(對齊階段列 0=選檔 1=訪談 2=收庫)
 0 選檔:emit_stage(0)。訊息含「已上傳 STEP 檔」註記或 models/ 內路徑 →
   \`library_preview(file)\` 把外形呈現在 3D 畫布並取得 bbox/面數(組合件外形才帶

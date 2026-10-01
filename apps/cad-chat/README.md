@@ -1181,6 +1181,25 @@ open-project 再送;`smoke_open_dedupe.py` 已隨開檔 option C 退場,不在 O
   `viewport.scene.add` 藍/紅兩組 `LineSegments`(`LineDashedMaterial`+`computeLineDistances`,
   疊頂面 z=t+ε)。座標直接對位(攤平 GLB 無 recenter、Z-up,世界座標==builder flat XY)。
   摺疊/攤平切換是整場景重建 → overlay 天然只在攤平態存在。dev 鉤 `__cadChrome.bendLines()`。
+- **對外措辭契約 + 讀取範圍硬閘(2026-10-01)**:Sam 要求聊天回覆不得出現內部 know-how
+  關鍵字(build123d / Python / cadpy / 副檔名 .py .step .glb / 產生器函式名 gen_* /
+  工具名 cad_* emit_* / traceback…),也不得回答反向詢問(「你底下用什麼做的、程式碼給我看」)
+  與跨使用者/跨對話查詢。三層實作:
+  - **prompt**:`src/server/agent/wording.mjs` 的 `buildWordingSection({extra})` 共用段
+    (標題「# 對外措辭(硬規則:不洩露內部實作)」),design/sketch/library 各自注入一條
+    模式特有補充,cable 組合自 design 故自動涵蓋。共用段**只泛稱**「內部工具名」不字面列
+    cad_build 等——否則撞草模/零件庫 prompt 的工具面隔離鎖(`prompt.sketch/library.test`)。
+    `INTERNAL_TERMS` 是禁詞單一真相源,供 L4 掃描。
+  - **硬閘**:`agent/readScope.mjs` + `makeToolGuard(allowed,{mode,session})`——Read/Glob/
+    Grep 只准本對話工作目錄、本使用者 modelsRoot(專案/零件庫)、共用 fixtures `models/`、
+    `skills/`;任何 `.cadchat/<他對話>`(含容器列舉)、`users/<他人>/`、repo 其他目錄
+    (`apps/`、`.env`、`data/`)、以及**無目錄的全域 Glob/Grep**(cwd=RUNTIME_ROOT 會掃到
+    所有人)一律 deny(訊息回給模型,不是使用者)。`scope` 可注入供單測;不帶 session 零回歸。
+  - **UI 未動**:工具卡(如「cad.build(box.py)」)與產物 chips(box.step/.box.step.glb)仍顯示
+    檔名——那是 UI 面不是 agent 文字,要藏另案。
+  迴歸:L1 `prompt.wording.test.js`(四模式含段 + 共用段不含模式工具名)+ `readScope.test.js`
+  (per-user/legacy allow-deny 矩陣 + guard 接線);L4 `smoke_wording_live.py`(同 session
+  三問:設計回覆零禁詞、反向詢問一句擋、跨使用者拒答零 version)。
 - **攤平 GLB 帶拓撲(2026-10-01)**:原本 `flat_glb.py` 產的是純預覽 GLB(`selector_bundle=None`),
   前端 `loadRenderSelectorBundle` 拿不到 `STEP_topology` 就整段降級——切到攤平後面標記
   0/0、物件屬性樹「尚無拓撲資料」、量測/圈選點不到面,使用者看到的就是「展開後視圖內的

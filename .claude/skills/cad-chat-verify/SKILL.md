@@ -140,6 +140,14 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `chrome.bendLines`——**摺疊態斷言用 count===0 而非「group 不存在」**。座標直接對位(攤平
   GLB Z-up 無 recenter)。dev 鉤 `__cadChrome.bendLines()` → {visible,count};smoke_flat_toggle
   已擴充(攤平 count>0、摺疊 count=0)。
+- **對外措辭契約 + Read/Glob/Grep 讀取硬閘(2026-10-01)**:聊天回覆禁內部詞(build123d/
+  Python/副檔名/gen_*/cad_*/產生器…)、禁答反向詢問與跨使用者查詢。prompt 共用段在
+  `agent/wording.mjs`(`buildWordingSection`,**只泛稱工具名**——字面列 cad_build 會撞
+  sketch/library 的工具面隔離鎖);禁詞 `INTERNAL_TERMS` 單一真相源。硬閘 `agent/readScope.mjs`
+  接在 `makeToolGuard(allowed,{mode,session})`:越界(他對話/他人/系統檔/無目錄全域 Glob)
+  deny。動 prompt 措辭 → L1 `prompt.wording.test.js` + L4 `smoke_wording_live.py`;動
+  讀取範圍 → `readScope.test.js`(注入假根目錄,勿碰真 config 根)。**改 prompt 教學時
+  別在面向使用者的措辭範例裡塞工具名/檔名**,否則 L4 掃描會紅。
 - **攤平 GLB 帶拓撲 + 攤平態禁帶入對話(2026-10-01)**:`flat_glb.py` 現抽攤平實體的
   selector bundle 寫進 GLB(scene 要標 python `source_path`,否則 extract raise
   「sourcePath is required」退回純預覽——`-o` JSON 的 `topology:false` 就是這根),攤平態

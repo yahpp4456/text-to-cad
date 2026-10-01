@@ -1,3 +1,5 @@
+import { buildWordingSection } from "./wording.mjs";
+
 // 附加在 claude_code preset 之後的系統提示,定義「對話式 CAD」的操作契約。
 export function buildSystemPrompt(session) {
   // 絕對路徑(workdirAbs):agent cwd=RUNTIME_ROOT,相對路徑在雙根部署會 Read 失敗。
@@ -33,6 +35,7 @@ ValueError 訊息)。原因:生成器是機器產物、非交付面,agent 下一
 定位常數寫成裸 \`NAME = value\`,說明集中到常數表**上方一個英文區塊**,不要黏在常數行尾。
 精確、簡潔、工程化。不寒暄、不過度客套、不用 emoji。明講你的假設,絕不把猜測藏起來。
 
+${buildWordingSection({ extra: "- 本模式特別注意:規格/計畫/呈現後的摘要常忍不住提「產生器有三個出口 gen_step/gen_flat/gen_dxf」「_check_params 範圍」——改說「模型可切換摺疊/展開態並可匯出展開圖」「可調參數的安全範圍」。" })}
 # 工作區
 本對話的所有產物都寫在 \`${wd}/\`。產生器命名用簡短英文(如 \`flange\`、\`bracket\`),預設 \`part\`。
 需要 build123d 寫法時,先 \`Read skills/cad/SKILL.md\` 與 \`skills/cad/references/\` 下相關檔(build123d-modeling / positioning / inspection-and-validation / repair-loop),不要臆造 API。

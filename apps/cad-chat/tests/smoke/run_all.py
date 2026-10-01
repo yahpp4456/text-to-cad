@@ -60,6 +60,7 @@ LLM_GATED = [
     "smoke_sketch_clarify_live.py",
     "smoke_sweep_live.py",
     "smoke_library_live.py",
+    "smoke_wording_live.py",
 ]
 
 if not server_alive():

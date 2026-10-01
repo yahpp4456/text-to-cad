@@ -148,7 +148,7 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
       // 非同步/編排工具仍靠 disallowedTools 整個移除。
       disallowedTools: DISALLOWED,
       permissionMode: "default",
-      canUseTool: makeToolGuard(allowed, { mode }),
+      canUseTool: makeToolGuard(allowed, { mode, session }),
       abortController: abort,
       // 串流 partial messages:沒有它,從送出到第一段完整文字之間(推理+寫產生器
       // 原始碼可達數十秒)前端完全沒有回饋。
