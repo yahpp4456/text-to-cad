@@ -1083,16 +1083,21 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
 
 ## 功能介紹影片(`docs/demo/`)
 
-`cad-chat-demo.mp4`(1920×1080,約 4 分 50 秒;由下方腳本產出,**未入版控**——`*.mp4` 走
-LFS,須在能連 `lfs.github.com` 的環境才推得上去):介紹**草模**與**設計**
-兩種模式——介面六區總覽 → 草模(自動播放/DOF 滑桿/⇪ 轉為正式設計)→ 設計(兩步澄清
-精靈/五階段生成/真實 GLB)→ 檢視(圈選/物件樹眼睛三態/運動示意)→ 三種迭代 → 版本/
-精算/匯出 → 鈑金摺疊↔攤平。不含無塵電纜與零件庫模式。
+`cad-chat-demo.mp4`(1920×1080,約 6 分;由下方腳本產出,**未入版控**——`*.mp4` 走
+LFS,須在能連 `lfs.github.com` 的環境才推得上去)。以 **DEMO 身分**錄製(頁面帶
+`X-Remote-User: demo`,切換器只有 草模|設計|零件庫),介紹**草模**與**設計**兩種模式:
+介面六區總覽 → 草模(自動播放/DOF 滑桿/⇪ 轉為正式設計)→ 設計(兩步澄清精靈/五階段
+生成/真實 GLB)→ 檢視(圈選/物件樹眼睛三態/運動示意)→ 三種迭代(文字 → v2、參數 → v3,
+幾何真重生)→ 版本/精算/匯出 → 鈑金四邊立邊盒(摺疊↔攤平、折彎線、**攤平態面標記/
+物件樹照常可用**、DXF)→ 壓軸:史都華平台(`models/stewart_platform`,14 件,升降+俯仰
+運動示意)。不含無塵電纜與零件庫模式。
 
-重錄:`docs/demo/record-demo-video.cjs`(Playwright 驅動真實 dev server;**免 LLM、免
-Python**——agent 回合由腳本以 store action 重演,幾何用 `models/flip_gripper`、
-`models/sheet_u_bracket` 的真實 GLB,草模場景用 `src/lib/sketch/fixtures/gripper_pickplace.json`)。
-前置與指令見檔頭註解;字幕/游標/章節卡都疊在頁面內,錄出的 webm 直接 ffmpeg 轉 mp4。
+重錄:`docs/demo/record-demo-video.cjs`(Playwright 驅動真實 dev server;**免 LLM**——
+agent 回合由腳本以 store action 重演;幾何全是 `scripts/step` 真產物:`models/flip_gripper`
+及其 v2/v3 參數變體、`models/sheet_box_flat_test`(攤平 GLB 以修復後的 `flat_glb.py` 重產,
+tracked fixture 那份是修復前無拓撲的)、`models/stewart_platform`;草模場景用
+`src/lib/sketch/fixtures/gripper_pickplace.json`)。前置與指令見檔頭註解;字幕/游標/章節卡
+都疊在頁面內,錄出的 webm 直接 ffmpeg 轉 mp4。
 
 ## 煙測(Playwright,`tests/smoke/`)
 

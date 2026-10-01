@@ -1,12 +1,19 @@
 // cad-chat 功能介紹影片錄製腳本(Playwright,免 LLM:agent 回合由腳本以 store action 重演,
 // 3D 幾何是 models/ 下的真實 GLB)。產出 1920×1080 webm,再用 ffmpeg 轉 mp4。
 //
-// 前置:dev server 跑在 8788(需任一認證讓 /api/health 不出橫幅,例如假的 ANTHROPIC_API_KEY)、
-//       models/flip_gripper 與 models/sheet_u_bracket 的 GLB 為實體檔(git lfs checkout)、
-//       models/.cadchat/demo_video/gripper.sketch.json = src/lib/sketch/fixtures/gripper_pickplace.json 的複本。
+// 以 DEMO 身分錄(頁面帶 X-Remote-User: demo → 切換器無「無塵電纜」分頁、受限入口反灰)。
+//
+// 前置:
+//   - dev server 跑在 8788,env 帶 ANTHROPIC_API_KEY 與 CADCHAT_DEMO_API_KEY(值可假,/api/chat 全程被 stub)
+//   - LFS GLB 為實體檔:models/flip_gripper、models/sheet_box_flat_test、models/stewart_platform
+//     (stewart 由 `.venv/bin/python skills/cad/scripts/step models/stewart_platform/stewart_platform.py --force` 產)
+//   - models/.cadchat/demo_video/gripper.sketch.json = src/lib/sketch/fixtures/gripper_pickplace.json 的複本
+//   - models/.cadchat/demo_video/fg_v2、fg_v3:flip_gripper.py 複本改 PARAMS(v2 finger_len=50/finger_t=10;
+//     v3 再加 grip_open=40)後各跑一次 scripts/step —— v2/v3 的畫布幾何是真重生的
+//   - models/.cadchat/demo_video/box/:sheet_box_flat_test/box.py 複本,用修復後的 flat_glb.py 重產攤平 GLB
+//     (`.venv/bin/python apps/cad-chat/src/server/cad/flat_glb.py <box.py> <.box.flat.step.glb>`;tracked fixture 的攤平 GLB 無拓撲)
 // 用法:NODE_PATH=$(npm root -g) node apps/cad-chat/docs/demo/record-demo-video.cjs <outDir>
-//       (需要全域 playwright + chromium;DEMO_SPEED=8 可快轉做除錯)
-// 轉檔:ffmpeg -i <outDir>/*.webm -c:v libx264 -preset slow -crf 20 -pix_fmt yuv420p -movflags +faststart cad-chat-demo.mp4
+//       (需要全域 playwright + chromium;DEMO_SPEED=8 可快轉做除錯;DEMO_USER 可換 header 帳號)
 const path = require("node:path");
 const fs = require("node:fs");
 const { chromium } = require("playwright");
@@ -34,6 +41,11 @@ const FLIP_PARAMS = [
   { key: "grip_open", label: "開口 grip_open", min: 20, max: 60, step: 1, value: 34, unit: "mm" },
   { key: "finger_len", label: "指長 finger_len", min: 20, max: 80, step: 1, value: 40, unit: "mm" },
   { key: "flange_d", label: "法蘭徑 flange_d", min: 40, max: 80, step: 1, value: 50, unit: "mm" },
+];
+const STEWART_MOVING = ["platform", "leg0_rod", "leg1_rod", "leg2_rod", "leg3_rod", "leg4_rod", "leg5_rod"];
+const STEWART_DOFS = [
+  { id: "heave", label: "平台升降", type: "linear", axis: [0, 0, 1], travel: 20, moving: STEWART_MOVING, samples: 8 },
+  { id: "tilt", label: "平台俯仰", type: "revolute", axis: [1, 0, 0], pivot: [0, 0, 235], angle_deg: 6, moving: STEWART_MOVING, samples: 12 },
 ];
 const CHECK = (label, state, note) => ({
   label,
@@ -86,20 +98,65 @@ def gen_step():
     asm.add(_gripper_body(), "gripper_body")
     asm.add(_jaw(-1), "jaw_left"); asm.add(_jaw(1), "jaw_right")
     ...`;
-const SHEET_CODE = `# sheet_u_bracket.py — 鈑金 U 型支架(cadpy.parts.SheetMetal)
-PARAMS = {"base_w": 60.0, "base_d": 50.0, "wall_h": 40.0, "t": 2.0, "hole_d": 4.5}
+const SHEET_CODE = `# sheet_box.py — 鈑金四邊立邊盒(cadpy.parts.SheetMetal)
+PARAMS = {"box_w": 120.0, "box_d": 80.0, "box_h": 40.0, "thick": 1.5,
+          "bend_r": 2.0, "k_factor": 0.44, "hole_d": 20.0}
+
+def _check_params():
+    p = PARAMS
+    inset = p["bend_r"] + p["thick"]
+    if p["box_w"] <= 4 * inset or p["box_d"] <= 4 * inset:
+        raise ValueError("外形太小:四邊 inside 折彎各吃掉 R+t,底板會退化")
 
 def _sheet():
-    s = SheetMetal(thickness=PARAMS["t"], bend_radius=2.0)
-    s.base(PARAMS["base_w"], PARAMS["base_d"])
-    s.fold("+y", PARAMS["wall_h"], angle=90)
-    s.fold("-y", PARAMS["wall_h"], angle=90)
-    s.holes([(15, 12), (45, 12), (15, 38), (45, 38)], d=PARAMS["hole_d"])
+    s = SheetMetal(thickness=PARAMS["thick"], bend_radius=PARAMS["bend_r"],
+                   k_factor=PARAMS["k_factor"])
+    s.base(PARAMS["box_w"], PARAMS["box_d"], placement="inside")
+    for edge in ("+x", "-x", "+y", "-y"):
+        s.fold(edge, length=PARAMS["box_h"], angle=90)   # 自動角隅避讓
+    s.hole((PARAMS["box_w"] / 2, PARAMS["box_d"] / 2), d=PARAMS["hole_d"])
     return s
 
 def gen_step(): return _sheet().folded()
 def gen_flat(): return _sheet().flat()
 def gen_dxf():  return _sheet().dxf()   # CUT / BEND_UP_90 分層`;
+const STEWART_CODE = `# stewart_platform.py — 六軸並聯史都華平台(6-UPS,cadpy.assembly)
+PARAMS = {
+    "base_r": 170.0, "base_joint_r": 150.0,   # 底座板 / 球鉸分佈半徑
+    "plat_r": 120.0, "plat_joint_r": 100.0,   # 動平台 / 球鉸分佈半徑
+    "height": 230.0,                           # 平台底面高度(home)
+    "pair_half_deg": 15.0,                     # 每對球鉸半夾角
+    "cyl_r": 18.0, "bore_r": 8.0, "rod_r": 7.0, "ball_r": 14.0,
+    "heave": 20.0, "tilt_deg": 6.0,
+}
+# 六腿交錯相連成三組「八」字(標準 6-6 構型)
+_BASE_DEG = [15, 105, 135, 225, 255, 345]
+_PLAT_DEG = [45, 75, 165, 195, 285, 315]
+
+def _leg_cyl(a, b):                     # 底座球鉸 + 缸筒(一體)
+    u, L = _unit(a, b)
+    barrel = _along(a, u, PARAMS["cyl_r"], 0.55 * L)
+    barrel -= _along(a + 22 * u, u, PARAMS["bore_r"], 0.55 * L)
+    return Pos(*a) * Sphere(PARAMS["ball_r"]) + barrel
+
+def _leg_rod(a, b):                     # 活塞桿 + 平台球鉸(一體)
+    u, L = _unit(a, b)
+    return _along(b, -u, PARAMS["rod_r"], 0.62 * L) + Pos(*b) * Sphere(12)
+
+MOTION = {"schemaVersion": 1, "dofs": [
+    {"id": "heave", "type": "linear", "axis": [0, 0, 1], "travel": PARAMS["heave"],
+     "moving": ["platform", *[f"leg{k}_rod" for k in range(6)]]},
+    {"id": "tilt", "type": "revolute", "axis": [1, 0, 0], "pivot": [0, 0, 235],
+     "angle_deg": PARAMS["tilt_deg"], "moving": [...]},
+]}
+
+def gen_step():
+    asm = AssemblyHelper("stewart_platform")
+    asm.add(_base(), "base"); asm.add(_platform(), "platform")
+    for k, (a, b) in enumerate(_legs()):
+        asm.add(_leg_cyl(a, b), f"leg{k}_cyl")
+        asm.add(_leg_rod(a, b), f"leg{k}_rod")
+    return asm.build()`;
 
 // ---------- 頁面內 overlay + 事件重演 ----------
 const INSTALL = () => {
@@ -192,6 +249,8 @@ const INSTALL = () => {
     deviceScaleFactor: 1,
     recordVideo: { dir: OUT, size: { width: W, height: H } },
     locale: "zh-TW",
+    // DEMO 身分(反代注入的 header):切換器不渲染無塵電纜分頁、受限入口反灰。
+    extraHTTPHeaders: { "X-Remote-User": process.env.DEMO_USER || "demo" },
   });
   const page = await ctx.newPage();
   const errs = [];
@@ -467,42 +526,43 @@ const INSTALL = () => {
   await ev("validate", { ok: true, attempt: 1, ms: 520, partCount: 9, checks: QUICK_CHECKS });
   await ev("motion", { name: "flip_gripper", schemaVersion: 1, dofs: FLIP_DOFS });
   await ev("stage", { index: 4 });
-  const GLB2 = glb("models/flip_gripper/.flip_gripper.step.glb", 2);
+  const GLB2 = glb("models/.cadchat/demo_video/fg_v2/.flip_gripper.step.glb", 2);
   await ev("artifact", { ver: "v2", name: "flip_gripper", code: "flip_gripper", ghost: "FLIP", formats: ["STEP", "GLB"], type: "assembly", partCount: 9 });
   await ev("version", { id: "v2", name: "flip_gripper", file: "models/.cadchat/demo_video/versions/v2/.flip_gripper.step.glb", glbUrl: GLB2, formats: ["STEP", "GLB"], type: "assembly", partCount: 9, source: "generated", snapshot: true, verified: false });
   await ev("present", { ver: "v2", name: "flip_gripper", code: "flip_gripper", glbUrl: GLB2, type: "assembly" });
   await ev("params", { defs: FLIP_PARAMS.map((d) => (d.key === "finger_len" ? { ...d, value: 50 } : d)) });
-  await streamAi("已精修:手指長 50 mm、厚 10 mm,其餘不動 → v2。", 30);
+  await streamAi("已精修:手指長 50 mm、厚 10 mm,其餘不動 → v2(畫布已換成新幾何)。", 30);
   await finishChat(SID("ds"));
   await waitCanvasReady();
   await cap("② <b>規格修正面板</b>:視圖左上的「解析規格」,點任一 chip 改值,走「規格修正:」契約精準只改那一項。", 300);
   await hoverSel(".canvas-spec", 2600);
   await cap("③ <b>參數列</b>:對應產生器的可調尺寸。改數字走決定性路徑重跑(免 LLM),每次套用都是新版本。", 300);
   {
-    const field = page.locator('.param:has-text("翻轉角") .numfield-btn').last();
+    const field = page.locator('.param:has-text("開口") .numfield-btn').last();
     const fb = await field.boundingBox();
-    if (fb) { for (let i = 0; i < 4; i++) await clickAt(fb.x + fb.width / 2, fb.y + fb.height / 2, 180); }
+    if (fb) { for (let i = 0; i < 6; i++) await clickAt(fb.x + fb.width / 2, fb.y + fb.height / 2, 160); }
     await sleep(600);
   }
   await cap("有改動就出現「<b>套用 · 重生</b>」;拉到非法組合會顯示繁中錯誤並自動回滾,不會弄壞檔案。", 400);
   await clickSel(".paramsbar-apply", 200);
   await waitChat();
-  await tool("t4", { name: "cad.build(flip_gripper.py)", label: "參數重生", status: "running", code: '# PARAMS → {"flip_deg": 94, ...}' });
+  await tool("t4", { name: "cad.build(flip_gripper.py)", label: "參數重生", status: "running", code: '# PARAMS → {"grip_open": 40, "finger_len": 50, ...}' });
   await ev("busy", { text: "參數重生 · 執行產生器…" });
   await ev("stage", { index: 2 });
   await sleep(2400);
   await tool("t4", { status: "done", ms: 7600 });
   await ev("stage", { index: 3 });
   await ev("validate", { ok: true, attempt: 1, ms: 480, partCount: 9, checks: QUICK_CHECKS });
-  await ev("motion", { name: "flip_gripper", schemaVersion: 1, dofs: FLIP_DOFS.map((d) => (d.id === "flip" ? { ...d, angle_deg: 94 } : d)) });
+  await ev("motion", { name: "flip_gripper", schemaVersion: 1, dofs: FLIP_DOFS });
   await ev("stage", { index: 4 });
-  const GLB3 = glb("models/flip_gripper/.flip_gripper.step.glb", 3);
+  const GLB3 = glb("models/.cadchat/demo_video/fg_v3/.flip_gripper.step.glb", 3);
   await ev("artifact", { ver: "v3", name: "flip_gripper", code: "flip_gripper", ghost: "FLIP", formats: ["STEP", "GLB"], type: "assembly", partCount: 9 });
   await ev("version", { id: "v3", name: "flip_gripper", file: "models/.cadchat/demo_video/versions/v3/.flip_gripper.step.glb", glbUrl: GLB3, formats: ["STEP", "GLB"], type: "assembly", partCount: 9, source: "generated", snapshot: true, verified: false });
   await ev("present", { ver: "v3", name: "flip_gripper", code: "flip_gripper", glbUrl: GLB3, type: "assembly" });
+  await ev("params", { defs: FLIP_PARAMS.map((d) => (d.key === "finger_len" ? { ...d, value: 50 } : d.key === "grip_open" ? { ...d, value: 40 } : d)) });
   await finishChat(SID("ds"));
   await waitCanvasReady();
-  await sleep(600);
+  await cap("v3:開口從 34 變 40 mm,兩指張開——決定性重生,不經 LLM。", 1800);
   await capOff();
 
   // ================= 4. 版本、精算、匯出 =================
@@ -526,49 +586,107 @@ const INSTALL = () => {
   await capOff();
 
   // ================= 5. 鈑金 =================
-  await card({ kicker: "05 · SHEET METAL", title: "鈑金:摺疊 ↔ 攤平", sub: "build 時併行產出雙 GLB,一鍵切換零重算", lines: ["攤平態疊折彎中心線:藍=上折、紅=下折", "⤓ DXF 展開圖:CUT / BEND 分層,雷切直接下料"] }, 4200);
+  await card({ kicker: "05 · SHEET METAL", title: "鈑金:摺疊 ↔ 攤平", sub: "build 時併行產出雙 GLB,一鍵切換零重算", lines: ["攤平態疊折彎中心線:藍=上折、紅=下折", "攤平 GLB 自帶拓撲:面標記 / 物件樹 / 量測照常可用", "⤓ DXF 展開圖:CUT / BEND 分層,雷切直接下料"] }, 4800);
   await clickSel('.hdr-btn:has-text("新對話")', 500);
   if (await page.locator(".confirm-dialog").count()) await clickSel(".confirm-dialog .save-btn", 600);
-  await typeInto(".composer-input", "做一個 2mm 厚鈑金 U 型支架:底 60×50,兩側高 40,底面四個 M4 孔");
+  await typeInto(".composer-input", "做一個 1.5mm 厚的鈑金四邊立邊盒:外形 120×80、高 40,底面中央一個 Ø20 孔");
   await clickSel(".composer-btn.send", 200);
   await waitChat();
   await ev("stage", { index: 0 });
-  await streamAi("鈑金件:底板 60×50、兩側各上折 90° 高 40、t=2(折彎半徑 2)。用 SheetMetal 家族建模,同時產出摺疊態、攤平態與 DXF 展開圖。", 30);
-  await ev("spec", { chips: [{ k: "件型", v: "鈑金 U 型支架" }, { k: "板厚", v: "2 mm" }, { k: "底板", v: "60 × 50" }, { k: "側壁高", v: "40 mm" }, { k: "折彎半徑", v: "2 mm", assumed: true }, { k: "孔", v: "4 × Ø4.5(M4 餘隙)" }] });
+  await streamAi("鈑金件:底板 120×80(外形)、四邊各上折 90° 高 40、t=1.5,折彎半徑取 2、K 值 0.44。用 SheetMetal 家族建模(角隅自動避讓),同時產出摺疊態、攤平態與 DXF 展開圖。", 30);
+  await ev("spec", { chips: [{ k: "件型", v: "鈑金四邊立邊盒" }, { k: "板厚", v: "1.5 mm" }, { k: "外形", v: "120 × 80" }, { k: "立邊高", v: "40 mm" }, { k: "折彎半徑", v: "2 mm", assumed: true }, { k: "K 值", v: "0.44", assumed: true }, { k: "底孔", v: "Ø20 置中" }] });
   await ev("stage", { index: 2 });
-  await tool("s1", { name: "cad.build(sheet_u_bracket.py)", label: "撰寫幾何 → 執行 → 產出", status: "running", code: SHEET_CODE });
-  await ev("busy", { text: "撰寫產生器原始碼 · 已寫 1.2k 字元…" });
+  await tool("s1", { name: "cad.build(sheet_box.py)", label: "撰寫幾何 → 執行 → 產出", status: "running", code: SHEET_CODE });
+  await ev("busy", { text: "撰寫產生器原始碼 · 已寫 1.4k 字元…" });
   await sleep(2800);
-  await tool("s1", { status: "done", ms: 6100, outputs: [{ path: "sheet_u_bracket.step", kind: "step" }, { path: ".sheet_u_bracket.step.glb", kind: "glb" }, { path: ".sheet_u_bracket.flat.step.glb", kind: "glb" }] });
+  await tool("s1", { status: "done", ms: 6900, outputs: [{ path: "sheet_box.step", kind: "step" }, { path: ".sheet_box.step.glb", kind: "glb" }, { path: ".sheet_box.flat.step.glb", kind: "glb" }] });
   await ev("stage", { index: 3 });
-  await ev("validate", { ok: true, attempt: 1, ms: 410, partCount: 1, checks: [CHECK("產生器執行", "ok", "PASS"), CHECK("有效實體(BRepCheck)", "ok", "PASS"), CHECK("攤平自交 / 摺疊自碰", "ok", "builder 內建閘 PASS"), CHECK("零件干涉", "skip", "單件不適用")] });
-  await ev("motion", { name: "sheet_u_bracket", schemaVersion: 1, dofs: [] });
+  await ev("validate", { ok: true, attempt: 1, ms: 430, partCount: 1, checks: [CHECK("產生器執行", "ok", "PASS"), CHECK("有效實體(BRepCheck)", "ok", "PASS"), CHECK("攤平自交 / 摺疊自碰", "ok", "builder 內建閘 PASS"), CHECK("零件干涉", "skip", "單件不適用")] });
+  await ev("motion", { name: "sheet_box", schemaVersion: 1, dofs: [] });
   await ev("stage", { index: 4 });
-  const SG = glb("models/sheet_u_bracket/.sheet_u_bracket.step.glb", 1);
-  const SF = glb("models/sheet_u_bracket/.sheet_u_bracket.flat.step.glb", 1);
-  const SL = glb("models/sheet_u_bracket/.sheet_u_bracket.flat.lines.json", 1);
-  await ev("artifact", { ver: "v1", name: "sheet_u_bracket", code: "sheet_u_bracket", ghost: "SHEE", formats: ["STEP", "GLB", "DXF"], type: "part", partCount: 1 });
-  await ev("version", { id: "v1", name: "sheet_u_bracket", file: "models/.cadchat/demo_video/versions/v1/.sheet_u_bracket.step.glb", glbUrl: SG, formats: ["STEP", "GLB", "DXF"], type: "part", partCount: 1, source: "generated", snapshot: true, hasDxf: true, flatGlbUrl: SF, flatLinesUrl: SL, verified: false });
-  await ev("present", { ver: "v1", name: "sheet_u_bracket", code: "sheet_u_bracket", glbUrl: SG, type: "part", flatGlbUrl: SF, flatLinesUrl: SL });
-  await ev("params", { defs: [{ key: "base_w", label: "底寬 base_w", min: 30, max: 120, step: 1, value: 60, unit: "mm" }, { key: "base_d", label: "底深 base_d", min: 30, max: 120, step: 1, value: 50, unit: "mm" }, { key: "wall_h", label: "側高 wall_h", min: 10, max: 80, step: 1, value: 40, unit: "mm" }, { key: "t", label: "板厚 t", min: 0.8, max: 4, step: 0.2, value: 2, unit: "mm" }] });
-  await streamAi("完成 v1:鈑金 U 型支架,左上可切「摺疊 / 攤平」,時間軸有「⤓ DXF 展開圖」可直接雷切下料。", 30);
+  const SG = glb("models/sheet_box_flat_test/.box.step.glb", 1);
+  const SF = glb("models/.cadchat/demo_video/box/.box.flat.step.glb", 1);
+  const SL = glb("models/.cadchat/demo_video/box/.box.flat.lines.json", 1);
+  await ev("artifact", { ver: "v1", name: "sheet_box", code: "sheet_box", ghost: "SHEE", formats: ["STEP", "GLB", "DXF"], type: "part", partCount: 1 });
+  await ev("version", { id: "v1", name: "sheet_box", file: "models/.cadchat/demo_video/versions/v1/.sheet_box.step.glb", glbUrl: SG, formats: ["STEP", "GLB", "DXF"], type: "part", partCount: 1, source: "generated", snapshot: true, hasDxf: true, flatGlbUrl: SF, flatLinesUrl: SL, verified: false });
+  await ev("present", { ver: "v1", name: "sheet_box", code: "sheet_box", glbUrl: SG, type: "part", flatGlbUrl: SF, flatLinesUrl: SL });
+  await ev("params", { defs: [{ key: "box_w", label: "外形寬 box_w", min: 40, max: 300, step: 1, value: 120, unit: "mm" }, { key: "box_d", label: "外形深 box_d", min: 40, max: 300, step: 1, value: 80, unit: "mm" }, { key: "box_h", label: "立邊高 box_h", min: 10, max: 120, step: 1, value: 40, unit: "mm" }, { key: "thick", label: "板厚 thick", min: 0.5, max: 4, step: 0.1, value: 1.5, unit: "mm" }, { key: "bend_r", label: "折彎半徑 bend_r", min: 0.8, max: 6, step: 0.1, value: 2, unit: "mm" }, { key: "hole_d", label: "底孔徑 hole_d", min: 5, max: 60, step: 1, value: 20, unit: "mm" }] });
+  await streamAi("完成 v1:鈑金四邊立邊盒。左上可切「摺疊 / 攤平」,攤平態保留面拓撲可量測;時間軸有「⤓ DXF 展開圖」可直接雷切下料。", 30);
   await finishChat(SID("sm"));
   await waitCanvasReady();
-  await cap("鈑金件左上出現「<b>摺疊 / 攤平</b>」切換。build 時已併行產好雙 GLB,點一下瞬間換視角、零重算。", 1600);
+  await cap("鈑金件左上出現「<b>摺疊 / 攤平</b>」切換。build 時已併行產好雙 GLB,點一下瞬間換視角、零重算。", 1800);
+  await dragOrbit(-120, 60, 900);
   await clickSel('.fold-seg:has-text("攤平")', 300);
   await waitCanvasReady();
   await cap("攤平展開圖疊上<b>折彎中心線</b>(藍=上折、紅=下折),對齊 DXF 的 BEND_UP / BEND_DOWN 圖層。", 3200);
+  await cap("攤平 GLB 自帶 STEP 拓撲:<b>面標記、物件樹、量測在攤平態照常可用</b>,展開後東西不會消失。", 300);
+  await clickSel(".marker-toggle", 600);
+  await clickSel('.marker-panel-acts a:has-text("全部")', 2200);
+  await clickSel(".marker-toggle", 400);
+  await clickSel(".props-toggle", 1400);
+  await hoverSel(".tree", 1500);
+  if (await page.locator(".props-close").count()) await clickSel(".props-close", 500);
+  await cap("要下料就按「<b>⤓ DXF 展開圖</b>」:外輪廓 / 孔 / 折彎線分層,雷切直接用。底部參數列可改板厚、立邊高、折彎半徑再重生。", 300);
   await hoverSel('.version-dl:has-text("DXF")', 1800);
+  await hoverSel(".paramsbar-track", 1500);
   await clickSel('.fold-seg:has-text("摺疊")', 300);
   await waitCanvasReady();
   await capOff();
   await sleep(500);
 
+  // ================= 6. 壓軸:史都華平台 =================
+  await card({ kicker: "06 · FINALE", title: "史都華平台", sub: "六軸並聯機構:一句話,到 14 件真實組合件", lines: ["底座 + 動平台 + 六支液壓缸,兩端球鉸", "同一條流程:解析規格 → 產生器 → STEP / GLB → 運動示意"] }, 5000);
+  await clickSel('.hdr-btn:has-text("新對話")', 500);
+  if (await page.locator(".confirm-dialog").count()) await clickSel(".confirm-dialog .save-btn", 600);
+  await typeInto(".composer-input", "六軸並聯史都華平台(Stewart platform):底座 Ø340、動平台 Ø240、平台高 230mm,六支液壓缸兩端球鉸,平台要能升降與俯仰");
+  await clickSel(".composer-btn.send", 200);
+  await waitChat();
+  await ev("stage", { index: 0 });
+  await streamAi("6-UPS 並聯機構:底座與動平台各六個球鉸,分三對、互相錯位 60°,六支缸交錯相連成三組「八」字。缸筒 + 活塞桿各自一體(含球鉸),桿在筒內孔滑動;剛體示意用平台升降與俯仰兩個自由度。", 40);
+  await ev("spec", { chips: [{ k: "構型", v: "6-UPS 史都華平台" }, { k: "底座", v: "Ø340 × 12,球鉸分佈 R150" }, { k: "動平台", v: "Ø240 × 10,球鉸分佈 R100" }, { k: "平台高", v: "230 mm" }, { k: "缸", v: "筒 Ø36 / 桿 Ø14 × 6", assumed: true }, { k: "球鉸", v: "Ø28,沉入板面 6 mm", assumed: true }, { k: "運動", v: "升降 20 mm · 俯仰 ±6°" }] });
+  await sleep(900);
+  await ev("stage", { index: 1 });
+  await ev("plan", { steps: ["底座板(中央減重孔 + 6 安裝孔)", "六個底座球鉸座標:R150,三對各夾 30°", "動平台(中央工具孔 + 4 安裝孔),球鉸 R100 錯位 60°", "每腿:球 + 缸筒一體、桿 + 球一體,桿在內孔滑動(餘隙 1 mm)", "INTENDED_CONTACT:球鉸沉入板面 12 組", "MOTION:heave 線性 / tilt 迴轉 → cad_build → cad_validate → cad_present"].map((t, i) => ({ n: i + 1, t })) });
+  await sleep(1400);
+  await ev("stage", { index: 2 });
+  await tool("w1", { name: "cad.build(stewart_platform.py)", label: "撰寫幾何 → 執行 → 產出", status: "running", code: STEWART_CODE });
+  for (let k = 2; k <= 9; k++) { await ev("busy", { text: `撰寫產生器原始碼 · 已寫 ${(k * 0.7).toFixed(1)}k 字元…` }); await sleep(380); }
+  await cap("六腿座標全由 PARAMS 閉式導出:改分佈半徑或平台高,十二個球鉸與缸長一起重算。", 200);
+  await ev("busy", { text: "執行產生器 · 建模 14 件…" });
+  await sleep(3400);
+  await tool("w1", { status: "done", ms: 6100, outputs: [{ path: "stewart_platform.step", kind: "step" }, { path: ".stewart_platform.step.glb", kind: "glb" }] });
+  await ev("stage", { index: 3 });
+  await ev("busy", { text: "幾何驗證中…" });
+  await sleep(900);
+  await ev("validate", { ok: true, attempt: 1, ms: 710, partCount: 14, checks: [CHECK("產生器執行", "ok", "PASS · 14 件"), CHECK("有效實體(BRepCheck)", "ok", "PASS"), CHECK("零件干涉", "skip", "快路徑略過(精算時執行)"), CHECK("運動掃掠", "skip", "MOTION 已宣告 · 2 DOF(精算時掃掠)"), CHECK("INTENDED_CONTACT", "ok", "12 組球鉸貼合宣告")] });
+  await ev("motion", { name: "stewart_platform", schemaVersion: 1, dofs: STEWART_DOFS });
+  await ev("stage", { index: 4 });
+  const SW = glb("models/stewart_platform/.stewart_platform.step.glb", 1);
+  await ev("artifact", { ver: "v1", name: "stewart_platform", code: "stewart_platform", ghost: "STEW", formats: ["STEP", "GLB"], type: "assembly", partCount: 14 });
+  await ev("version", { id: "v1", name: "stewart_platform", file: "models/.cadchat/demo_video/versions/v1/.stewart_platform.step.glb", glbUrl: SW, formats: ["STEP", "GLB"], type: "assembly", partCount: 14, source: "generated", snapshot: true, verified: false });
+  await ev("present", { ver: "v1", name: "stewart_platform", code: "stewart_platform", glbUrl: SW, type: "assembly" });
+  await ev("params", { defs: [{ key: "base_joint_r", label: "底座球鉸半徑", min: 100, max: 220, step: 1, value: 150, unit: "mm" }, { key: "plat_joint_r", label: "平台球鉸半徑", min: 60, max: 160, step: 1, value: 100, unit: "mm" }, { key: "height", label: "平台高 height", min: 160, max: 320, step: 1, value: 230, unit: "mm" }, { key: "pair_half_deg", label: "球鉸半夾角", min: 5, max: 25, step: 0.5, value: 15, unit: "°" }, { key: "cyl_r", label: "缸筒半徑 cyl_r", min: 12, max: 26, step: 0.5, value: 18, unit: "mm" }, { key: "heave", label: "升降行程 heave", min: 0, max: 60, step: 1, value: 20, unit: "mm" }, { key: "tilt_deg", label: "俯仰角 tilt_deg", min: 0, max: 15, step: 0.5, value: 6, unit: "°" }] });
+  await streamAi("完成 v1:史都華平台,14 件組合件。六支缸交錯成三組「八」字,球鉸沉入板面已宣告貼合;MOTION 宣告平台升降 20 mm 與俯仰 ±6°,按「▶ 運動示意」可看平台連動六桿。", 30);
+  await finishChat(SID("sw"));
+  await waitCanvasReady();
+  await cap("14 件真實 STEP 組合件載入畫布:底座、動平台、六組缸筒與活塞桿。", 600);
+  await dragOrbit(-300, 70, 1500);
+  await clickSel('.canvas-tools .tool-chip:has-text("環繞")', 3200);
+  await clickSel('.canvas-tools .tool-chip:has-text("環繞")', 300);
+  await cap("「<b>▶ 運動示意</b>」:平台升降 + 俯仰,六支活塞桿跟著平台連動。", 300);
+  await clickSel(".motion-toggle", 7500);
+  await clickSel(".motion-toggle", 400);
+  await cap("底部參數:球鉸分佈半徑、平台高、缸徑、行程、俯仰角——改一個數字,整台重生。", 300);
+  await hoverSel(".paramsbar-track", 2200);
+  await capOff();
+  await sleep(600);
+
   // ================= 結尾 =================
   await card({ kicker: "SUIYAO · CONVERSATIONAL CAD", title: "對話式 CAD", sub: "從一句話,到可製造的模型", lines: [
     "草模:幾秒驗證機構動不動,⇪ 一鍵升級為正式設計",
     "設計:真 STEP / GLB,先問再做,三種迭代方式",
-    "版本回退、精算驗證、匯出閘把關後才出檔",
+    "鈑金摺疊 ↔ 攤平、版本回退、精算驗證、匯出閘",
+    "從夾爪到史都華平台,同一條流程",
   ] }, 7000);
 
   await page.close();
