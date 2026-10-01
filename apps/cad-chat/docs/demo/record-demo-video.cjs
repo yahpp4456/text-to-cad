@@ -427,7 +427,10 @@ const INSTALL = () => {
     }
   }
   await cap("「<b>物件屬性</b>」抽屜:拓撲樹逐層展開;眼睛三態 實體 → 半透 → 隱藏,把外殼轉半透就能看內部。", 300);
-  await clickSel(".props-toggle", 900);
+  // 圈選零件時抽屜可能已連動開啟;沒開才點 toggle,開著就直接用。
+  if (!(await page.locator(".props").count())) await clickSel(".props-toggle", 900);
+  await page.waitForSelector(".props", { timeout: 5000 }).catch(() => {});
+  await hoverSel(".tree", 700);
   {
     const rows = page.locator(".tree-node");
     const n = await rows.count();
