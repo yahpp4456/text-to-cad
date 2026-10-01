@@ -1181,6 +1181,18 @@ open-project 再送;`smoke_open_dedupe.py` 已隨開檔 option C 退場,不在 O
   `viewport.scene.add` 藍/紅兩組 `LineSegments`(`LineDashedMaterial`+`computeLineDistances`,
   疊頂面 z=t+ε)。座標直接對位(攤平 GLB 無 recenter、Z-up,世界座標==builder flat XY)。
   摺疊/攤平切換是整場景重建 → overlay 天然只在攤平態存在。dev 鉤 `__cadChrome.bendLines()`。
+- **攤平 GLB 帶拓撲(2026-10-01)**:原本 `flat_glb.py` 產的是純預覽 GLB(`selector_bundle=None`),
+  前端 `loadRenderSelectorBundle` 拿不到 `STEP_topology` 就整段降級——切到攤平後面標記
+  0/0、物件屬性樹「尚無拓撲資料」、量測/圈選點不到面,使用者看到的就是「展開後視圖內的
+  東西不見」。修法:`flat_glb.py` 對攤平實體現抽 selector bundle
+  (`extract_selectors_from_scene` + `SelectorOptions` 同 `_LINEAR/_ANGULAR_DEFLECTION`,
+  scene 需標 python 來源 `source_path`/`source_hash`,否則抽取 raise「sourcePath is
+  required」),`include_selector_topology=True`;抽取失敗退回純預覽、不擋 GLB。
+  **攤平態禁「帶入對話」**(Canvas3D `flatView` → `bringToChat` no-op、marker `data-flat`、
+  `sel-action`/`props-bring` `data-disabled` + 提示文字):攤平面 token 指攤平實體的面編號,
+  agent 端 `cad_measure`/圈選一律對摺疊 STEP 解析,帶進去會靜默錯對。面標記/物件樹/
+  前端 facts 量測在攤平態照常可用。折彎虛線同時改 `depthTest:false` + 提亮(原本貼頂面
+  ε 高度在斜視角被板面 z-fighting 吃掉大半)。迴歸:`smoke_flat_toggle.py`。
 
 ## 跨重整續聊 + 版本快照真回退(2026-07-04)
 

@@ -58,6 +58,31 @@ with sync_playwright() as p:
     c.check("攤平段轉 active",
             page.locator(".fold-seg", has_text="攤平").get_attribute("data-on") == "true")
 
+    # 攤平 GLB 自帶攤平實體的 STEP_topology(2026-10-01 修:之前是純預覽 GLB,切攤平後
+    # 面標記 0/0、物件屬性樹「尚無拓撲資料」、量測點不到面——「展開後視圖內的東西不見」)
+    mk = page.locator(".pick-marker")
+    page.wait_for_function("() => document.querySelectorAll('.pick-marker').length > 0", timeout=15000)
+    c.check("攤平態有面標記(攤平 GLB 帶拓撲,非純預覽)", mk.count() > 0, f"markers={mk.count()}")
+    c.check("攤平態面標記計數非 0/0", "0/0" not in page.get_by_text("面標記").first.inner_text(),
+            page.get_by_text("面標記").first.inner_text())
+    page.get_by_text("物件屬性").first.click()
+    page.wait_for_timeout(300)
+    c.check("攤平態物件屬性樹有拓撲(非「尚無拓撲資料」)",
+            page.locator("text=尚無拓撲資料").count() == 0
+            and page.locator(".props").first.inner_text().count("FACE") > 0,
+            page.locator(".props").first.inner_text()[:120])
+    page.get_by_text("物件屬性").first.click()
+    page.wait_for_timeout(200)
+    # 攤平態面 token 指攤平實體面編號,agent 端對摺疊 STEP 解析 → 禁帶入對話(點了不出 chip)
+    n_chip_before = page.locator(".pick-chip").count()
+    mk.first.click()
+    page.wait_for_timeout(300)
+    c.check("攤平態點面標記不帶入對話(不新增 chip)",
+            page.locator(".pick-chip").count() == n_chip_before
+            and mk.first.get_attribute("data-flat") == "true",
+            f"chips={page.locator('.pick-chip').count()} data-flat={mk.first.get_attribute('data-flat')}")
+    c.check("攤平態提示文字說明禁帶入", "切回摺疊" in page.locator(".model-pick-hint").inner_text())
+
     # 折彎線 overlay:攤平態板面上疊虛線(u_bracket 2 條上折 → 藍線 1 組)
     bl = page.evaluate("() => window.__cadChrome && window.__cadChrome.bendLines()")
     c.check("攤平態出現折彎線 overlay(count>0、可見)",
@@ -73,6 +98,11 @@ with sync_playwright() as p:
     bl2 = page.evaluate("() => window.__cadChrome && window.__cadChrome.bendLines()")
     c.check("摺疊態無折彎線段(count=0,場景重建不加 bendLines)",
             bl2 and bl2.get("count") == 0, str(bl2))
+
+    page.wait_for_function("() => document.querySelectorAll('.pick-marker').length > 0", timeout=15000)
+    c.check("摺疊態面標記回復可帶入(無 data-flat)",
+            page.locator(".pick-marker").first.get_attribute("data-flat") is None)
+    c.check("摺疊態提示文字回復", "切回摺疊" not in page.locator(".model-pick-hint").inner_text())
 
     c.check("全程無 JS 錯誤", not errs, "; ".join(errs[:3]))
     page.screenshot(path=out_path("smoke_flat_toggle.png"))

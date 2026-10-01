@@ -3777,6 +3777,19 @@
 .sel-action[data-cited="true"]:hover {
   text-decoration: none;
 }
+/* 攤平態禁帶入:渲染但禁用(保留 hover 讓 title 提示浮得出來,勿設 pointer-events:none) */
+.sel-action[data-disabled="true"],
+.props-bring[data-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.sel-action[data-disabled="true"]:hover,
+.props-bring[data-disabled="true"]:hover {
+  text-decoration: none;
+}
+.pick-marker[data-flat="true"] {
+  cursor: help;
+}
 .sel-clear {
   color: #9aa3b0;
 }

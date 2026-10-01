@@ -140,6 +140,13 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `chrome.bendLines`——**摺疊態斷言用 count===0 而非「group 不存在」**。座標直接對位(攤平
   GLB Z-up 無 recenter)。dev 鉤 `__cadChrome.bendLines()` → {visible,count};smoke_flat_toggle
   已擴充(攤平 count>0、摺疊 count=0)。
+- **攤平 GLB 帶拓撲 + 攤平態禁帶入對話(2026-10-01)**:`flat_glb.py` 現抽攤平實體的
+  selector bundle 寫進 GLB(scene 要標 python `source_path`,否則 extract raise
+  「sourcePath is required」退回純預覽——`-o` JSON 的 `topology:false` 就是這根),攤平態
+  才有面標記/物件樹/量測;**攤平面 token ≠ 摺疊 STEP 面編號**,Canvas3D `flatView` 讓
+  `bringToChat` no-op(marker `data-flat`、`props-bring`/`sel-action` `data-disabled`)。
+  動 flat_glb/攤平態互動 → `smoke_flat_toggle.py`(已斷攤平態 marker>0、物件樹有 FACE、
+  點 marker 不出 chip、切回摺疊 data-flat 消失)。
 - **路徑掃出 + 護套(2026-07-16)**:幾何掃出一律 `cadpy.parts.sweep` 家族
   (`swept_solid`/`cleanroom_sleeve`/`kcl_clamp`/`path_polyline`),**不要手刻
   build123d sweep()**——路徑弧側選錯(RadiusArc 正負號)、接點不相切(cusp)、

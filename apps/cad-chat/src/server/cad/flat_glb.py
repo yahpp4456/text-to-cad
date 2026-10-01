@@ -2,8 +2,9 @@
 """鈑金攤平預覽 GLB:import 產生器、跑 gen_flat() 取攤平實體、mesh 成 topology GLB。
 
 用法: python flat_glb.py <產生器.py 路徑> <輸出 .glb 路徑>
-- 從 build123d shape 直接建 scene(不寫任何 STEP);純預覽 GLB(無可點拓撲——
-  前端 useCadViewport 對無 selector bundle 優雅降級)。
+- 從 build123d shape 直接建 scene(不寫任何 STEP);GLB 帶 STEP_topology(selector
+  bundle 由攤平實體現抽),讓攤平態也有面標記/物件樹/量測(2026-10-01 前是純預覽
+  GLB,切攤平後這些全部消失)。抽拓撲失敗退回純預覽(前端優雅降級)。
 - 產生器須有 def gen_flat()(獨立鈑金件才有;組合件無攤平)。
 - stdout 印單行 JSON:{ok, file} 或 {ok:false, error}。
 
@@ -11,8 +12,9 @@
 """
 import importlib.util
 import json
+import os
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # 網格化參數對齊 cadpy metadata.DEFAULT_MESH_*(與摺疊 topology GLB 同精度)
 _LINEAR_DEFLECTION = 0.02
@@ -60,8 +62,15 @@ def main() -> int:
         return _fail(f"gen_flat() 執行失敗:{type(exc).__name__}: {exc}")
 
     from cadpy.glb import export_part_glb_from_scene
+    from cadpy.selector_types import SelectorProfile
+    from cadpy.source_hash import python_source_hash
     from cadpy.step_export import build_build123d_step_scene
-    from cadpy.step_scene import mesh_step_scene, scene_export_shape
+    from cadpy.step_scene import (
+        SelectorOptions,
+        extract_selectors_from_scene,
+        mesh_step_scene,
+        scene_export_shape,
+    )
 
     # GLB 路徑由「虛擬 STEP 檔名」決定(part_glb_path 取檔名);用輸出 GLB 反推同目錄同基名
     # 的虛擬 .step,讓 export_part_glb_from_scene 寫到我們要的 out_glb。
@@ -71,7 +80,15 @@ def main() -> int:
         stem = stem[1:-4]  # 去前導 dot 與 .glb → <name>.flat.step
     virtual_step = out_glb.parent / stem
     try:
-        scene = build_build123d_step_scene(shape, virtual_step, source_kind="python")
+        # 標記 python 來源(selector 抽取的 STEP_topology manifest 要 sourcePath;
+        # 與 cadpy.generation._mark_scene_python_backed 同義:相對虛擬 step 所在目錄)
+        src_identity = python_source_hash(gen_path)
+        scene = build_build123d_step_scene(
+            shape, virtual_step, source_kind="python", source_hash=src_identity.source_hash
+        )
+        scene.source_path = PurePosixPath(
+            os.path.relpath(gen_path.resolve(), virtual_step.parent.resolve()).replace("\\", "/")
+        ).as_posix()
         mesh_step_scene(
             scene,
             linear_deflection=_LINEAR_DEFLECTION,
@@ -79,13 +96,29 @@ def main() -> int:
             relative=False,
         )
         scene_export_shape(scene)
+        # 攤平實體的 selector bundle(面/邊拓撲)→ 前端 loadRenderSelectorBundle 才有
+        # 面標記、物件屬性樹、量測與圈選。失敗不擋 GLB(退回純預覽)。
+        bundle = None
+        try:
+            bundle = extract_selectors_from_scene(
+                scene,
+                profile=SelectorProfile.ARTIFACT,
+                options=SelectorOptions(
+                    linear_deflection=_LINEAR_DEFLECTION,
+                    angular_deflection=_ANGULAR_DEFLECTION,
+                    relative=False,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[flat_glb] selector bundle 抽取失敗,退回純預覽 GLB:{type(exc).__name__}: {exc}", file=sys.stderr)
+            bundle = None
         written = export_part_glb_from_scene(
             virtual_step,
             scene,
             linear_deflection=_LINEAR_DEFLECTION,
             angular_deflection=_ANGULAR_DEFLECTION,
-            selector_bundle=None,
-            include_selector_topology=False,
+            selector_bundle=bundle,
+            include_selector_topology=bundle is not None,
         )
     except Exception as exc:  # noqa: BLE001
         return _fail(f"攤平 GLB 產生失敗:{type(exc).__name__}: {exc}")
@@ -109,7 +142,7 @@ def main() -> int:
         except Exception:  # noqa: BLE001
             lines_file = None  # best-effort:折彎線失敗不擋攤平 GLB
 
-    print(json.dumps({"ok": True, "file": str(written), "lines_file": lines_file}, ensure_ascii=False))
+    print(json.dumps({"ok": True, "file": str(written), "lines_file": lines_file, "topology": bundle is not None}, ensure_ascii=False))
     return 0
 
 

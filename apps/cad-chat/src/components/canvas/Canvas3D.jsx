@@ -178,7 +178,18 @@ export default function Canvas3D({
 
   // 攤平 GLB 存在且 view=flat 才顯示攤平,否則摺疊(換版/非鈑金件 flatGlbUrl=null → 恆摺疊)
   const flatUrl = canvas.flatGlbUrl || null;
-  const activeGlbUrl = view === "flat" && flatUrl ? flatUrl : canvas.glbUrl;
+  const flatView = view === "flat" && !!flatUrl;
+  const activeGlbUrl = flatView ? flatUrl : canvas.glbUrl;
+  // 攤平 GLB 自帶攤平實體的 STEP_topology(面標記/物件樹/量測都能用),但面 token 指的是
+  // 攤平實體的面編號,agent 端 cad_measure/圈選一律對摺疊 STEP 解析 → 攤平態禁止
+  // 「帶入對話」(靜默錯對比什麼都不做更糟),切回摺疊再帶。
+  const bringToChat = useCallback(
+    (token, label) => {
+      if (flatView) return;
+      onBringToChat?.(token, label);
+    },
+    [flatView, onBringToChat],
+  );
   // 折彎線資料:換版時 fetch 該版 sidecar JSON(很小),攤平態疊虛線 overlay 用。
   const [flatLines, setFlatLines] = useState(null);
   useEffect(() => {
@@ -964,8 +975,15 @@ export default function Canvas3D({
                   ref={(el) => {
                     markersRef.current[i] = { el, center: n.row.center };
                   }}
-                  title={citedTokens.has(token) ? `${n.label} · 已帶入對話` : n.label}
-                  onClick={() => onBringToChat(token, n.label)}
+                  title={
+                    flatView
+                      ? `${n.label} · 攤平態僅供辨識/量測,帶入對話請切回摺疊`
+                      : citedTokens.has(token)
+                        ? `${n.label} · 已帶入對話`
+                        : n.label
+                  }
+                  data-flat={flatView || undefined}
+                  onClick={() => bringToChat(token, n.label)}
                   onContextMenu={(event) => openMarkerContextMenu(event, n)}
                   onMouseEnter={() => Number.isInteger(rowIndex) && setHoverFaceRow(rowIndex)}
                   onMouseLeave={() =>
@@ -1136,9 +1154,11 @@ export default function Canvas3D({
               {canvas.type === "assembly" ? " · 組合件" : canvas.type === "part" ? " · 元件" : ""}
             </span>
             <span className="model-pick-hint">
-              {isAsm && !selParts.length
-                ? "點擊圈選零件 → 顯示面標記(◇)可帶入對話 · 雙擊推近"
-                : "點面標記(◇)帶入對話 · 點擊圈選零件 · 雙擊推近"}
+              {flatView
+                ? "攤平態:面標記(◇)供辨識與量測 · 帶入對話請切回摺疊 · 雙擊推近"
+                : isAsm && !selParts.length
+                  ? "點擊圈選零件 → 顯示面標記(◇)可帶入對話 · 雙擊推近"
+                  : "點面標記(◇)帶入對話 · 點擊圈選零件 · 雙擊推近"}
             </span>
           </div>
           {selInfos.length > 0 && (
@@ -1152,7 +1172,9 @@ export default function Canvas3D({
               ) : (
                 <a
                   className="sel-action"
-                  onClick={() => selInfos.forEach((s) => onBringToChat?.(s.token, s.label))}
+                  data-disabled={flatView || undefined}
+                  title={flatView ? "攤平態不可帶入對話(切回摺疊)" : undefined}
+                  onClick={() => selInfos.forEach((s) => bringToChat(s.token, s.label))}
                 >
                   帶入對話{selInfos.length > 1 ? ` (${selInfos.length})` : ""}
                 </a>
@@ -1236,7 +1258,8 @@ export default function Canvas3D({
               canvas={canvas}
               activeVer={ver}
               dispatch={dispatch}
-              onBringToChat={onBringToChat}
+              onBringToChat={bringToChat}
+              bringDisabled={flatView}
               citedTokens={citedTokens}
               partDisplay={partDisplay}
               onCycleDisplay={cyclePartDisplay}

@@ -305,12 +305,15 @@ export function useCadViewport(
           });
           const geo = new THREE.BufferGeometry();
           geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+          // depthTest:false(仿 sweepGroup):線只高出頂面 ε,斜視角下 z-fighting
+          // 會讓虛線被板面吃掉大半,看起來「幾乎沒畫」;明度也拉高對深灰板面。
           const mat = new THREE.LineDashedMaterial({
             color,
             dashSize: Math.max(radius * 0.025, 1.5),
             gapSize: Math.max(radius * 0.018, 1.0),
             transparent: true,
-            opacity: 0.95,
+            opacity: 1,
+            depthTest: false,
             depthWrite: false,
             toneMapped: false,
           });
@@ -320,8 +323,8 @@ export function useCadViewport(
           line.renderOrder = 27;
           return line;
         };
-        const up = mkLine(bendLines.lines.filter((l) => l.up), 0x2f6fe0); // 藍 = 上折
-        const down = mkLine(bendLines.lines.filter((l) => !l.up), 0xd64848); // 紅 = 下折
+        const up = mkLine(bendLines.lines.filter((l) => l.up), 0x4fa8ff); // 藍 = 上折
+        const down = mkLine(bendLines.lines.filter((l) => !l.up), 0xff5c5c); // 紅 = 下折
         if (up) bendGroup.add(up);
         if (down) bendGroup.add(down);
         viewport.scene.add(bendGroup);

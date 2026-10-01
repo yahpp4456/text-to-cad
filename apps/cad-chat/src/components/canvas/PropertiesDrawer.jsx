@@ -9,6 +9,7 @@ export default function PropertiesDrawer({
   activeVer,
   dispatch,
   onBringToChat,
+  bringDisabled = false, // 攤平態:面 token 不對應摺疊 STEP,禁帶入(Canvas3D 決定)
   citedTokens,
   partDisplay = {},
   onCycleDisplay,
@@ -174,7 +175,9 @@ export default function PropertiesDrawer({
                 <a
                   className="props-bring"
                   data-cited={cited.has(selRef) || undefined}
-                  onClick={() => onBringToChat(selRef, sel.label)}
+                  data-disabled={bringDisabled || undefined}
+                  title={bringDisabled ? "攤平態不可帶入對話(切回摺疊)" : undefined}
+                  onClick={() => !bringDisabled && onBringToChat(selRef, sel.label)}
                 >
                   {cited.has(selRef) ? "✓ 已帶入" : "⊹ 帶入對話"}
                 </a>
