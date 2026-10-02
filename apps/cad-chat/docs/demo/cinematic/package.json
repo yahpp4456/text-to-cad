@@ -1,17 +1,19 @@
 {
   "name": "cad-chat-demo-cinematic",
   "private": true,
-  "description": "cad-chat 功能介紹影片的 Remotion 後製合成(字卡/字幕/框選/鏡頭/章節 chip),素材=record-demo-video.cjs 以 DEMO_RAW=1 錄的原始畫面 + cues.json",
+  "description": "cad-chat 功能介紹影片的 Remotion 後製(一個虛擬攝影棚 + 被操作的手持攝影機:whip pan/吊臂/滑回、場記板、REC 觀景窗、對焦搜尋、棚邊痕跡、合成 SFX),素材=record-demo-video.cjs 以 DEMO_RAW=1 錄的原始畫面 + cues.json",
   "scripts": {
     "prep": "node prep.cjs ../raw",
     "render": "remotion render src/index.tsx Demo out/demo-master.mp4 --concurrency=4 --crf 20",
-    "studio": "remotion studio src/index.tsx"
+    "studio": "remotion studio src/index.tsx",
+    "sfx": "mkdir -p public/sfx && ffmpeg -v error -y -f lavfi -i \"anoisesrc=d=0.7:c=pink:r=48000:a=0.8\" -af \"volume=1.6,afade=t=in:st=0:d=0.12,afade=t=out:st=0.3:d=0.4,lowpass=f=2600,highpass=f=180\" public/sfx/whoosh.wav && ffmpeg -v error -y -f lavfi -i \"sine=f=58:d=0.35:r=48000\" -af \"volume=2.2,afade=t=out:st=0.03:d=0.32,aecho=0.6:0.3:30:0.3\" public/sfx/thud.wav && ffmpeg -v error -y -f lavfi -i \"sine=f=1200:d=0.09:r=48000\" -af \"volume=0.35,afade=t=out:st=0.03:d=0.06\" public/sfx/beep.wav && ffmpeg -v error -y -f lavfi -i \"anoisesrc=d=0.08:c=white:r=48000:a=0.6\" -af \"volume=1.4,afade=t=out:st=0.01:d=0.07,highpass=f=1500\" public/sfx/clap.wav"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.532",
     "@remotion/transitions": "^4.0.532",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "remotion": "^4.0.532"
+    "remotion": "^4.0.532",
+    "@remotion/noise": "^4.0.532"
   }
 }

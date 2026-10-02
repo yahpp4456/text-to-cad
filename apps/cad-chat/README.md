@@ -1103,13 +1103,24 @@ tracked fixture 那份是修復前無拓撲的)、`models/stewart_platform`;草�
 - **直出版**:字幕/游標/章節卡疊在頁面內,錄出的 webm 直接 ffmpeg 轉 mp4。
 - **動態圖層版(cinematic,現行交付)**:`DEMO_RAW=1` 錄原始畫面(只留游標)並輸出
   `cues.json`(每句字幕/章節卡/框選的時間與座標),再由 `docs/demo/cinematic/`(Remotion)
-  後製:三層(背景漸層+顆粒+六角環 / 錄影視窗推拉鏡+章節卡退焦 / 字卡、字幕、框選、
-  章節 chip、進度條),spring 進場帶預備動作、逐段 stagger、描邊 draw-on、琥珀面板 wipe、
-  退場比進場快;全部由 frame 驅動(無 CSS animation)。流程:`npm i` → `node prep.cjs <rawDir>`
-  (webm→mp4、cues→`src/timeline.json`、尾端對齊校正、裁掉開場前的載入段)→
-  `npx remotion render src/index.tsx Demo out/demo-master.mp4 --concurrency=4 --crf 20`
-  (Linux 無 GPU 時加 `--gl=swiftshader --browser-executable <headless_shell>`)。
-  動態規則出自使用者提供的 cinematic-video skill(三層/鏡頭/spring/stagger/延續元素/次要動態)。
+  後製。現行版本照 cinematic-video skill 的「camera-driven transitions + fourth-wall」做:
+  - **一個虛擬攝影棚、一台被操作的手持攝影機**:app 錄影是棚中央的主景,六張章節卡是圍在
+    四周的佈景,開場/結尾景在上下。不剪接——章節切換=鏡頭甩(whip pan 13 幀,帶旋轉、速度
+    模糊、出發前預備反向)到那張卡,停留(慢推鏡),再弧線滑回主景;開場吊臂下降、結尾吊臂
+    離開。手持噪聲全程不關;佈景文字在鏡頭抵達時才進場;主景停留時每 6 秒推/拉一點並慢慢
+    重新取景。
+  - **打破第四面牆**:場記板(開場 SCENE 01 TAKE 1、壓軸 SCENE 06 TAKE 1,落板白閃 + 合板聲)、
+    REC 觀景窗(四角框、1 Hz REC 點、由幀數算的 timecode、三分線、SCENE 標籤、AF 對焦框落地
+    吸英雄元素)、攝影師瑕疵(落地對焦搜尋、回主景曝光修正、過衝、捲簾快門歪斜、固定鏡頭髒
+    污)、棚邊痕跡(膠帶 X、燈架、cyclorama 邊線、線材,只在甩鏡時掃過)、內容知道鏡頭在哪
+    (主景隨鏡頭速度微傾、落地時整棚順勢顫),以及開場/結尾各一句直接對觀眾說的話。
+  - **SFX**(ffmpeg 合成,`npm run sfx`):開錄 beep、甩鏡 whoosh(出發前 2 幀)、落地 thud、
+    場記板 clap。仍無旁白與配樂。
+  流程:`npm i` → `npm run sfx` → `node prep.cjs <rawDir>`(webm→mp4、cues→`src/timeline.json`、
+  尾端對齊校正、裁掉開場前的載入段)→ `npx remotion render src/index.tsx Demo out/demo-master.mp4
+  --concurrency=4 --crf 20`(Linux 無 GPU 時加 `--gl=swiftshader --browser-executable <headless_shell>`,
+  約 40 分鐘)。全部由 frame 驅動(無 CSS animation);`src/stage.tsx` 是鏡頭/棚面/觀景窗/場記板,
+  `src/Main.tsx` 是鏡位表與各佈景,`src/primitives.tsx` 是進場/stagger/draw-on 等原語。
 
 ## 煙測(Playwright,`tests/smoke/`)
 
