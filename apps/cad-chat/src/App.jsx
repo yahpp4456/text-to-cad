@@ -1105,7 +1105,7 @@ export default function App() {
     [state.running, state.mode, state.items.length, state.versions.length, resetChat, projectDirty, state.project, demo],
   );
 
-  // demo 校正:持久化快照若殘留 demo 不開放的 mode(cable 分頁對 demo 是藏的),
+  // demo 校正:持久化快照若殘留 demo 不開放的 mode(design 以外的分頁對 demo 是藏的),
   // 一律拉回 design 並開新對話——否則切換器沒有亮著的分段、每則 /api/chat 都 403。
   useEffect(() => {
     if (!demo || isDemoAllowedMode(state.mode) || state.running) return;

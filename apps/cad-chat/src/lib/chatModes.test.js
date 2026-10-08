@@ -35,10 +35,12 @@ test("isDesignLike:cable 是設計特化,草模/零件庫/垃圾值都不是", (
   }
 });
 
-test("isDemoAllowedMode:demo 藏 cable,其餘模式(含缺席=沿用 session)放行", () => {
-  assert.deepEqual(DEMO_HIDDEN_MODES, ["cable"]);
-  assert.equal(isDemoAllowedMode("cable"), false);
-  for (const value of ["design", "sketch", "library", undefined, null]) {
-    assert.equal(isDemoAllowedMode(value), true);
+test("isDemoAllowedMode:demo 只開 design,其餘模式藏;缺席(=沿用 session)放行", () => {
+  assert.deepEqual(DEMO_HIDDEN_MODES, ["sketch", "cable", "library"]);
+  for (const value of ["sketch", "cable", "library"]) {
+    assert.equal(isDemoAllowedMode(value), false, value);
+  }
+  for (const value of ["design", undefined, null]) {
+    assert.equal(isDemoAllowedMode(value), true, String(value));
   }
 });

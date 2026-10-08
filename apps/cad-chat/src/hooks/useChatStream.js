@@ -98,7 +98,7 @@ export function useChatStream(dispatch, modeRef) {
                     : j.error === "demo_session_expired"
                       ? "展示登入已逾時,請重新整理頁面重新登入。"
                       : j.error === "demo_mode_forbidden"
-                        ? "展示身分未開放這個模式,請切回「設計」或「草模」開新對話。"
+                        ? "展示身分未開放這個模式,請切回「設計」開新對話。"
                         : `伺服器錯誤 HTTP ${res.status}`;
           handleEvent(dispatch, "error", { message: msg });
           return;
