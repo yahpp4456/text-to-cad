@@ -523,7 +523,9 @@ export function deleteCase(id, { file = lessonsFile() } = {}) {
 // active 教訓;>max 條取 caseCount top-N 後依 id 排序(決定性、prompt-cache 友善);
 // 總量 hard cap;0 條 → ""(冷啟動完全不出現段落)。
 // 段首從屬聲明:防壞教訓凌駕手寫契約。
-export function buildDigest(store, { max = 10, budget = 1000 } = {}) {
+// budget 2000(2026-10-09 由 1000 放大,Sam 決定):每條約 200~250 字,1000 只塞得下 4 條,
+// LS-10 以後從沒進過 prompt;2000 讓目前 8 條啟用教訓全進,系統提示多約 600 token。
+export function buildDigest(store, { max = 10, budget = 2000 } = {}) {
   const active = (store?.lessons || []).filter((l) => l.status === "active");
   if (!active.length) return "";
   const top =
