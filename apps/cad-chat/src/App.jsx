@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } 
 import Header from "./components/Header.jsx";
 import FileBrowser from "./components/FileBrowser.jsx";
 import LessonsPanel from "./components/LessonsPanel.jsx";
+import DemoIntroDialog from "./components/DemoIntroDialog.jsx";
 import StageStepper from "./components/StageStepper.jsx";
 import Conversation from "./components/conversation/Conversation.jsx";
 import Composer from "./components/conversation/Composer.jsx";
@@ -44,6 +45,9 @@ function AuthBanner({ warnings }) {
     </div>
   );
 }
+
+// DEMO 進場介紹影片「已答過」的 localStorage 鍵(換影片/改文案要再問一次就 bump 版本)。
+const DEMO_INTRO_SEEN_KEY = "cadchat.demoIntroSeen.v1";
 
 // 通用確認框(取代原生 window.confirm 的醜視窗):沿用 SaveDialog 的視覺語言。
 // box = { eyebrow, body, actionLabel, accent?, onConfirm } | null。
@@ -264,6 +268,7 @@ export default function App() {
   const [shelfRefresh, setShelfRefresh] = useState(0); // 工作台重抓訊號(另存案件後 +1)
   const [lessonBox, setLessonBox] = useState(null); // 記教訓對話框:{partName} | null
   const [confirmBox, setConfirmBox] = useState(null); // 通用確認框(切模式/升級)
+  const [introOpen, setIntroOpen] = useState(false); // DEMO 進場「要不要看介紹影片」
   const [lessonsOpen, setLessonsOpen] = useState(false);
   const [exporting, setExporting] = useState(null); // "v2:stl" | null(匯出中鎖鈕)
   const [saving, setSaving] = useState(false); // 就地儲存進行中(Header 鈕文案/Ctrl+S 守衛)
@@ -289,6 +294,28 @@ export default function App() {
   // server 端 demoGuard 對應端點回 403;前端禁用只是 UX,不是安全邊界。
   // health 未回前 demo=false:入口短暫可用,點了也被 403 擋。
   const demo = !!health?.demo;
+
+  // DEMO 首次進場問「要不要看 30 秒介紹影片」:只在 server 回 introVideo:true(檔案真的在)
+  // 且這個瀏覽器沒答過時出現;觀看/略過/Escape 都記成看過(localStorage,壞掉就當沒看過
+  // 再問一次,不擋頁面)。團隊身分不問。
+  useEffect(() => {
+    if (!demo || !health?.introVideo) return;
+    let seen = false;
+    try {
+      seen = window.localStorage.getItem(DEMO_INTRO_SEEN_KEY) === "1";
+    } catch {
+      seen = false;
+    }
+    if (!seen) setIntroOpen(true);
+  }, [demo, health?.introVideo]);
+  const closeIntro = useCallback(() => {
+    setIntroOpen(false);
+    try {
+      window.localStorage.setItem(DEMO_INTRO_SEEN_KEY, "1");
+    } catch {
+      /* 私密視窗/停用儲存:下次再問一次,無害 */
+    }
+  }, []);
 
   // ── 專案綁定 / 未儲存 ──
   // dirty = 最新生成版 > 上次儲存版(純函數 lib/projectState;跨 session 殘留視為未綁定)。
@@ -1569,6 +1596,7 @@ export default function App() {
       />
       <LessonsPanel open={lessonsOpen} onClose={() => setLessonsOpen(false)} />
       <ConfirmDialog box={confirmBox} onClose={() => setConfirmBox(null)} />
+      <DemoIntroDialog open={introOpen} onClose={closeIntro} />
       <LessonRecordDialog
         open={!!lessonBox}
         partName={lessonBox?.partName || ""}

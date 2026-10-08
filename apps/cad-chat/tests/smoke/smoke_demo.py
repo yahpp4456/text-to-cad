@@ -8,6 +8,10 @@ hover 出 DEMO_TIP),不是藏起來——藏會讓展示者以為產品沒有這
   · 模式切換器:demo 只看「設計」一段(2026-10-09 起;lib/chatModes DEMO_HIDDEN_MODES),
     草模/無塵電纜/零件庫分段整段**藏**,server 端 /api/chat 對這些 mode 回 403
     demo_mode_forbidden——展示身分只走設計一條線。
+  · 進場介紹影片(2026-10-09):/api/health 回 introVideo:true(docs/demo 影片真的在、
+    不是 LFS pointer)時,demo 首次進場出「要不要看 30 秒介紹」對話框;略過/觀看/Escape
+    都記 localStorage 不再問;團隊身分不出。影片沒拉下來(introVideo:false)則整段不出,
+    本煙測據旗分支斷言。
 
 demo 身分靠反代注入的 X-Remote-User 判定,瀏覽器直連沒有這個 header → 本煙測用
 Playwright context 的 extra_http_headers 模擬(對照組用另一個 user 名證明禁用不是
@@ -77,6 +81,37 @@ def main():
                 "() => document.querySelector('.hdr-btn[data-disabled]') !== null",
                 timeout=10000,
             )
+
+            # ── 0. 進場介紹影片對話框(覆蓋層會攔點擊,必須先處理) ──
+            intro_flag = bool(page.request.get(f"{BASE}/api/health").json().get("introVideo"))
+            page.wait_for_timeout(300)
+            if intro_flag:
+                C.check("introVideo:true → demo 首次進場出介紹對話框", page.locator(".intro-dialog").count() == 1)
+                C.check("對話框停在詢問階段", page.locator(".intro-dialog[data-stage='ask']").count() == 1)
+                # 影片端點:HEAD 200 + Range 206(<video> 拖進度條靠它)
+                head = page.request.head(f"{BASE}/api/demo-intro.mp4")
+                C.check("/api/demo-intro.mp4 HEAD 200 video/mp4",
+                        head.status == 200 and head.headers.get("content-type") == "video/mp4", str(head.status))
+                part = page.request.get(f"{BASE}/api/demo-intro.mp4", headers={"Range": "bytes=0-99"})
+                C.check("/api/demo-intro.mp4 Range → 206", part.status == 206 and len(part.body()) == 100,
+                        f"{part.status} {len(part.body())}")
+                page.click(".intro-dialog .save-btn:has-text('略過')")
+                page.wait_for_timeout(200)
+                C.check("略過後對話框關閉", page.locator(".intro-dialog").count() == 0)
+                C.check("略過記進 localStorage",
+                        page.evaluate("() => localStorage.getItem('cadchat.demoIntroSeen.v1')") == "1")
+                page.reload()
+                page.wait_for_selector(".hdr", timeout=30000)
+                page.wait_for_function(
+                    "() => document.querySelector('.hdr-btn[data-disabled]') !== null",
+                    timeout=10000,
+                )
+                page.wait_for_timeout(300)
+                C.check("答過後重整不再問", page.locator(".intro-dialog").count() == 0)
+            else:
+                print("[skip] introVideo:false(docs/demo 影片未 LFS pull)→ 只驗不出對話框")
+                C.check("introVideo:false → 不出介紹對話框", page.locator(".intro-dialog").count() == 0)
+                C.check("/api/demo-intro.mp4 無檔 → 404", page.request.get(f"{BASE}/api/demo-intro.mp4").status == 404)
 
             # ── A. Header:禁用但在場 ──
             hdr = _attrs(page, ".hdr-btn")
@@ -189,6 +224,7 @@ def main():
             page2.goto(BASE)
             page2.wait_for_selector(".hdr", timeout=30000)
             page2.wait_for_timeout(800)  # 等 health 回,避免搶在 demo 旗到位前就斷言
+            C.check("對照組不出介紹對話框", page2.locator(".intro-dialog").count() == 0)
             hdr2 = _attrs(page2, ".hdr-btn")
             for label in ("開啟檔案", "教訓"):
                 row = _find(hdr2, label)

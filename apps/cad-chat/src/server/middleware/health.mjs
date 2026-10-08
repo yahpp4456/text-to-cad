@@ -3,6 +3,7 @@
 import { resolveAuth, resolveDemoQuota, resolveModel } from "../config.mjs";
 import { probeSessionOnDisk } from "../sessions.mjs";
 import { quotaStatus } from "../quota.mjs";
+import { introVideoStatus } from "../introVideo.mjs";
 import { parseUrl, sendJson } from "../httpUtil.mjs";
 
 export function healthMiddleware() {
@@ -22,6 +23,8 @@ export function healthMiddleware() {
       model: resolveModel() || "(CLI 預設)",
       warnings: auth.warnings,
       demo, // 前端據此藏 開啟檔案/教訓/另存專案 與零件庫互動
+      // 介紹影片真的在(不是 LFS pointer)才回 true;demo 首次進場據此問「要不要看」。
+      introVideo: introVideoStatus().available,
       // demo 時附剩餘配額(不回傳 user 字串);前端可顯「剩餘 X 回合」徽章。
       ...(demo ? { demoQuota: quotaStatus(req.cadchat.user, { limit: resolveDemoQuota() }) } : {}),
     });

@@ -4559,3 +4559,23 @@
   padding: 4px 8px;
   line-height: 1.4;
 }
+
+/* ── DEMO 進場介紹影片對話框(沿用 save-dialog 視覺) ── */
+.intro-overlay {
+  align-items: center;
+  padding: 24px;
+}
+.intro-dialog {
+  width: min(480px, 100%);
+  border-top-color: var(--emit);
+}
+.intro-dialog.intro-playing {
+  width: min(880px, 100%);
+}
+.intro-video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  outline: none;
+}
