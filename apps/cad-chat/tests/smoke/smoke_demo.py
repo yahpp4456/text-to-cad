@@ -9,8 +9,8 @@ hover 出 DEMO_TIP),不是藏起來——藏會讓展示者以為產品沒有這
     草模/無塵電纜/零件庫分段整段**藏**,server 端 /api/chat 對這些 mode 回 403
     demo_mode_forbidden——展示身分只走設計一條線。
   · 進場介紹影片(2026-10-09):/api/health 回 introVideo:true(docs/demo 影片真的在、
-    不是 LFS pointer)時,demo 首次進場出「要不要看 30 秒介紹」對話框;略過/觀看/Escape
-    都記 localStorage 不再問;團隊身分不出。影片沒拉下來(introVideo:false)則整段不出,
+    不是 LFS pointer)時,demo 進場出「要不要看 30 秒介紹」對話框,**每次載入都問**
+    (不記 localStorage);略過/觀看/Escape 只關本次;團隊身分不出。影片沒拉下來(introVideo:false)則整段不出,
     本煙測據旗分支斷言。
 
 demo 身分靠反代注入的 X-Remote-User 判定,瀏覽器直連沒有這個 header → 本煙測用
@@ -98,8 +98,8 @@ def main():
                 page.click(".intro-dialog .save-btn:has-text('略過')")
                 page.wait_for_timeout(200)
                 C.check("略過後對話框關閉", page.locator(".intro-dialog").count() == 0)
-                C.check("略過記進 localStorage",
-                        page.evaluate("() => localStorage.getItem('cadchat.demoIntroSeen.v1')") == "1")
+                C.check("不寫 localStorage(每次都問)",
+                        page.evaluate("() => localStorage.getItem('cadchat.demoIntroSeen.v1')") is None)
                 page.reload()
                 page.wait_for_selector(".hdr", timeout=30000)
                 page.wait_for_function(
@@ -107,7 +107,10 @@ def main():
                     timeout=10000,
                 )
                 page.wait_for_timeout(300)
-                C.check("答過後重整不再問", page.locator(".intro-dialog").count() == 0)
+                C.check("重整後再問一次", page.locator(".intro-dialog").count() == 1)
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(200)
+                C.check("Escape 關閉對話框", page.locator(".intro-dialog").count() == 0)
             else:
                 print("[skip] introVideo:false(docs/demo 影片未 LFS pull)→ 只驗不出對話框")
                 C.check("introVideo:false → 不出介紹對話框", page.locator(".intro-dialog").count() == 0)

@@ -3,8 +3,8 @@ import React, { useEffect, useState } from "react";
 import { apiUrl } from "@/lib/apiBase";
 
 // DEMO 進場詢問:要不要先看 30 秒「設計模式」介紹影片。
-// 兩階段:ask(觀看/略過)→ play(內嵌 <video> + 關閉)。任何一個出口都算「看過」
-// (由 App 記 localStorage,不再問);Escape 等同關閉。影片來源 /api/demo-intro.mp4
+// 兩階段:ask(觀看/略過)→ play(內嵌 <video> + 關閉)。每次載入頁面都會再問
+// (App 不記 localStorage;Sam 2026-10-09 決定);Escape 等同關閉。影片來源 /api/demo-intro.mp4
 // (server Range 串流);只有 /api/health 回 introVideo:true 才會被掛出來。
 export const INTRO_VIDEO_SRC = "/api/demo-intro.mp4";
 
