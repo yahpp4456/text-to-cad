@@ -59,7 +59,7 @@ export function chatMiddleware() {
       return;
     }
 
-    // DEMO 不開放的模式(無塵電纜):在 mint session 之前就擋,不留 cable session 落盤。
+    // DEMO 不開放的模式(design 以外全部):在 mint session 之前就擋,不留該 session 落盤。
     // 前端已藏分頁,這裡是防直呼 API 的伺服器端底線(同 demoGuard 的定位)。
     if (req.cadchat?.demo && !isDemoAllowedMode(body.mode)) {
       sendJson(res, 403, { error: "demo_mode_forbidden", mode: body.mode });

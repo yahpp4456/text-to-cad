@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-09-26T03:56:56.318Z",
-  "seq": 123,
-  "lessonSeq": 12,
+  "updatedAt": "2026-10-08T16:33:26.552Z",
+  "seq": 124,
+  "lessonSeq": 13,
   "cases": [
     {
       "id": "c_1",
@@ -2500,6 +2500,31 @@
       "resolvedBy": null,
       "fixEdits": null,
       "lessonId": "LS-3"
+    },
+    {
+      "id": "c_124",
+      "at": "2026-10-08T16:28:00.000Z",
+      "sessionId": "s_muzqyfx5_k8fnfb",
+      "turnId": null,
+      "source": "manual",
+      "signature": "manual:compound-children-transform",
+      "userText": "線性滑台:check_geometry 報 4 對未宣告干涉 base~motor_body/base~motor_shaft/motor_plate~motor_body/motor_plate~motor_shaft(gap=0,overlap 237~912mm³);修後再報 motor_shaft~screw overlap 31.67mm³",
+      "note": "馬達標準件 compound 整體套位移,子件(本體/軸)未帶到新位置留在原點插進底座與座板;馬達軸與螺桿同軸對接未宣告 INTENDED_CONTACT — 根因:compound 子件不繼承位移、同軸接觸未宣告",
+      "stderrTail": "AssertionError: interference: 4 undeclared pair(s): base~motor_body(gap=0.000mm, overlap=912.07mm^3); base~motor_shaft(gap=0.000mm, overlap=237.52mm^3); motor_plate~motor_body(gap=0.000mm, overlap=392.63mm^3); motor_plate~motor_shaft(gap=0.000mm, overlap=332.46mm^3)\n於 linear_slide.py 第 235 行(check_geometry)\n…\nAssertionError: interference: 1 undeclared pair(s): motor_shaft~screw(gap=0.000mm, overlap=31.67mm^3)",
+      "partName": "linear_slide",
+      "partCount": 0,
+      "attempt": 0,
+      "retry": {
+        "reason": "compound 子件未帶位移;同軸對接未宣告",
+        "adjustment": "逐子件各自做同一變換再組 compound;motor_shaft~screw 列 INTENDED_CONTACT"
+      },
+      "resolved": true,
+      "resolvedBy": "manual",
+      "fixEdits": [
+        "逐子件 transform 兩個馬達子件",
+        "宣告 motor_shaft~screw INTENDED_CONTACT"
+      ],
+      "lessonId": "LS-13"
     }
   ],
   "lessons": [
@@ -2688,6 +2713,21 @@
       "lastHitAt": "2026-07-20T04:35:42.413Z",
       "distilledAt": "2026-07-21T02:33:05.966Z",
       "model": "claude-fable-5"
+    },
+    {
+      "id": "LS-13",
+      "signature": "manual:compound-children-transform",
+      "status": "active",
+      "title": "多子件標準件須逐子件帶位移,同軸對接須宣告接觸",
+      "rootCause": "把多子件標準件(馬達=本體+軸)整個 compound 套 Pos/Rot,子件未繼承位移而留在原點插進底座與座板;馬達軸與螺桿同軸對接處又未宣告 INTENDED_CONTACT,check_geometry 連報多對未宣告干涉。",
+      "rule": "擺放由多個子實體組成的標準件(馬達=本體+軸、缸=缸體+桿等)時,對每個子件各自套同一 Pos/Rot 再組 compound,擺好後逐子件斷言其 bbox 已離開原點並與座面恰貼合;同軸對接件(馬達軸~螺桿/聯軸器、桿~活塞)在建幾何同一步於模組頂層宣告 INTENDED_CONTACT 或留正間隙,再跑 check_geometry。",
+      "caseCount": 1,
+      "resolvedCount": 1,
+      "graduationCandidate": false,
+      "createdAt": "2026-10-08T16:28:00.000Z",
+      "lastHitAt": "2026-10-08T16:28:00.000Z",
+      "distilledAt": "2026-10-08T16:28:00.000Z",
+      "model": "manual(Sam 2026-10-09 demo 回合觀察,Claude Fable 5.1 代寫)"
     }
   ],
   "distillAttempts": {}

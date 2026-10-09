@@ -4,18 +4,19 @@
 UX 契約(2026-07-21 二版):demo 下受限入口**照常渲染但禁用**(data-disabled +
 hover 出 DEMO_TIP),不是藏起來——藏會讓展示者以為產品沒有這些功能。三個例外:
   · 「＋ 新對話」對 demo 開放(不受限);
-  · 零件庫「預覽」開放(純唯讀,/api/asset 對 demo 本就放行);
-  · 教訓是/否面板**直接不出**(它是「要求使用者作答」的面板,出現卻不能答=死路)。
+  · 教訓是/否面板**直接不出**(它是「要求使用者作答」的面板,出現卻不能答=死路);
+  · 模式切換器:demo 只看「設計」一段(2026-10-09 起;lib/chatModes DEMO_HIDDEN_MODES),
+    草模/無塵電纜/零件庫分段整段**藏**,server 端 /api/chat 對這些 mode 回 403
+    demo_mode_forbidden——展示身分只走設計一條線。
+  · 進場介紹影片(2026-10-09):/api/health 回 introVideo:true(docs/demo 影片真的在、
+    不是 LFS pointer)時,demo 進場出「要不要看 30 秒介紹」對話框,**每次載入都問**
+    (不記 localStorage);略過/觀看/Escape 只關本次;團隊身分不出。影片沒拉下來(introVideo:false)則整段不出,
+    本煙測據旗分支斷言。
 
 demo 身分靠反代注入的 X-Remote-User 判定,瀏覽器直連沒有這個 header → 本煙測用
 Playwright context 的 extra_http_headers 模擬(對照組用另一個 user 名證明禁用不是
 全域行為)。前置:dev server 8788。
-
-seed:demo 的 per-user 庫(REPO/users/demo/models/parts-library/<slug>)必須有件才
-看得到卡片動作。永遠只建自己的 slug;users/demo 若非本測建立則保留(可能是真的
-展示帳號資料),finally 只刪自己種的那件。
 """
-import json
 import os
 import shutil
 
@@ -29,7 +30,6 @@ DEMO_TIP = "DEMO 帳號僅供展示,這個功能未開放"
 
 DEMO_USER = "demo"  # CADCHAT_DEMO_USERS 未設時的預設值
 CTRL_USER = "u_demo_ctrl"  # 對照組:非 demo 身分
-SEED_SLUG = "smoke_demo_part"
 
 C = Checker()
 
@@ -53,35 +53,6 @@ def _find(rows, needle):
     return None
 
 
-def _open_library(page):
-    """切到零件庫模式(切換=開新 session;空白狀態不會跳確認)。"""
-    page.click(".mode-seg:has-text('零件庫')")
-    page.wait_for_selector(".lib-shelf-track", timeout=15000)
-
-
-def seed_library():
-    """種一件到 demo 的 per-user 庫。回 (是否本測建立 users/demo, seed 目錄)。"""
-    user_root = os.path.join(REPO, "users", DEMO_USER)
-    created_root = not os.path.isdir(user_root)
-    seed_dir = os.path.join(user_root, "models", "parts-library", SEED_SLUG)
-    os.makedirs(seed_dir, exist_ok=True)
-    # listLibraryParts 只讀 meta.json(GLB 缺席時 readOnly 不補轉,卡片維持 ⬡ 占位)
-    with open(os.path.join(seed_dir, "meta.json"), "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "label": "SMOKE DEMO PART",
-                "family": "cylinder",
-                "bboxMm": [40, 20, 20],
-                "notes": "smoke fixture",
-            },
-            f,
-            ensure_ascii=False,
-        )
-    with open(os.path.join(seed_dir, f"{SEED_SLUG}.step"), "w", encoding="utf-8") as f:
-        f.write("ISO-10303-21;\nEND-ISO-10303-21;\n")
-    return created_root, seed_dir
-
-
 def main():
     if not server_alive():
         msg = "server 8788 不可達;先 `cd apps/cad-chat && npm run dev`"
@@ -91,7 +62,6 @@ def main():
         print("[skip] " + msg)
         return
 
-    created_root, seed_dir = seed_library()
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch()
@@ -112,6 +82,40 @@ def main():
                 timeout=10000,
             )
 
+            # ── 0. 進場介紹影片對話框(覆蓋層會攔點擊,必須先處理) ──
+            intro_flag = bool(page.request.get(f"{BASE}/api/health").json().get("introVideo"))
+            page.wait_for_timeout(300)
+            if intro_flag:
+                C.check("introVideo:true → demo 首次進場出介紹對話框", page.locator(".intro-dialog").count() == 1)
+                C.check("對話框停在詢問階段", page.locator(".intro-dialog[data-stage='ask']").count() == 1)
+                # 影片端點:HEAD 200 + Range 206(<video> 拖進度條靠它)
+                head = page.request.head(f"{BASE}/api/demo-intro.mp4")
+                C.check("/api/demo-intro.mp4 HEAD 200 video/mp4",
+                        head.status == 200 and head.headers.get("content-type") == "video/mp4", str(head.status))
+                part = page.request.get(f"{BASE}/api/demo-intro.mp4", headers={"Range": "bytes=0-99"})
+                C.check("/api/demo-intro.mp4 Range → 206", part.status == 206 and len(part.body()) == 100,
+                        f"{part.status} {len(part.body())}")
+                page.click(".intro-dialog .save-btn:has-text('略過')")
+                page.wait_for_timeout(200)
+                C.check("略過後對話框關閉", page.locator(".intro-dialog").count() == 0)
+                C.check("不寫 localStorage(每次都問)",
+                        page.evaluate("() => localStorage.getItem('cadchat.demoIntroSeen.v1')") is None)
+                page.reload()
+                page.wait_for_selector(".hdr", timeout=30000)
+                page.wait_for_function(
+                    "() => document.querySelector('.hdr-btn[data-disabled]') !== null",
+                    timeout=10000,
+                )
+                page.wait_for_timeout(300)
+                C.check("重整後再問一次", page.locator(".intro-dialog").count() == 1)
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(200)
+                C.check("Escape 關閉對話框", page.locator(".intro-dialog").count() == 0)
+            else:
+                print("[skip] introVideo:false(docs/demo 影片未 LFS pull)→ 只驗不出對話框")
+                C.check("introVideo:false → 不出介紹對話框", page.locator(".intro-dialog").count() == 0)
+                C.check("/api/demo-intro.mp4 無檔 → 404", page.request.get(f"{BASE}/api/demo-intro.mp4").status == 404)
+
             # ── A. Header:禁用但在場 ──
             hdr = _attrs(page, ".hdr-btn")
             for label in ("開啟檔案", "教訓"):
@@ -123,9 +127,14 @@ def main():
             new_chat = _find(hdr, "新對話")
             C.check("「＋ 新對話」對 demo 不禁用", new_chat and new_chat["disabled"] is None, str(new_chat))
 
-            # 模式切換器:「無塵電纜」分段對 demo 是**藏**(不是禁用)——客戶案件工作流不對展示身分露出
-            C.check("ModeSwitch 無「無塵電纜」分段(藏)", page.locator(".mode-seg[data-mode='cable']").count() == 0)
-            C.check("ModeSwitch 仍有 草模/設計/零件庫 三段", page.locator(".mode-seg").count() == 3)
+            # 模式切換器:demo 只看「設計」——草模/無塵電纜/零件庫分段整段**藏**(不是禁用),
+            # 分隔線跟零件庫一起不出
+            for m in ("sketch", "cable", "library"):
+                C.check(f"ModeSwitch 無 {m} 分段(藏)", page.locator(f".mode-seg[data-mode='{m}']").count() == 0)
+            C.check("ModeSwitch 僅剩「設計」一段且亮著",
+                    page.locator(".mode-seg").count() == 1
+                    and page.locator(".mode-seg[data-mode='design'][data-on='true']").count() == 1)
+            C.check("ModeSwitch 無分隔線", page.locator(".mode-switch .mode-divider").count() == 0)
 
             # 「儲存」(專案綁定)鈕:demo 一樣渲染但禁用;Ctrl+S 不打 /api/save-project。
             # 注入綁定+產物讓鈕出現;斷言完解除綁定,免得之後 reload 被 beforeunload 攔住。
@@ -188,40 +197,23 @@ def main():
                 timeout=10000,
             )
 
-            # ── C. 零件庫:貨架動作 ──
-            _open_library(page)
-            page.wait_for_selector(".lib-card", timeout=15000)
-            shelf = _attrs(page, ".lib-shelf-head .fb-action, .lib-card-actions .fb-action")
-            for label in ("管理", "⇪ 設計"):
-                row = _find(shelf, label)
-                C.check(f"貨架「{label}」仍渲染", row is not None, str(shelf))
-                if row:
-                    C.check(f"貨架「{label}」data-disabled", row["disabled"] == "true", str(row))
-                    C.check(f"貨架「{label}」title=DEMO_TIP", row["title"] == DEMO_TIP, str(row))
-            prev = _find(shelf, "預覽")
-            C.check("貨架「預覽」開放(唯讀不擋)", prev and prev["disabled"] is None, str(prev))
+            # ── C. server 底線:直呼 /api/chat 帶 demo 不開放的 mode → 403(不留 session 落盤)──
+            # 用 page.request 讓請求帶同一組 x-remote-user header。agent 未就緒(無 token 的
+            # 開發機)會先 503 agent_not_ready,那是環境限制不是回歸 → 記 skip。
+            for m in ("sketch", "cable", "library"):
+                r = page.request.post(f"{BASE}/api/chat", data={"mode": m, "message": "smoke"})
+                if r.status == 503:
+                    print(f"[skip] /api/chat mode={m}:agent 未就緒(503),無法驗 403 底線")
+                    continue
+                body = r.json() if r.status == 403 else {}
+                C.check(f"demo 直呼 /api/chat mode={m} → 403 demo_mode_forbidden",
+                        r.status == 403 and body.get("error") == "demo_mode_forbidden",
+                        f"HTTP {r.status} {r.text()[:80]}")
 
-            # ── D. 空狀態上傳區:整區禁用 + 副標換成原因 ──
-            dz = _attrs(page, ".lib-dropzone")
-            C.check("上傳區仍渲染", len(dz) == 1, str(dz))
-            if dz:
-                C.check("上傳區 data-disabled", dz[0]["disabled"] == "true", str(dz[0]))
-                C.check("上傳區 title=DEMO_TIP", dz[0]["title"] == DEMO_TIP, str(dz[0]))
-            C.check(
-                "上傳區副標說明原因",
-                DEMO_TIP in page.locator(".lib-dz-sub").inner_text(),
-                page.locator(".lib-dz-sub").inner_text()[:60],
-            )
-
-            # ── E. Composer:附件鈕禁用 + 輸入框鎖定文案 ──
+            # ── D. 設計模式下 Composer 對 demo 正常可用(附件/輸入不因 demo 鎖)──
             attach = _attrs(page, ".composer-btn.attach")
-            C.check("附件鈕仍渲染", len(attach) == 1, str(attach))
-            if attach:
-                C.check("附件鈕 data-disabled", attach[0]["disabled"] == "true", str(attach[0]))
-                C.check("附件鈕 title=DEMO_TIP", attach[0]["title"] == DEMO_TIP, str(attach[0]))
-            ph = page.get_attribute(".composer-input", "placeholder") or ""
-            C.check("輸入框 placeholder 說明原因", DEMO_TIP in ph, ph[:60])
-            C.check("輸入框鎖定", page.locator(".composer-input").is_disabled())
+            C.check("設計模式附件鈕不禁用", len(attach) == 1 and attach[0]["disabled"] is None, str(attach))
+            C.check("設計模式輸入框可用", not page.locator(".composer-input").is_disabled())
 
             C.check("demo 頁面無 JS 錯誤", not errors, "; ".join(errors[:2]))
             ctx.close()
@@ -235,6 +227,7 @@ def main():
             page2.goto(BASE)
             page2.wait_for_selector(".hdr", timeout=30000)
             page2.wait_for_timeout(800)  # 等 health 回,避免搶在 demo 旗到位前就斷言
+            C.check("對照組不出介紹對話框", page2.locator(".intro-dialog").count() == 0)
             hdr2 = _attrs(page2, ".hdr-btn")
             for label in ("開啟檔案", "教訓"):
                 row = _find(hdr2, label)
@@ -242,9 +235,6 @@ def main():
             ctx2.close()
             browser.close()
     finally:
-        shutil.rmtree(seed_dir, ignore_errors=True)
-        if created_root:
-            shutil.rmtree(os.path.join(REPO, "users", DEMO_USER), ignore_errors=True)
         shutil.rmtree(os.path.join(REPO, "users", CTRL_USER), ignore_errors=True)
 
     C.finish()
