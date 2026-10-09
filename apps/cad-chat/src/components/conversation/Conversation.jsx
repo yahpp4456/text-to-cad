@@ -95,6 +95,7 @@ export default function Conversation({
   onAttachFiles, // 零件庫空狀態上傳區用(其他模式不渲染)
   attachDisabled = false, // DEMO:上傳區禁用但照常渲染
   attachDisabledTip,
+  demo = false, // DEMO:ToolCard 不出「展開 原始碼」(server 已剝 code,這裡是 UX 配套)
   handlers,
 }) {
   const scrollRef = useRef(null);
@@ -197,6 +198,7 @@ export default function Conversation({
                   handlers={handlers}
                   pending={it.id === pendingId}
                   specLive={it.id === specLiveId}
+                  demo={demo}
                 />
               </div>
             ))}

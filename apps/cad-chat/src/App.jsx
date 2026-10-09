@@ -1628,6 +1628,7 @@ export default function App() {
             onAttachFiles={attachFiles}
             attachDisabled={demo && (state.mode === "library" || state.mode === "cable")}
             attachDisabledTip={DEMO_TIP}
+            demo={demo}
             handlers={handlers}
           />
           <Composer

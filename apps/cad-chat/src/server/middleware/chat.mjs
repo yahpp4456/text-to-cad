@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { isDemoAllowedMode, isDesignLike, isMode } from "../../lib/chatModes.js";
 import { demoReady, orchDefault, resolveAuth, resolveDemoQuota } from "../config.mjs";
+import { demoEventFilter } from "../demoEvents.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
 import { acquireBusy, getOrCreateSession, persistSession, releaseBusy } from "../sessions.mjs";
 import { consumeTurn } from "../quota.mjs";
@@ -143,7 +144,9 @@ export function chatMiddleware() {
     });
 
     const sse = openSse(res);
-    const emit = (event, data) => sse.emit(event, data);
+    // demo:tool.code(產生器原始碼)在 server 端剝掉,不進網路(見 demoEvents.mjs)
+    const filterEvent = demoEventFilter(demo);
+    const emit = (event, data) => sse.emit(event, filterEvent(event, data));
     session.emit = emit;
     emit("session", {
       sessionId: session.sessionId,

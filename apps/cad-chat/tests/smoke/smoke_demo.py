@@ -8,6 +8,9 @@ hover 出 DEMO_TIP),不是藏起來——藏會讓展示者以為產品沒有這
   · 模式切換器:demo 只看「設計」一段(2026-10-09 起;lib/chatModes DEMO_HIDDEN_MODES),
     草模/無塵電纜/零件庫分段整段**藏**,server 端 /api/chat 對這些 mode 回 403
     demo_mode_forbidden——展示身分只走設計一條線。
+  · 原始碼面板(2026-10-09):tool 事件的 code(產生器原始碼)server 端對 demo 剝掉
+    (demoEvents.mjs),前端 ToolCard 不出「展開 原始碼 / LOG」;本煙測注入帶 code 的 tool
+    item 斷言不渲染(對照組渲染)。
   · 進場介紹影片(2026-10-09):/api/health 回 introVideo:true(docs/demo 影片真的在、
     不是 LFS pointer)時,demo 進場出「要不要看 30 秒介紹」對話框,**每次載入都問**
     (不記 localStorage);略過/觀看/Escape 只關本次;團隊身分不出。影片沒拉下來(introVideo:false)則整段不出,
@@ -172,6 +175,17 @@ def main():
             page.wait_for_timeout(400)
             C.check("點「教訓」不開 LessonsPanel", page.locator(".lessons-panel").count() == 0)
 
+            # ── A2. 原始碼面板:demo 注入帶 code 的 done tool item → 不出「展開 原始碼」──
+            page.evaluate(
+                """() => window.__cadDispatch({ type: 'ADD_ITEM', item: {
+                    type: 'tool', id: 'tool_demo_code', name: 'cad.build(x.py)', label: 'x',
+                    status: 'done', ms: 10, code: 'from build123d import *', open: false,
+                }})"""
+            )
+            page.wait_for_timeout(300)
+            C.check("demo ToolCard 不出「展開 原始碼」", page.locator(".tool-logtoggle").count() == 0)
+            page.evaluate("() => window.__cadDispatch({ type: 'RESET' })")
+
             # ── B. 教訓是/否面板:demo 直接不出(唯一「藏」的例外)──
             page.evaluate(
                 """() => {
@@ -228,6 +242,15 @@ def main():
             page2.wait_for_selector(".hdr", timeout=30000)
             page2.wait_for_timeout(800)  # 等 health 回,避免搶在 demo 旗到位前就斷言
             C.check("對照組不出介紹對話框", page2.locator(".intro-dialog").count() == 0)
+            page2.evaluate(
+                """() => window.__cadDispatch({ type: 'ADD_ITEM', item: {
+                    type: 'tool', id: 'tool_ctrl_code', name: 'cad.build(x.py)', label: 'x',
+                    status: 'done', ms: 10, code: 'from build123d import *', open: false,
+                }})"""
+            )
+            page2.wait_for_timeout(300)
+            C.check("對照組 ToolCard 有「展開 原始碼」", page2.locator(".tool-logtoggle").count() == 1)
+            page2.evaluate("() => window.__cadDispatch({ type: 'RESET' })")
             hdr2 = _attrs(page2, ".hdr-btn")
             for label in ("開啟檔案", "教訓"):
                 row = _find(hdr2, label)

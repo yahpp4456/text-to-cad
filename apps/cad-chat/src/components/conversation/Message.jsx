@@ -123,7 +123,7 @@ function PlanCard({ it, onToggle }) {
   );
 }
 
-function ToolCard({ it, onToggle }) {
+function ToolCard({ it, onToggle, demo = false }) {
   const running = it.status === "running";
   const error = it.status === "error";
   const statusText = running ? "執行中" : error ? "失敗" : "完成";
@@ -144,7 +144,7 @@ function ToolCard({ it, onToggle }) {
         <span className="tool-status">{statusText}</span>
       </div>
       {running && <div className="tool-progress" />}
-      {!running && it.code && (
+      {!running && it.code && !demo && (
         <>
           <a className="tool-logtoggle" onClick={() => onToggle(it.id)}>
             <span className="grow">{it.open ? "收合" : "展開"} 原始碼 / LOG</span>
@@ -348,7 +348,7 @@ function LessonOfferCard({ it }) {
   );
 }
 
-export default function Message({ it, handlers, pending, specLive }) {
+export default function Message({ it, handlers, pending, specLive, demo = false }) {
   switch (it.type) {
     case "user":
       return <UserMsg it={it} />;
@@ -359,7 +359,7 @@ export default function Message({ it, handlers, pending, specLive }) {
     case "plan":
       return <PlanCard it={it} onToggle={handlers.onToggle} />;
     case "tool":
-      return <ToolCard it={it} onToggle={handlers.onToggle} />;
+      return <ToolCard it={it} onToggle={handlers.onToggle} demo={demo} />;
     case "validate":
       return <ValidateCard it={it} />;
     case "retry":
