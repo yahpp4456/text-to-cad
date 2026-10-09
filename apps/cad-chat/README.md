@@ -50,7 +50,7 @@ npm run build && npm run serve   # 正式(serve dist/)
 橫幅,表示兩種憑證都沒設 —— 完成上面的一次性設定並重啟伺服器。
 
 **agent 調校(`.env.local`,改後重啟)**:`CADCHAT_MODEL`(模型別名/ID)、
-`CADCHAT_EFFORT`(推理 effort `low|medium|high|xhigh|max`,**預設 xhigh**;只有支援
+`CADCHAT_EFFORT`(推理 effort `low|medium|high|xhigh|max`,**預設 medium**——2026-10-09 同題 bench medium 比 high 快 29%、省 26%,品質持平,見「減模型往返」段;只有支援
 effort 的模型有效,否則 SDK 靜默降級)、`CADCHAT_THINKING`(深度思考
 `off|disabled|adaptive|<正整數 budgetTokens>`,**預設 off**——不做可見深度思考、避免長
 停頓,深度由 effort 控)。三者只作用於主 agent(`runner.mjs`);教訓蒸餾 agent 用 SDK 預設。
@@ -97,7 +97,7 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
 ## 架構
 
 - **單一埠 `node:http` 伺服器**(`src/server/`):dev 委派 Vite middlewareMode,prod serve `dist/`。
-  - `POST /api/chat`(SSE,`{message?,sessionId?,pickRefs?,params?}`):起/續一個 agent turn,串流 `stage/ai/spec/plan/tool/validate/retry/artifact/present/version/params/motion` 事件。產圖一律快路徑:cad_validate **零 spawn**——直讀 build 收割 sidecar,checks 全標 skipped、MOTION 照供播放,產物未驗證(完整驗證在精算/匯出閘;缺 sidecar 退回 `validate.py --motion-only` spawn)。`version` 事件帶 `verified`(server `versionStamp` 權威發:full 驗證跑過且全過才 `verified:true`)。
+  - `POST /api/chat`(SSE,`{message?,sessionId?,pickRefs?,params?,orch?}`):起/續一個 agent turn,串流 `stage/ai/spec/plan/tool/validate/retry/artifact/present/version/params/motion` 事件,收尾前一則 `metrics`(回合遙測,見「回合遙測 + 主代理派工實驗」章)再 `done`。`orch:true` = 本回合走主代理派工實驗(design 模式限定)。產圖一律快路徑:cad_validate **零 spawn**——直讀 build 收割 sidecar,checks 全標 skipped、MOTION 照供播放,產物未驗證(完整驗證在精算/匯出閘;缺 sidecar 退回 `validate.py --motion-only` spawn)。`version` 事件帶 `verified`(server `versionStamp` 權威發:full 驗證跑過且全過才 `verified:true`)。
   - `POST /api/interrupt`:中斷當前 turn 並殺 Python 子程序。
   - `GET /api/health`:認證狀態(`authMode` = oauth / apikey / missing)。
   - `GET /api/asset?file=…`:把 `models/` 下產物(GLB 等)串流給 cadjs。
@@ -1092,6 +1092,9 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
 PYTHONUTF8=1 .venv/Scripts/python.exe apps/cad-chat/tests/smoke/run_all.py
 ```
 
+另有 `tests/bench/bench_turn.py`(回合 A/B 量測,不進 run_all;`CADCHAT_BENCH_LLM=1` 才打真
+回合,`--stub` 可離線重播錄下的 SSE),見「回合遙測 + 主代理派工實驗」章。
+
 server 不可達預設跳過(exit 0);`CADCHAT_SMOKE=1` 改為視為失敗。
 LLM-gated(`CADCHAT_SMOKE_LLM=1` 才跑,消耗訂閱回合):`smoke_queue_live.py`(佇列/併發;
 也覆蓋 runner streaming-input + resume 併用)、`smoke_revolute_live.py`(一輪鉸鏈驗 prompt 的
@@ -1195,10 +1198,20 @@ open-project 再送;`smoke_open_dedupe.py` 已隨開檔 option C 退場,不在 O
     `skills/`;任何 `.cadchat/<他對話>`(含容器列舉)、`users/<他人>/`、repo 其他目錄
     (`apps/`、`.env`、`data/`)、以及**無目錄的全域 Glob/Grep**(cwd=RUNTIME_ROOT 會掃到
     所有人)一律 deny(訊息回給模型,不是使用者)。`scope` 可注入供單測;不帶 session 零回歸。
+    **2026-10-09 修**:只靠 canUseTool 不夠——基準輪(當時 `settingSources:["project"]`)主代理
+    成功讀了 `packages/cadpy/` 與開發者 `~/.claude/.../memory/`,而 guard 對這些輸入(含 Windows
+    反斜線絕對路徑)全判 deny(`tmp/spike_guard_paths.mjs` 逐一驗過),即 CLI 權限流程在那個設定下
+    沒把主代理的 Read 送進 canUseTool(改 `settingSources:[]` 後 log 才看得到 `canUseTool Read`)。
+    現在同一個 guard 再掛成 SDK `hooks.PreToolUse`(matcher `Read|Glob|Grep`,
+    `guards.makeReadScopeHook`):hook 每次呼叫都過(含免 permission 的、含子代理),deny →
+    `hookSpecificOutput.permissionDecision:"deny"` + 原訊息,allow → `{}` 不表態;guard 丟錯視同
+    deny(fail-closed)。SDK 層 spike(`tmp/spike_hook.mjs`):越界 Read/Grep 回 deny 訊息、
+    `models/` 範例 Read 正常;真回合(線性滑台題 Read `models/linear_stage`)allow 路徑未被誤擋。
+    `CADCHAT_ORCH_DEBUG=1` 會印 `hook PreToolUse <tool>`。
   - **UI 未動**:工具卡(如「cad.build(box.py)」)與產物 chips(box.step/.box.step.glb)仍顯示
     檔名——那是 UI 面不是 agent 文字,要藏另案。
   迴歸:L1 `prompt.wording.test.js`(四模式含段 + 共用段不含模式工具名)+ `readScope.test.js`
-  (per-user/legacy allow-deny 矩陣 + guard 接線);L4 `smoke_wording_live.py`(同 session
+  (per-user/legacy allow-deny 矩陣 + guard 接線 + PreToolUse hook 契約);L4 `smoke_wording_live.py`(同 session
   三問:設計回覆零禁詞、反向詢問一句擋、跨使用者拒答零 version)。
 - **攤平 GLB 帶拓撲(2026-10-01)**:原本 `flat_glb.py` 產的是純預覽 GLB(`selector_bundle=None`),
   前端 `loadRenderSelectorBundle` 拿不到 `STEP_topology` 就整段降級——切到攤平後面標記
@@ -1358,6 +1371,161 @@ open-project 再送;`smoke_open_dedupe.py` 已隨開檔 option C 退場,不在 O
   (per-axis builder、定位常數集中、INTENDED_CONTACT 分組)。
 - **耗時遙測**:工具卡與驗證卡顯示耗時(runStep/runValidate wall-clock),驗證卡
   另顯示件數。
+
+## 回合遙測 + 主代理派工實驗(2026-10-09)
+
+動機:評估「一個 agent 做到底」vs「主 agent 派子 agent 分件建模、再統籌組裝」哪個快。
+做法是先補回合級遙測與 A/B 量測工具,再做最小派工原型(旗標預設關),同題對比。
+
+- **回合遙測**(`src/server/agent/turnMetrics.mjs`,永久留用):runner 把每則 SDK 訊息餵進
+  `ingestSdkMessage`(no-throw),為每個工具呼叫記三個時間點——`tStart`(模型開始寫
+  tool_use 區塊)、`tCall`(參數寫完、開始執行)、`tEnd`(tool_result 回來);`genMs=tCall−tStart`
+  是模型輸出該呼叫的時間、`execMs=tEnd−tCall` 是執行(含 harness 往返)。SDK `result` 的
+  `duration_ms/duration_api_ms/num_turns/total_cost_usd/usage/modelUsage` 一併收。回合
+  `finally` 發 SSE `metrics` 事件(在 `done` 之前;前端 reducer default 分支忽略)並 append
+  `<workdir>/metrics.jsonl`(隨 session GC 消失)。payload:`{v,variant,wallMs,tInitMs,
+  tFirstStreamMs,tResultMs,sdk{durationMs,durationApiMs,ttftMs,numTurns,costUsd,usage,modelUsage},
+  tools{count,open,byName{n,ok,err,genMs,execMs},main{n,execMs},sub{n,execMs,agents},
+  firstToolAtMs,firstBuildAtMs,firstBuildDoneAtMs,presentAtMs,clarifyAtMs},counts{builds,
+  buildFails,validates,retries,presents,imports,sourceParts,clarify},outcome{ok,clarified,
+  presented,version,lastName,partCount,validateOk},ledger[≤200]}`。子代理的呼叫以
+  `parent`(父 tool_use id)分流進 `sub`。**注意**:`sdk.costUsd/modelUsage` 隨 resume 跨回合
+  累積(要逐回合差分);`sdk.usage` 只含主代理、`duration_ms` 是單次 query。
+- **派工旗標**:`/api/chat` body `orch:true/false` 明示優先,缺席看 `CADCHAT_ORCH=1`
+  (`config.orchDefault`);`chat.resolveOrch` 只在 design 模式且非 demo 放行。orch 回合
+  **不進教訓管線**(實驗失敗型不汙染正式教訓庫;且 `noteBuildSuccess` 會把並行中他件的
+  open case 一起閉環)。
+- **派工原型**(`src/server/agent/prompt.orch.mjs`):SDK `options.agents.part_builder`
+  程式化子代理(tools 只有 Read/Glob/Grep + `cad_build`/`cad_validate`;`model:"inherit"`、
+  `maxTurns:12`、`omitClaudeMd:true`、`background:false`),runner 在 orch 回合把 `Agent`
+  **與其舊名 `Task`** 一起從 `disallowedTools` 放出(spike 實測只放 Agent 時 init.tools 仍無
+  Agent),並以 env `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` 強制子代理前景(背景子代理會讓
+  CLI 在子代理完成前就發 `result`、in-process MCP 通道隨之關閉——2026-07 事故根因)。design
+  prompt 的「紀律」句在 orch 回合換成 `ORCH_DISCIPLINE` 並加「# 派工流程」段:介面表(模組名
+  `<asm>_<part>`、局部原點、label 清單、共用數值)→ **同一則訊息**對每件各發一次 Agent
+  (`run_in_background:false`)→ 收介面卡 JSON → 主代理寫 `<asm>.py`(**頂層**
+  `from <asm>_<part> import make as …`)→ `cad_build/cad_validate/cad_present` **一律明給 name**
+  (子代理 build 會改掉 `session.lastName` 預設)。零件模組契約:`PARAMS` + `make(P=None) ->
+  {label: Shape}`(局部座標、每值單一實體)+ `gen_step()` 包 AssemblyHelper 供獨立 build +
+  `check_geometry`,不寫 MOTION;最後只回一段介面卡 JSON。spike 實測(2026-10-09):子代理的
+  MCP 呼叫到達、`canUseTool` 守衛(含 readScope)對子代理一樣生效、同訊息兩個子代理真並行、
+  父代理等子代理回來才收尾;單顆方塊子代理固定開銷 ≈ 子代理啟動 4–5s + 收尾 3s。
+- **配套修正**:`validate.py` 載入產生器時把其目錄放進 `sys.path`(與 cadpy build 路徑同
+  義務;否則精算/匯出閘/open-project/revert 對 import 同目錄模組的組合件 ModuleNotFoundError,
+  `tests/test_validate_sibling_import.py` 鎖);`session.buildMeta[name]` per-name 槽
+  (`runStep` 寫、`runValidateDesign` 先查槽再退回單槽 `lastBuildMeta`),多件並行 build 各自
+  零 spawn 可驗;cad_build/validate 卡帶 `sub:true`(子代理發的;來源 `_subToolUseIds` 配
+  MCP `_meta["claudecode/toolUseId"]`,純裝飾)。
+- **已知限制(實驗階段刻意不做)**:`versions/vN/` 快照與回退只凍結 `<name>` 家族,同目錄
+  零件模組不凍結(回退後 import 的是當前頂層模組);save-project/就地儲存本就會帶頂層 `*.py`,
+  open-project 靠 `.asm.json` 挑到 asm。`_valAttempt` 共用計數會讓驗證卡 attempt 膨脹。
+  子代理的 `stream_event` 不轉發 → 子代理工具的 `tStart/genMs` 為 null。
+- **A/B 量測工具** `tests/bench/bench_turn.py`(不進 run_all;`CADCHAT_BENCH_LLM=1` 才打真回合):
+  逐事件計時讀 SSE、clarify 自動照 UI 規則答建議選項、`--variant both` 交錯跑兩臂、每 run
+  重寫 JSON、`--record` 錄 `.sse.jsonl` 供 `--stub` 離線重播;單元測 `tests/bench/test_bench_turn.py`。
+  固定題目「行程 100mm 的電動線性滑台:底板、線軌滑塊、滾珠螺桿與步進馬達」,用第二實例
+  避開常駐 8788:
+
+  ```bash
+  cd apps/cad-chat && CADCHAT_PORT=8899 CADCHAT_HMR_PORT=24679 CADCHAT_LESSON_THRESHOLD=999 npm run dev
+  CADCHAT_BASE=http://127.0.0.1:8899 CADCHAT_BENCH_LLM=1 PYTHONUTF8=1 .venv/Scripts/python.exe \
+    apps/cad-chat/tests/bench/bench_turn.py --variant both --runs 3 --record --turn-timeout 1500
+  ```
+  (`CADCHAT_LESSON_THRESHOLD=999`:實驗中不讓自動蒸餾改 prompt,兩臂 digest 恆同;
+  `CADCHAT_ORCH_DEBUG=1` 起 server 會逐則印 SDK 訊息事實,spike 判讀用。)
+### 2026-10-09 實測(claude-opus-5-5、effort high、thinking adaptive;兩臂各 3 輪交錯)
+
+六輪全部一次到位(零 retry、零 busy 重試),第一回合都停在 clarify、第二回合建模到 present;
+事後精算(`POST /api/validate`:干涉 0 未宣告、運動掃掠全程無穿透)六輪全過,滑桿重生兩臂都成。
+數據(建模回合中位數;bench JSON `tests/smoke/.out/bench_ab_linear_stage.json`):
+
+| 指標 | 單 agent | 主 agent 派工 | Δ |
+|---|---|---|---|
+| wall(clarify 回答後到 present) | 232s(199–248) | 304s(288–322) | **+31%** |
+| 寫碼/派工前(理解+選型+規劃+讀參考) | 155s | 166s | 同 |
+| 寫產生器(模型輸出時間) | 36s | 派工說明 33s + 子代理並行窗 60s + 組裝檔 24s | +81s |
+| build 執行(主代理) | 15s | 15s(另 5 個子代理 build 各 8–13s,並行) | 同 |
+| 主代理工具呼叫數 | 19 | 25(+ 子代理 10–13 次) | +6 |
+| output tokens(modelUsage 全模型) | 23.8k | 41.1k | **+73%** |
+| 成本 | $1.33 | $1.88 | **+41%** |
+| 件數 / 產生器大小 | 14–17 件 / 9.8k | 14–17 件 / 6.2k(+4–5 個零件模組) | — |
+| 精算全過 / 滑桿重生 | 3/3 / 12.4s ok | 3/3 / 12.8s ok | 同 |
+
+**裁決:派工不採用為預設**——原型留在 `orch` 旗標後(預設關),當研究結論與未來大型件的備案。
+原因:兩臂共同的「寫碼前 155s」(Read/Grep 參考 3–7 次、cad_source_part ×3、emit_stage/plan,
+每次工具呼叫前約 7s 思考)佔單 agent 回合三分之二,派工拆不到它;真正可並行的只有「寫產生器
+36s」,換成派工說明+子代理窗+組裝檔反而多 80s。子代理機制本身運作良好(5 件並行、每件
+25–56s、兩次子代理 build 失敗都在子代理內自修),適用條件是「每件建模量大、耦合少」
+(如 61 件 gantry);此題 15 件裡 11 件是 `cadpy.parts` 一行呼叫,是派工的最壞案例。
+**下一條優化線(遙測指出的)**:砍 155s 前段——把 skills 參考精華內嵌 prompt 省掉 Read/Grep
+往返、`cad_source_part` 批次化(一次多 family)、emit_stage 併入相鄰工具、規劃階段降 effort;
+這對兩種架構都有效,且 `metrics` 事件已能逐回合量它。→ 已做,見下一段。
+
+### 二輪:減模型往返(2026-10-09)
+
+先把六輪 ledger 攤開對 SDK transcript(`~/.claude/projects/<repo>/<sdkSessionId>.jsonl`,
+assistant 訊息帶 usage 與時間戳)看時間落在哪,單 agent 建模回合(199/248/232s)的分解是:
+啟動到第一個工具 4s → 讀參考 15–25s(**每回合先 Read 開發者本機的 Claude Code 個人記憶
+`~/.claude/projects/<repo>/memory/cadpy-parts-generators.md` 查 cadpy.parts 簽章**、再 Grep/Read
+`packages/cadpy` 原始碼與 gantry 範例確認座標慣例、Grep AssemblyHelper 簽章,共 6–8 次)→
+**一整塊設計思考 98/146/125s(9.2k/14.2k/17.6k output tokens)** → 寫產生器 36s(3.5–4k tokens)→
+build 15s → params/validate/present 8s → 收尾回覆 14s(思考 1.4k tokens + 1–3k 字,其中一輪
+是英文)。另外每回合第一件事是呼叫 `ToolSearch` 把 cadchat MCP 工具 schema 載進來(CLI 預設
+延遲載入;一次往返 3–5s + 一句「載入工具。」),系統提示首回合 cache_creation **42.1k tokens**
+(`settingSources:["project"]` 把根 CLAUDE.md+AGENTS.md、再加記憶索引灌進去)。
+所以「每次工具呼叫前 7s」是平均值的假象:多數空檔 1–3s,真正的大頭是那一塊設計思考(佔 42–59%),
+工具往返固定開銷約 25–35s。兩者分兩臂量:
+
+- **S1 減往返**(效果對所有模式/題目都成立):
+  - runner `SDK_ENV_EXTRAS`:`ENABLE_TOOL_SEARCH=false`(工具 schema 隨系統提示一次到位,走
+    prompt cache)、`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`(個人記憶不載;對別台機器/packaged 本來
+    就不存在的隱性依賴);`settingSources: []`(dev/packaged 同一份系統提示;首回合 42.1k→36.4k)。
+  - design prompt 新段「標準件幾何(cadpy.parts)」:六家族(`linear_guide/ball_screw/
+    stepper_motor/deep_groove_bearing/pneumatic_cylinder/gripper`)簽章、children label、軸向與
+    原點、內建尺寸閘、哪些配合要列 INTENDED_CONTACT、spec row 鍵名與參數同名可直接餵、
+    AssemblyHelper 三個呼叫、選型庫底限,並明令「不要再 Read/Grep cadpy 原始碼或範例檔」
+    (只有工作區明列先 Read 的家族——龍門/齒輪/鈑金/掃出——才讀)。防漂移:L1
+    `prompt.parts.test.js` 逐參數比對 python `def` 行、spec 幾何鍵 ⊆ 參數。
+  - 階段列自動推進(`agent/stages.mjs`):design/cable 回合開始發 stage 0,主代理 `emit_plan/
+    cad_build/cad_validate/cad_present` 的 tool_use 區塊**開始**時推 1–4(先於執行,所以「生成」
+    在開始寫產生器原始碼時就亮,時機同舊 emit_stage(2);單調不倒退)。prompt 不再要求
+    emit_stage,工具保留(草模/零件庫仍用,設計模式誤呼叫無害)。L1 `stages.test.js`。
+  - 紀律段加「收尾回覆限 8 行」、語言段加「進度短句與收尾也用使用者語言」(基準 3 輪有 2 輪
+    夾英文進度句、1 輪整段英文收尾)。
+  - **沒做**:`cad_source_part` 批次化——ledger 顯示模型本來就把 3 個 family 放在同一則訊息並行
+    呼叫(13.0/13.7/14.1s),合併成一次省不到 1s;prompt 只多一句「同一則訊息並行呼叫」。
+- **S2 = S1 + `CADCHAT_EFFORT=medium`**(原 `.env.local` 為 high,`thinking adaptive` 不變;
+  effort 是 per-query 旗標,同一回合的規劃與寫碼無法分段設定,所以是整回合降)。
+
+**實測**(同題、同 clarify 自動作答、各 3 輪、建模回合中位數;`tests/smoke/.out/bench_s1_roundtrip.json`、
+`bench_s2_effort_medium.json`;分解腳本 `tmp/bench_compare.py`):
+
+| 指標 | 基準(high) | S1 減往返(high) | S2 減往返+medium |
+|---|---|---|---|
+| 建模回合 wall | 232s(199–248) | 187s(155–205)**−19%** | 134s(117–145)**−42%** |
+| 寫碼前(選型+規劃+設計思考) | 152s | 130s | 79s |
+| 寫產生器 | 36s | 33s | 29s |
+| build 執行 | 15s | 6s | 7s |
+| 收尾回覆 | 14.5s | 7.0s | 5.9s |
+| 主代理工具呼叫 / Read+Grep / ToolSearch / emit_stage | 19 / 6 / 1 / 4 | 8 / 0 / 0 / 0 | 8 / 0 / 0 / 0 |
+| output tokens | 23.8k | 19.9k | 14.5k |
+| 成本 | $1.33 | $0.87(−35%) | $0.65(−51%) |
+| 件數 / 產生器 bytes | 14–17 / 9.8k | 15–17 / 8.4k | 15–17 / 7.7k |
+| retry / presented / cad_validate ok | 0 / 3/3 / 3/3 | 0 / 3/3 / 3/3 | 0 / 3/3 / 3/3 |
+| 收尾回覆行數 / 英文漂移 | 18–36 行 / 2 輪 | 9 行 / 0 | 9 行 / 0 |
+
+事後精算(`POST /api/validate`:干涉 + 全行程掃掠):S1/S2 六個 session 全過(0 undeclared
+overlaps、5–7 對宣告接觸、1 DOF 8/8 幀無穿透;`tmp/bench_post2.py`)。**裁決**:S1 的五項全部
+進主線(預設開,對兩種架構、所有模式都成立)。**effort 預設改 medium**(Sam 裁決,不另測其他
+家族;code `DEFAULT_EFFORT` 與 `.env.local` 一起改,`CADCHAT_EFFORT` 仍可覆寫)。剩下的大頭仍是
+設計思考(S2 的 79s 裡約 60s),所以同時加了**範本重用**:工作區「先 Read」清單加入線性滑台
+→ `models/linear_stage/linear_stage.py`,明令「改編而不是從零重推尺寸鏈」。單輪驗證
+(`bench_s3_template_medium.json`,medium):建模回合 **60s**(寫碼前 3s、寫產生器 37s、build 6s)、
+8.5k tokens、$0.54、15 件、零 retry、精算全過——比 S2 再少一半;但對 bench 這題等於給答案,
+只證明機制有效,泛化效果看之後真實回合的 `metrics`。
+
+**順帶坐實並修掉的缺陷**:readScope 硬閘對主代理無效——詳見上方「對外措辭契約 + 讀取範圍硬閘」
+段的 2026-10-09 注記(PreToolUse hook)。
 
 ## 授權
 

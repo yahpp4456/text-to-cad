@@ -404,6 +404,9 @@ export async function runStep(session, name, { onLog, signal } = {}) {
     // sidecar 缺失(舊 cadpy 未同步等)→ 存 null,消費端自動退回 --motion-only spawn。
     const meta = readBuildMeta(session, name);
     session.lastBuildMeta = meta ? { name: n, ...meta } : null;
+    // per-name 槽:派工模式多個子代理並行 build 不同名字,單槽 lastBuildMeta 會互相
+    // 清掉(cad_validate 退回 spawn);單人路徑行為不變(lastBuildMeta 照舊)。
+    (session.buildMeta ||= {})[n] = session.lastBuildMeta;
     // 權威 partCount 同步(來自同一次 gen_step):build 後未 validate 就 present 的
     // 回合,readTypeFor 的 fallback 與 badge 也拿到新鮮值。
     if (meta && meta.partCount > 0) session.lastPartCount = meta.partCount;
@@ -414,9 +417,10 @@ export async function runStep(session, name, { onLog, signal } = {}) {
     } catch {
       /* overlay 是輔助資訊,寫失敗不擋 build */
     }
-  } else if (session.lastBuildMeta?.name === n) {
+  } else {
     // 失敗 build(Python 側已先 unlink sidecar):清掉記憶體 meta,雙保險防 stale。
-    session.lastBuildMeta = null;
+    if (session.lastBuildMeta?.name === n) session.lastBuildMeta = null;
+    if (session.buildMeta) session.buildMeta[n] = null;
   }
   return {
     ok: artifactsOk,
@@ -626,8 +630,12 @@ export function designChecksFromMeta(meta) {
 
 export async function runValidateDesign(session, name, { signal } = {}) {
   const t0 = Date.now();
-  const meta = session.lastBuildMeta;
-  if (meta && meta.name === sanitizeName(name)) {
+  const nn = sanitizeName(name);
+  // 先查 per-name 槽(派工並行 build 後各自可驗),再退回單槽(同名才算;失敗 build 的
+  // null 槽也走這條,滑桿重生 buildOrRollback 還原的 lastBuildMeta 因此仍可用)。
+  const meta =
+    session.buildMeta?.[nn] ?? (session.lastBuildMeta?.name === nn ? session.lastBuildMeta : null);
+  if (meta && meta.name === nn) {
     const checks = designChecksFromMeta(meta);
     // sidecar 的權威 parts → asm manifest(拆件匯出/type badge 依賴;與 runValidate 同義務)
     try {

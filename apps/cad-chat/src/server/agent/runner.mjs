@@ -18,7 +18,15 @@ import { buildSystemPrompt } from "./prompt.mjs";
 import { buildCableSystemPrompt } from "./prompt.cable.mjs";
 import { buildLibrarySystemPrompt } from "./prompt.library.mjs";
 import { buildSketchSystemPrompt } from "./prompt.sketch.mjs";
-import { makeToolGuard } from "./guards.mjs";
+import { PART_BUILDER_AGENT } from "./prompt.orch.mjs";
+import {
+  appendMetricsLine,
+  beginTurnMetrics,
+  finishTurnMetrics,
+  ingestSdkMessage,
+} from "./turnMetrics.mjs";
+import { READ_HOOK_MATCHER, makeReadScopeHook, makeToolGuard } from "./guards.mjs";
+import { STAGE_UNDERSTAND, autoStageMode, nextStage } from "./stages.mjs";
 import { buildCadchatServer } from "./tools.mjs";
 import { LIBRARY_MCP_TOOLS, buildLibraryServer } from "./tools.library.mjs";
 import { SKETCH_MCP_TOOLS, buildSketchServer } from "./tools.sketch.mjs";
@@ -63,6 +71,18 @@ export const DISALLOWED = [
   "EnterPlanMode", "ExitPlanMode", "EnterWorktree", "ExitWorktree",
 ];
 
+// SDK spawn 的 claude CLI 額外 env(2026-10-09 減模型往返,回合遙測實測):
+// - ENABLE_TOOL_SEARCH=false:CLI 預設把 MCP 工具 schema 延遲載入,agent 每回合第一件事都是
+//   呼叫 ToolSearch 把 cadchat 工具載進來(一次往返 3–5s + 一句「載入工具。」);關掉後
+//   schema 隨系統提示一次到位(走 prompt cache,之後回合零成本)。
+// - CLAUDE_CODE_DISABLE_AUTO_MEMORY=1:CLI 會把開發者本機 ~/.claude/projects/<repo>/memory/
+//   的個人記憶索引灌進系統提示,agent 每回合都先 Read 其中的 cadpy-parts 筆記來查簽章——
+//   對別台機器/packaged 不存在的隱性依賴;簽章已內嵌 prompt(標準件幾何段),記憶一律不載。
+export const SDK_ENV_EXTRAS = Object.freeze({
+  ENABLE_TOOL_SEARCH: "false",
+  CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+});
+
 // 認證 / 網路 / 環境類錯誤的啟發式黑名單:這類錯誤與 transcript 好壞無關,不計入
 // resume 降級門檻。寧可收窄漏判(漏判只是多給一次重試機會);不收 "token" 這種寬字
 // ——損毀 transcript 的 JSON parse 錯誤常帶 "Unexpected token";也不收裸狀態碼數字
@@ -70,12 +90,47 @@ export const DISALLOWED = [
 const TRANSIENT_RE =
   /oauth|api.?key|unauthorized|authentication|credential|expired|billing|credit|rate.?limit|usage.?limit|overloaded|enoent|econnrefused|enotfound|etimedout|eai_again|fetch failed|network error|socket hang ?up/i;
 
-export async function runTurn({ session, emit, message, imageBlocks = [] }) {
+// CADCHAT_ORCH_DEBUG=1:逐則 SDK 訊息印一行事實(type/parent/工具名;init 另印工具與子代理
+// 清單),供派工 spike 判讀 Agent 工具是否放行、子代理 MCP 呼叫是否到達、result 是否在
+// 子代理完成後才到。stream_event 只印 content_block_start(delta 量太大)。
+function debugMsg(msg) {
+  try {
+    if (msg.type === "stream_event" && msg.event?.type !== "content_block_start") return;
+    const line = { type: msg.type, subtype: msg.subtype, parent: msg.parent_tool_use_id ?? null };
+    const tools = (msg.message?.content || []).filter((b) => b?.type === "tool_use").map((b) => b.name);
+    if (tools.length) line.tools = tools;
+    if (msg.type === "user") {
+      line.results = (msg.message?.content || [])
+        .filter((b) => b?.type === "tool_result")
+        .map((b) => `${b.tool_use_id}:${b.is_error ? "ERR" : "ok"}`);
+    }
+    if (msg.type === "system" && msg.subtype === "init") {
+      line.initTools = msg.tools;
+      line.agents = msg.agents;
+    }
+    if (msg.type === "stream_event") {
+      const b = msg.event.content_block;
+      line.block = `${b?.type || "?"}:${b?.name || ""}:${b?.id || ""}`;
+    }
+    console.error("[orch-debug]", JSON.stringify(line));
+  } catch {
+    /* debug only */
+  }
+}
+
+export async function runTurn({ session, emit, message, imageBlocks = [], orch = false }) {
   const abort = new AbortController();
   session.currentAbort = abort;
   session._valAttempt = 0;
   session._paramsEmitted = false;
   session._clarifyPending = false; // 使用者的新訊息 = 已回答上回合的提問
+  // 派工實驗(orch):per-request 旗標(chat.mjs resolveOrch)。prompt 分支讀 session._orch;
+  // _subToolUseIds 收子代理訊息(assistant tool_use 區塊)的 tool_use id(工具卡 sub 標記用,純裝飾)。
+  session._orch = !!orch;
+  session._subToolUseIds = new Set();
+  // 回合遙測:SDK 訊息逐則餵入(no-throw),finally 發 metrics 事件 + 落 metrics.jsonl。
+  const tm = beginTurnMetrics(session, { variant: orch ? "orch" : "single" });
+  const orchDebug = process.env.CADCHAT_ORCH_DEBUG === "1";
 
   // per-user 分流 context:demo 身分走自備 API key + 便宜模型(絕不用訂閱 OAuth);
   // 非 demo → resolveModelFor/agentEnvFor 完全等同 resolveModel()/agentEnv()(零回歸)。
@@ -90,6 +145,14 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
       ? buildLibraryServer({ session, emit, signal: abort.signal })
       : buildCadchatServer({ session, emit, signal: abort.signal });
   const allowed = isSketch ? SKETCH_ALLOWED : mode === "library" ? LIBRARY_ALLOWED : ALLOWED;
+  // 階段列自動推進(stages.mjs):設計/電纜模式回合開始即「理解」,之後在主代理的 tool_use
+  // 區塊開始時依工具名推階段(prompt 已不再要求 emit_stage;遙測顯示每回合省 5 次呼叫)。
+  const autoStage = autoStageMode(mode);
+  session._stageCur = -1;
+  if (autoStage) {
+    session._stageCur = STAGE_UNDERSTAND;
+    emit("stage", { index: STAGE_UNDERSTAND });
+  }
   // 累積教訓摘要:每 turn 重算一次(讀一個小 JSON;失敗回 "" 絕不擋 turn),
   // buildSystemPrompt 讀 session._lessonsDigest 注入「# 累積教訓」段。
   // 只有設計鏈模式(design/cable)注入:現有教訓全是 build123d/幾何驗證語彙,
@@ -114,6 +177,7 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
   // packaged:釘死 SDK spawn 的 claude CLI(asar → .unpacked 改寫);dev 回 null
   // → 不傳,SDK 內建解析(行為與舊版完全一致)。
   const claudeCli = resolveClaudeCliExe();
+  const guard = makeToolGuard(orch ? [...allowed, "Agent", "Task"] : allowed, { mode, session });
   const q = query({
     prompt: promptStream(),
     options: {
@@ -123,9 +187,11 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
       thinking: resolveThinking(), // 預設 disabled(CADCHAT_THINKING 可調)
       cwd: REPO_ROOT,
       resume: session.sdkSessionId || undefined,
-      // packaged RUNTIME_ROOT 不 ship .claude/(讀不到即空,與 dev 行為一致;
-      // 打包實機驗證項——若 SDK 對缺目錄報錯則改傳 [])。
-      settingSources: ["project"],
+      // 2026-10-09 改空:["project"] 在 dev 會把 repo 根 CLAUDE.md + AGENTS.md(Codex 委派、
+      // release 流程…與產圖無關)灌進系統提示(實測首回合 cache_creation 42k tokens),packaged
+      // 沒有 .claude/ 又是另一套行為。cad-chat 的全部契約都在 systemPrompt.append,不依賴
+      // 任何 settings 檔;空陣列讓 dev/packaged 同一份系統提示。
+      settingSources: [],
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
@@ -146,14 +212,31 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
       // 對此發 CLAUDE_SDK_CAN_USE_TOOL_SHADOWED warning)。白名單語意全收進 makeToolGuard
       // (allow 集合同一份 `allowed`),每個工具呼叫都經守衛;harness 層繞過守衛的
       // 非同步/編排工具仍靠 disallowedTools 整個移除。
-      disallowedTools: DISALLOWED,
+      // 派工實驗(orch):只把 Agent 從禁用清單放出(Task*/排程/背景家族照禁),並讓守衛認得它
+      // (harness 層本就不經 canUseTool,加進 allow 集是為了語意一致)。「Task」是 Agent 工具的
+      // 舊名別名——spike 實測只放 Agent 時 init.tools 仍無 Agent,兩個名字要一起放。
+      disallowedTools: orch ? DISALLOWED.filter((t) => t !== "Agent" && t !== "Task") : DISALLOWED,
       permissionMode: "default",
-      canUseTool: makeToolGuard(allowed, { mode, session }),
+      canUseTool: guard,
+      // 讀取硬閘(2026-10-09 修):default 模式下主代理的 Read/Glob/Grep 免 permission、不經
+      // canUseTool,PreToolUse hook 才是每次呼叫都會過的位置;同一個 guard 兩處掛。
+      hooks: { PreToolUse: [{ matcher: READ_HOOK_MATCHER, hooks: [makeReadScopeHook(guard)] }] },
       abortController: abort,
       // 串流 partial messages:沒有它,從送出到第一段完整文字之間(推理+寫產生器
       // 原始碼可達數十秒)前端完全沒有回饋。
       includePartialMessages: true,
-      env: agentEnvFor(demoCtx),
+      // 派工實驗:SDK 程式化子代理 part_builder(prompt.orch.mjs)。forwardSubagentText 維持
+      // 預設 false(只轉子代理的 tool_use/tool_result,遙測夠用);不開 agentProgressSummaries
+      // (每 30s fork 子代理,擾亂計時)。
+      ...(orch ? { agents: { part_builder: PART_BUILDER_AGENT }, forwardSubagentText: false } : {}),
+      // 派工時強制子代理前景:CLI 的 Agent 工具預設 run_in_background,背景子代理會讓 CLI 在
+      // 子代理完成前就發 result、in-process MCP 通道隨之關閉(2026-07 事故根因);此 env 讓
+      // run_in_background 參數不提供。
+      env: {
+        ...agentEnvFor(demoCtx),
+        ...SDK_ENV_EXTRAS,
+        ...(orch ? { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" } : {}),
+      },
     },
   });
   session._query = q;
@@ -163,6 +246,20 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
   let typing = null;
   try {
     for await (const msg of q) {
+      ingestSdkMessage(tm, msg); // 遙測:任何 type 都先餵(no-throw),再做 UI 映射
+      if (orchDebug) debugMsg(msg);
+      if (msg.parent_tool_use_id != null) {
+        // 子代理的工具呼叫:記 tool_use id 供 cad_build/cad_validate 卡標 sub(不進主 UI 串流)。
+        // 子代理的 stream_event 不會轉發(spike 實測 tStart 恆 null),只有 assistant 的
+        // tool_use 區塊會到——它先於 MCP 呼叫抵達,handler 讀 _meta toolUseId 時已在集合裡。
+        const blocks =
+          msg.type === "assistant"
+            ? msg.message?.content || []
+            : msg.type === "stream_event" && msg.event?.type === "content_block_start"
+              ? [msg.event.content_block]
+              : [];
+        for (const b of blocks) if (b?.type === "tool_use" && b.id) session._subToolUseIds.add(b.id);
+      }
       if (msg.type === "stream_event" && msg.parent_tool_use_id == null) {
         const ev = msg.event;
         if (ev?.type === "content_block_start") {
@@ -173,6 +270,14 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
           } else if (b?.type === "tool_use") {
             typing = { name: b.name || "", chars: 0, last: 0 };
             emit("busy", { what: typing.name });
+            if (autoStage) {
+              // 工具開始被寫出的瞬間推階段(先於執行:「生成」在開始寫產生器原始碼時就亮)
+              const st = nextStage(session._stageCur, b.name);
+              if (st != null) {
+                session._stageCur = st;
+                emit("stage", { index: st });
+              }
+            }
           } else if (b?.type === "thinking") {
             typing = null;
             emit("busy", { what: "thinking" });
@@ -264,6 +369,17 @@ export async function runTurn({ session, emit, message, imageBlocks = [] }) {
       }
     }
   } finally {
+    // 回合遙測:metrics 事件必在 done 之前(done 由 chat.mjs sse.end 寫);遙測永不擋回合。
+    try {
+      const summary = finishTurnMetrics(tm, { session, ok });
+      if (summary) {
+        emit("metrics", summary);
+        appendMetricsLine(session.workdir, summary);
+      }
+    } catch {
+      /* telemetry never blocks a turn */
+    }
+    if (session._turnMetrics === tm) session._turnMetrics = null;
     // 回合結束即終止 CLI 子程序:不留殭屍在背景自主續跑(正常結束時為 no-op)。
     // 共享把手只清自己掛的:interrupt 提早放行 busy 後新 turn 可能已把
     // currentAbort/_query 換成自己的,舊 turn 的 finally 不得清掉新 turn 的把手

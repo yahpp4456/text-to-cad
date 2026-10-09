@@ -23,6 +23,11 @@ def _load_gen_step(script_path: Path):
         raise ImportError(f"cannot load generator: {script_path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
+    # 與 cadpy build 路徑同義務:產生器目錄進 sys.path,讓組合件頂層 import 同目錄零件模組
+    # (派工模式 <asm>_<part>.py)。獨立程序,不必還原。
+    gen_dir = str(Path(script_path).resolve().parent)
+    if gen_dir not in sys.path:
+        sys.path.insert(0, gen_dir)
     spec.loader.exec_module(module)
     fn = getattr(module, "gen_step", None)
     if not callable(fn):

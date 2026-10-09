@@ -18,6 +18,7 @@ description: apps/cad-chat 的分層驗證流程與擴充守則。改動 cad-cha
 | L2 API | 免 LLM 端點鏈路(open-project/save/revert/export/asset…) | 煙測內含(smoke_versions),或 curl 手打 | 秒~分 |
 | L3 UI | 真瀏覽器互動與渲染 | `PYTHONUTF8=1 .venv/Scripts/python.exe apps/cad-chat/tests/smoke/run_all.py` | ~6-8min |
 | L4 LLM | 必須靠模型的行為(對話語境/工具編排) | `CADCHAT_SMOKE_LLM=1` 跑 run_all,或手動一輪對話 | 分鐘級+燒回合 |
+| L4 量測 | 回合耗時/成本/工具時序的 A/B 對比(非 pass/fail) | `CADCHAT_BENCH_LLM=1` 跑 `tests/bench/bench_turn.py`(第二實例 8899;`--stub` 離線重播免 LLM) | 每 run 5–15 分 |
 
 **改動類型 → 必跑層**:
 - 純前端(jsx/css/前端 js):L0 + 相關 L3 單支;HMR 生效免重啟。
@@ -140,6 +141,48 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `chrome.bendLines`——**摺疊態斷言用 count===0 而非「group 不存在」**。座標直接對位(攤平
   GLB Z-up 無 recenter)。dev 鉤 `__cadChrome.bendLines()` → {visible,count};smoke_flat_toggle
   已擴充(攤平 count>0、摺疊 count=0)。
+- **回合遙測 + 派工實驗(2026-10-09)**:每回合 `finally` 發 SSE `metrics`(在 `done` 前)+
+  `<workdir>/metrics.jsonl`,純函數在 `agent/turnMetrics.mjs`(L1 `turnMetrics.test.js`,
+  合成 SDK 訊息序列、明確 `now`,不碰時鐘)。派工旗標 `body.orch`(`chat.resolveOrch`,
+  L1 `chat.orch.test.js`)只在 design 非 demo 放行;prompt 分支 `prompt.orch.mjs`(L1
+  `prompt.orch.test.js` 的「單人變體逐字未動」斷言 = `orch.replace(ORCH_DISCIPLINE+
+  ORCH_DISPATCH_SECTION, SINGLE_DISCIPLINE) === single`——改 prompt.mjs 紀律句要連
+  `SINGLE_DISCIPLINE` 一起改,否則這條紅)。動 runner 的 orch 分支 → 重啟後跑
+  `tmp/spike_orch.py`(或等價短回合)看四件事:init.tools 含 `Task`(= Agent 工具內部名,
+  **disallowedTools 要同時放 Agent 與 Task**)、子代理 build 卡 done、`result` 在子代理
+  tool_result 之後、metrics `sub.n>0`。子代理 `stream_event` 不轉發 → 子代理工具 `tStart`
+  恆 null 屬正常。`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` 是前景硬保證,別拿掉。
+  組合件 import 同目錄零件模組**必在模組頂層**(cadpy 只在 exec_module 期間掛 sys.path);
+  `validate.py` 同義務已補(`tests/test_validate_sibling_import.py`,整合級 ~70s)。
+  orch 回合 cad_build/validate/present **必明給 name**。多件並行 build 的零 spawn 驗證靠
+  `session.buildMeta[name]` per-name 槽(`pipeline.design.test.js` 兩案)。
+- **減模型往返(2026-10-09 二輪)**:回合遙測 ledger 判讀出的固定開銷已拔掉,動到相關面要知道:
+  ① runner `SDK_ENV_EXTRAS`——`ENABLE_TOOL_SEARCH=false`(CLI 預設把 MCP 工具 schema 延遲
+  載入,agent 每回合第一件事是呼叫 `ToolSearch`,一次往返 3–5s;關掉後 init.tools 直接含
+  `mcp__cadchat__*`,`CADCHAT_ORCH_DEBUG=1` 的 initTools 可驗)、`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`
+  (CLI 會把本機 `~/.claude/projects/<repo>/memory/` 個人記憶索引灌進系統提示,agent 每個建模
+  回合真的先 Read 其中的 cadpy-parts 筆記查簽章——別台機器/packaged 沒這檔)。
+  ② `settingSources: []`(原 `["project"]` 在 dev 把根 CLAUDE.md+AGENTS.md 灌進系統提示;
+  首回合 cache_creation 42.1k→36.4k tokens,dev/packaged 同一份提示)。③ 階段列自動推進
+  `agent/stages.mjs`:design/cable 回合開始發 stage 0、主代理 `emit_plan/cad_build/cad_validate/
+  cad_present` 的 tool_use 區塊**開始**時推 1–4(單調不倒退;L1 `stages.test.js`);prompt 不再
+  要求 emit_stage,工具保留(草模/零件庫 prompt 仍用)。④ cadpy.parts 六家族簽章/座標慣例/
+  尺寸閘內嵌 design prompt「標準件幾何」段——**L1 `prompt.parts.test.js` 逐參數比對 python
+  `def` 行 + spec row 幾何鍵 ⊆ 參數**;改任一家族簽章或 specs 鍵名這條會紅,提醒同步 prompt。
+  ⑤ 收尾回覆限 8 行、進度短句強制使用者語言(紀律/語言段)。量測:同題 bench 3 輪
+  (`tests/smoke/.out/bench_s1_roundtrip.json` 等),分解表見 README「減模型往返」段;
+  跨檔比較腳本範本 `tmp/bench_compare.py`(tmp 不進版控,要留請搬 tests/bench)。
+- **readScope 硬閘改掛 PreToolUse hook(2026-10-09)**:基準輪(`settingSources:["project"]`)主代理
+  成功 Read `packages/cadpy/...` 與 `~/.claude/.../memory/...`,而 guard 對這些輸入全判 deny
+  (`tmp/spike_guard_paths.mjs`)——CLI 權限流程在那個設定下沒把主代理的 Read 送進 canUseTool
+  (改 `[]` 後才看得到 `canUseTool Read`)。修法:`guards.makeReadScopeHook(guard)` 把同一個 guard
+  掛成 `hooks.PreToolUse`(matcher `READ_HOOK_MATCHER`="Read|Glob|Grep"),每次呼叫都過;deny 回
+  `hookSpecificOutput.permissionDecision:"deny"`、allow 回 `{}`、guard 丟錯 fail-closed。L1
+  `readScope.test.js` 末案鎖契約。**驗法**:cad-chat prompt 會在模型層拒絕「請 Read 某原始碼」這種
+  要求(根本不呼叫工具,log 無 hook 行),要驗 hook 用 SDK 層 spike `tmp/spike_hook.mjs`(自訂
+  systemPrompt、同一 guard+hook;越界 Read/Grep 應回 deny 訊息、`models/` 範例 Read 應成功),
+  再跑一個會合法 Read 的真回合(線性滑台題 Read `models/linear_stage`)看 `CADCHAT_ORCH_DEBUG=1`
+  log 有 `hook PreToolUse Read` 且沒被誤擋。effort 預設同日改 medium(`DEFAULT_EFFORT`)。
 - **對外措辭契約 + Read/Glob/Grep 讀取硬閘(2026-10-01)**:聊天回覆禁內部詞(build123d/
   Python/副檔名/gen_*/cad_*/產生器…)、禁答反向詢問與跨使用者查詢。prompt 共用段在
   `agent/wording.mjs`(`buildWordingSection`,**只泛稱工具名**——字面列 cad_build 會撞

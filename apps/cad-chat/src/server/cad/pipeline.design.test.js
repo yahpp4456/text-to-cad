@@ -217,3 +217,44 @@ test("emitPresent:full 驗證出生的版本進匯出閘 memo(出檔免重驗)",
     fs.rmSync(s.workdir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// buildMeta per-name 槽(派工模式多件並行 build):runValidateDesign 先查槽、再退回單槽
+// ---------------------------------------------------------------------------
+
+test("runValidateDesign:buildMeta[name] 有槽 → 零 spawn,即使 lastBuildMeta 已被他件蓋掉", async () => {
+  const s = tmpSession("rvd-slot");
+  try {
+    fs.writeFileSync(path.join(s.workdir, "a.py"), "PARAMS = {}\n", "utf8");
+    // 子代理 A build 後,子代理 B 的 build 把單槽 lastBuildMeta 蓋成 b
+    s.buildMeta = { a: { name: "a", ...META }, b: { name: "b", ...META, partCount: 1, parts: ["x"] } };
+    s.lastBuildMeta = s.buildMeta.b;
+    const val = await runValidateDesign(s, "a", {});
+    assert.equal(val.design, true, "a 必須走零 spawn(不退 --motion-only)");
+    assert.equal(val.partCount, 3);
+    assert.deepEqual(s._lastValidate, { name: "a", full: false, ok: true });
+  } finally {
+    fs.rmSync(s.workdir, { recursive: true, force: true });
+  }
+});
+
+test("runValidateDesign:槽為 null(該名 build 失敗)→ 同名 lastBuildMeta 仍可用(滑桿重生回滾路徑)", async () => {
+  const s = tmpSession("rvd-null");
+  try {
+    fs.writeFileSync(path.join(s.workdir, "foo.py"), "PARAMS = {}\n", "utf8");
+    s.buildMeta = { foo: null };
+    s.lastBuildMeta = { name: "foo", ...META }; // buildOrRollback 還原的舊 meta
+    const val = await runValidateDesign(s, "foo", {});
+    assert.equal(val.design, true);
+    assert.equal(val.partCount, 3);
+    // 單槽名字不符 → 不可冒用
+    s.buildMeta = { bar: null };
+    s.lastBuildMeta = { name: "baz", ...META };
+    assert.equal(
+      (s.buildMeta?.bar ?? (s.lastBuildMeta?.name === "bar" ? s.lastBuildMeta : null)),
+      null,
+    );
+  } finally {
+    fs.rmSync(s.workdir, { recursive: true, force: true });
+  }
+});

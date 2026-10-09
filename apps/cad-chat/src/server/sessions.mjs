@@ -74,6 +74,7 @@ export function getOrCreateSession(sessionId, opts = {}) {
       imports: [], // 本 session 匯入的元件 rel 清單(imported/x.step;prompt 條件段用)
       project: null, // 綁定的專案目錄 {dir, ver, origin}(見 normalizeProject;落盤)
       lastBuildMeta: null, // build sidecar 收割 {name,parts,partCount,motion,motionErrs}(transient 不落盤;rehydrate 後首次設計驗證走 --motion-only fallback)
+      buildMeta: {}, // per-name 的 build sidecar 槽(派工模式多件並行 build 各自可驗;transient 不落盤)
       _lastValidate: null, // 最近一次驗證判定 {full,ok}(versionStamp 用;transient,runStep 開跑即清)
       _geomDirty: false, // 頂層基準是否已漂移(runStep 開跑=true、emitPresent=false;精算回 stale 用)
       currentAbort: null,

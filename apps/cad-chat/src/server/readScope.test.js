@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { test } from "node:test";
 
-import { makeToolGuard } from "./agent/guards.mjs";
+import { READ_HOOK_MATCHER, makeReadScopeHook, makeToolGuard } from "./agent/guards.mjs";
 import { globStaticPrefix, isReadAllowed, readScopeFor, readTargetOf } from "./agent/readScope.mjs";
 
 const RT = path.resolve("/srv/cadchat"); // runtime root(cwd)
@@ -77,4 +77,33 @@ test("makeToolGuard 接線:帶 scope 時 Read 越界 deny、合法 allow;MCP 工
   assert.equal((await g("Bash", { command: "ls" })).behavior, "deny");
   const g0 = makeToolGuard(["Read"]);
   assert.equal((await g0("Read", { file_path: path.join(DATA, "users/bob/models/x.py") })).behavior, "allow");
+});
+
+// 2026-10-09:主代理的 Read/Glob/Grep 在 SDK default 模式免 permission、不經 canUseTool,硬閘改掛
+// PreToolUse hook(同一 guard)。hook 契約:越界 → hookSpecificOutput deny + 原因;合法 → {}(不表態);
+// 非讀取工具 → {};模式工具面不含 Read(草模)→ 一樣 deny;guard 丟錯 → deny(fail-closed)。
+test("makeReadScopeHook:越界 deny、合法/非讀取工具不表態、工具面不含 Read 也 deny、guard 丟錯 fail-closed", async () => {
+  assert.equal(READ_HOOK_MATCHER, "Read|Glob|Grep");
+  const hook = makeReadScopeHook(makeToolGuard(["Read", "Glob", "Grep", "mcp__cadchat__cad_build"], { scope: scopeA }));
+  const ev = (tool_name, tool_input) => ({ hook_event_name: "PreToolUse", tool_name, tool_input, tool_use_id: "t1" });
+  const denied = await hook(ev("Read", { file_path: path.join(DATA, "users/bob/models/x.py") }));
+  assert.equal(denied.hookSpecificOutput.hookEventName, "PreToolUse");
+  assert.equal(denied.hookSpecificOutput.permissionDecision, "deny");
+  assert.ok(denied.hookSpecificOutput.permissionDecisionReason.includes("越界讀取被拒絕"));
+  assert.deepEqual(await hook(ev("Read", { file_path: "skills/cad/SKILL.md" })), {});
+  assert.equal((await hook(ev("Glob", { pattern: "**/*.py" }))).hookSpecificOutput.permissionDecision, "deny");
+  assert.deepEqual(await hook(ev("Glob", { pattern: "models/parts-library/*/meta.json" })), {});
+  assert.equal((await hook(ev("Grep", { pattern: "PARAMS" }))).hookSpecificOutput.permissionDecision, "deny");
+  assert.deepEqual(await hook(ev("mcp__cadchat__cad_build", { code: "x" })), {}); // 非讀取工具不經 hook 判斷
+  assert.deepEqual(await hook(ev("Bash", { command: "ls" })), {});
+  // 草模工具面不含 Read:即使路徑合法也 deny(訊息是模式專屬的)
+  const sketchHook = makeReadScopeHook(makeToolGuard(["mcp__cadchat__sketch_present"], { mode: "sketch", scope: scopeA }));
+  const sd = await sketchHook(ev("Read", { file_path: "skills/cad/SKILL.md" }));
+  assert.equal(sd.hookSpecificOutput.permissionDecision, "deny");
+  assert.ok(sd.hookSpecificOutput.permissionDecisionReason.includes("草模模式"));
+  // guard 丟錯 → deny
+  const boom = makeReadScopeHook(async () => { throw new Error("boom"); });
+  assert.equal((await boom(ev("Read", { file_path: "skills/cad/SKILL.md" }))).hookSpecificOutput.permissionDecision, "deny");
+  // 無 session/scope 的 guard(零回歸路徑):Read 合法即不表態
+  assert.deepEqual(await makeReadScopeHook(makeToolGuard(["Read"]))(ev("Read", { file_path: path.join(DATA, "users/bob/models/x.py") })), {});
 });

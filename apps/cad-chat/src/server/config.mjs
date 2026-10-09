@@ -124,11 +124,13 @@ export function resolveModel(env = process.env) {
   return m || null;
 }
 
-// agent 推理 effort(傳給 query({effort}))。預設 xhigh。只有支援 effort 的模型有效
-// (Opus 4.6+/Fable 5/Sonnet 4.6+);不支援的模型 SDK 會靜默降級。非法值 → 預設 xhigh。
+// agent 推理 effort(傳給 query({effort}))。預設 medium(2026-10-09 同題 bench:medium 對 high
+// 建模回合 134s vs 187s、成本 −26%,零 retry、精算全過;Sam 裁決改預設,不另測)。只有支援
+// effort 的模型有效(Opus 4.6+/Fable 5/Sonnet 4.6+);不支援的模型 SDK 會靜默降級。非法值 → 預設。
+export const DEFAULT_EFFORT = "medium";
 export function resolveEffort(env = process.env) {
   const raw = String(env.CADCHAT_EFFORT || "").trim().toLowerCase();
-  return ["low", "medium", "high", "xhigh", "max"].includes(raw) ? raw : "xhigh";
+  return ["low", "medium", "high", "xhigh", "max"].includes(raw) ? raw : DEFAULT_EFFORT;
 }
 
 // agent extended thinking(可見的深度思考;傳給 query({thinking}))。**預設關閉**——
@@ -152,6 +154,13 @@ export function lessonsEnabled(env = process.env) {
 export function resolveLessonThreshold(env = process.env) {
   const raw = Number.parseInt(String(env.CADCHAT_LESSON_THRESHOLD || "").trim(), 10);
   return Number.isFinite(raw) && raw > 0 ? raw : 3;
+}
+
+// ── 派工實驗(orch)──
+// CADCHAT_ORCH=1 → 設計模式回合預設啟用「主代理派 part_builder 子代理」;/api/chat body
+// 明示 orch:true/false 時以 body 為準(bench 一台 server 跑 A/B 不重啟)。
+export function orchDefault(env = process.env) {
+  return String(env.CADCHAT_ORCH ?? "").trim() === "1";
 }
 
 // 蒸餾用模型(可指定便宜模型);未設 → 跟 CADCHAT_MODEL。

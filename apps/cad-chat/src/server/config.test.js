@@ -15,16 +15,16 @@ import {
   resolveThinking,
 } from "./config.mjs";
 
-test("resolveEffort:預設 xhigh;白名單通過;非法/空 → xhigh", () => {
-  assert.equal(resolveEffort({}), "xhigh"); // 未設 → 預設
-  assert.equal(resolveEffort({ CADCHAT_EFFORT: "" }), "xhigh");
+test("resolveEffort:預設 medium;白名單通過;非法/空 → medium", () => {
+  assert.equal(resolveEffort({}), "medium"); // 未設 → 預設(2026-10-09 由 xhigh 改)
+  assert.equal(resolveEffort({ CADCHAT_EFFORT: "" }), "medium");
   for (const v of ["low", "medium", "high", "xhigh", "max"]) {
     assert.equal(resolveEffort({ CADCHAT_EFFORT: v }), v);
   }
   assert.equal(resolveEffort({ CADCHAT_EFFORT: "XHIGH" }), "xhigh"); // 大小寫不敏感
   assert.equal(resolveEffort({ CADCHAT_EFFORT: " high " }), "high"); // 去空白
-  assert.equal(resolveEffort({ CADCHAT_EFFORT: "ultra" }), "xhigh"); // 非法 → 預設
-  assert.equal(resolveEffort({ CADCHAT_EFFORT: "0" }), "xhigh");
+  assert.equal(resolveEffort({ CADCHAT_EFFORT: "ultra" }), "medium"); // 非法 → 預設
+  assert.equal(resolveEffort({ CADCHAT_EFFORT: "0" }), "medium");
 });
 
 test("resolveThinking:預設 disabled;adaptive/on;正整數 → budgetTokens;0/off/非法 → disabled", () => {

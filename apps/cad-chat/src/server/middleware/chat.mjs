@@ -1,10 +1,10 @@
 // POST /api/chat — 起/續一個 agent turn,以 SSE 串流回前端。
-// body: { message?, sessionId?, pickRef?, params?, imageRefs? }
+// body: { message?, sessionId?, pickRef?, params?, imageRefs?, orch? }
 import fs from "node:fs";
 import path from "node:path";
 
 import { isDemoAllowedMode, isDesignLike, isMode } from "../../lib/chatModes.js";
-import { demoReady, resolveAuth, resolveDemoQuota } from "../config.mjs";
+import { demoReady, orchDefault, resolveAuth, resolveDemoQuota } from "../config.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
 import { acquireBusy, getOrCreateSession, persistSession, releaseBusy } from "../sessions.mjs";
 import { consumeTurn } from "../quota.mjs";
@@ -130,7 +130,10 @@ export function chatMiddleware() {
     // 自動 no-op;見 finally 的 flush/distill gate)——避免陌生人失敗經全域訂閱 OAuth
     // 蒸餾的 ToS 側通道(re-review R1)。
     const imgCount = Array.isArray(body.imageRefs) ? body.imageRefs.length : 0;
-    const lessonRec = demo
+    // 派工實驗回合也不進教訓管線:實驗失敗型(import/label 錯)不該汙染正式 prompt 的教訓庫,
+    // 且 noteBuildSuccess 會把並行中他件的 open case 一起閉環(案例配對會錯)。
+    const orch = resolveOrch(body, session, { demo });
+    const lessonRec = demo || orch
       ? null
       : beginTurnRecorder(session, {
       userText:
@@ -172,6 +175,7 @@ export function chatMiddleware() {
           emit,
           message: buildUserText(body, session, img, steps),
           imageBlocks: img.blocks,
+          orch,
         });
         sse.end({ ok, version: session.version });
       }
@@ -215,6 +219,15 @@ export function resolveTurnMode(body, session) {
   const virgin = !session.sdkSessionId && !session.lastName && !(session.version > 0);
   if (virgin) return { ok: true, mode: req, adopt: true };
   return { ok: false, error: "mode_mismatch", mode: session.mode };
+}
+
+// 本 turn 是否走「主代理派工」實驗(純函式,L1 直測):body.orch 明示 true/false 優先,缺席才看
+// CADCHAT_ORCH 預設;只有設計模式且非 demo 才允許(派工段只在 design prompt;demo 不燒額度)。
+export function resolveOrch(body, session, { demo = false, env = process.env } = {}) {
+  if (demo || session?.mode !== "design") return false;
+  if (body?.orch === true) return true;
+  if (body?.orch === false) return false;
+  return orchDefault(env);
 }
 
 export function readImageBlocks(body, session) {

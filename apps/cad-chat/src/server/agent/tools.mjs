@@ -34,6 +34,16 @@ import {
 export function buildCadchatServer({ session, emit, signal }) {
   const n = () => session.lastName || "part";
   const clarifyGate = makeClarifyGate(session);
+  // 派工實驗:子代理發的 cad_build/cad_validate 卡標 sub:true(runner 從子代理 stream_event
+  // 收 tool_use id;CLI 每次 MCP 呼叫帶 _meta["claudecode/toolUseId"])。純裝飾,缺 _meta 即無。
+  const subTag = (extra) => {
+    try {
+      const id = extra?._meta?.["claudecode/toolUseId"];
+      return id && session._subToolUseIds?.has(id) ? { sub: true } : {};
+    } catch {
+      return {};
+    }
+  };
 
   return createSdkMcpServer({
     name: "cadchat",
@@ -162,11 +172,12 @@ export function buildCadchatServer({ session, emit, signal }) {
           edits: z.array(z.object({ find: z.string(), replace: z.string() })).optional(),
           params: z.record(z.string(), z.number()).optional(),
         },
-        async ({ name, code, edits, params }) => {
+        async ({ name, code, edits, params }, extra) => {
           const gated = clarifyGate();
           if (gated) return gated;
           const part = sanitizeName(name || n());
           const id = toolId();
+          const sub = subTag(extra);
           // 教訓案例:記本次修法(kind+edits 摘要),成功時回填給被閉環的失敗案例
           noteFixAttempt(session, { kind: code ? "code" : edits?.length ? "edits" : "params", edits });
           if (code) {
@@ -196,6 +207,7 @@ export function buildCadchatServer({ session, emit, signal }) {
             name: `cad.build(${part}.py)`,
             label: "撰寫幾何 → 執行 → 產出",
             status: "running",
+            ...sub,
             code:
               code ||
               (edits?.length
@@ -230,7 +242,7 @@ export function buildCadchatServer({ session, emit, signal }) {
         "cad_validate",
         "快速結構驗證:讀 build 自檢結果與 MOTION 宣告(干涉/掃掠等幾何細檢由使用者精算/匯出閘執行,回合內標 SKIP 屬正常),回傳逐項清單。",
         { name: z.string().optional() },
-        async ({ name }) => {
+        async ({ name }, extra) => {
           const gated = clarifyGate();
           if (gated) return gated;
           const part = name || n();
@@ -260,6 +272,8 @@ export function buildCadchatServer({ session, emit, signal }) {
             attempt: session._valAttempt,
             ms,
             partCount,
+            name: part,
+            ...subTag(extra),
             checks: decorated.map((c) => ({
               label: c.label,
               icon: c.icon,
