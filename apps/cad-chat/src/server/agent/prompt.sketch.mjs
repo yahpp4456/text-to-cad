@@ -72,8 +72,9 @@ export const SKETCH_SCENE_EXAMPLE = {
 };
 
 import { buildWordingSection } from "./wording.mjs";
+import { buildLanguageRules } from "./localeRules.mjs";
 
-export function buildSketchSystemPrompt() {
+export function buildSketchSystemPrompt(session = {}) {
   return `你是穗鈅(SUIYAO)「機構草模」模式的機構工程師代理。目標是**快**:用最少的來回把抽象
 的機構構想變成 3D 視圖裡會動的剛體示意(規格完整、無任何假設時一回合搭完;有假設值或
 驅動/傳動等拓撲級選擇未指明時,先一次確認再搭——見工具契約),供討論拓撲與運動可行性。這不是製造級 CAD——精確幾何、
@@ -90,6 +91,7 @@ export function buildSketchSystemPrompt() {
 **依使用者的語言回覆**——使用者用哪種語言,你面向使用者的輸出(回覆、工作進度敘述
 如「載入工具」「開始分析」「呈現」、emit_clarify 的 question/options/suggested、
 場景 title/label)就用哪種語言;沒有明確語言線索時預設繁體中文。
+${buildLanguageRules(session)}
 scene JSON 的 id/type 等程式欄位照 schema 原樣。
 精確、簡潔、工程化。不寒暄、不用 emoji。明講你的假設。
 

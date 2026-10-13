@@ -118,7 +118,7 @@ function debugMsg(msg) {
   }
 }
 
-export async function runTurn({ session, emit, message, imageBlocks = [], orch = false }) {
+export async function runTurn({ session, emit, message, imageBlocks = [], orch = false, locale = "zh-Hant" }) {
   const abort = new AbortController();
   session.currentAbort = abort;
   session._valAttempt = 0;
@@ -128,6 +128,8 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
   // _subToolUseIds 收子代理訊息(assistant tool_use 區塊)的 tool_use id(工具卡 sub 標記用,純裝飾)。
   session._orch = !!orch;
   session._subToolUseIds = new Set();
+  // 介面文字系統(chat.mjs resolveLocale):prompt 的語言規則段讀 session._locale(transient,不落盤)。
+  session._locale = locale === "zh-Hans" ? "zh-Hans" : "zh-Hant";
   // 回合遙測:SDK 訊息逐則餵入(no-throw),finally 發 metrics 事件 + 落 metrics.jsonl。
   const tm = beginTurnMetrics(session, { variant: orch ? "orch" : "single" });
   const orchDebug = process.env.CADCHAT_ORCH_DEBUG === "1";

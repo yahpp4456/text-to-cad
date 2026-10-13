@@ -6,6 +6,7 @@ import { useCallback, useRef } from "react";
 
 import { handleEvent } from "../state/events.js";
 import { isMode, modeLabel } from "../lib/chatModes.js";
+import { getLocale } from "../lib/localeStore.js";
 import { apiUrl } from "@/lib/apiBase";
 
 // modeRef(可選):App 端的 { current: <chatModes.MODES 之一> }——每次 POST 帶上
@@ -51,6 +52,8 @@ export function useChatStream(dispatch, modeRef) {
             message: text,
             sessionId: sessionIdRef.current,
             mode: modeRef?.current || undefined,
+            // 介面文字系統(zh-Hant/zh-Hans):server 據此加 prompt 語言規則、括註文字系統
+            locale: getLocale(),
             pickRefs: pickRefs?.length
               ? pickRefs.map((r) => ({
                   token: String(r.token || "").slice(0, 120),

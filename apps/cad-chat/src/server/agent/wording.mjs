@@ -39,6 +39,10 @@ export const INTERNAL_TERMS = [
   "traceback",
   "產生器",
   "原始碼",
+  // 簡中同義詞(AI 可能以簡中回覆):與繁中兩詞對稱;刻意不收「代码/脚本」(「错误代码」是正當用法)
+  "生成器",
+  "源代码",
+  "源码",
 ];
 
 export const WORDING_SECTION_TITLE = "# 對外措辭(硬規則:不洩露內部實作)";

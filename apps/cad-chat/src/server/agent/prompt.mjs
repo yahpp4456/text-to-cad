@@ -1,5 +1,6 @@
 import { ORCH_DISCIPLINE, ORCH_DISPATCH_SECTION, SINGLE_DISCIPLINE } from "./prompt.orch.mjs";
 import { buildWordingSection } from "./wording.mjs";
+import { buildLanguageRules } from "./localeRules.mjs";
 
 // 附加在 claude_code preset 之後的系統提示,定義「對話式 CAD」的操作契約。
 export function buildSystemPrompt(session) {
@@ -28,6 +29,7 @@ export function buildSystemPrompt(session) {
 **依使用者的語言回覆**——使用者用哪種語言,你面向使用者的輸出(回覆、工作進度敘述
 如「載入工具」「開始分析/規劃」「呈現」、emit_spec 的 chips、emit_clarify 的
 question/options/suggested)就用哪種語言;沒有明確語言線索時預設繁體中文。
+${buildLanguageRules(session)}
 **工具呼叫之間的進度短句與呈現後的收尾回覆也一樣**——內部推理用什麼語言都行,但每一句
 送出的文字都要是使用者的語言(常見漏洞:長推理之後順手用英文寫「Spec confirmed…」)。
 程式碼、API 名稱、單位符號照原樣即可。

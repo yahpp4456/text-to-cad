@@ -4,6 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { isDemoAllowedMode, isDesignLike, isMode } from "../../lib/chatModes.js";
+import { isLocale } from "../../lib/locale.js";
+import { toHans, warmHans } from "../agent/hans.mjs";
 import { demoReady, orchDefault, resolveAuth, resolveDemoQuota } from "../config.mjs";
 import { demoEventFilter } from "../demoEvents.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
@@ -173,12 +175,15 @@ export function chatMiddleware() {
         // 被 interrupt 的 regen 早退時別回 ok:true 誤報成功
         sse.end({ ok: !abort.signal.aborted, version: session.version });
       } else {
+        const locale = resolveLocale(body);
+        if (locale === "zh-Hans") await warmHans(); // 括註簡中化要 converter 就緒(第一次載 ~100KB 字典)
         const { ok } = await runTurn({
           session,
           emit,
-          message: buildUserText(body, session, img, steps),
+          message: buildUserText(body, session, img, steps, locale),
           imageBlocks: img.blocks,
           orch,
+          locale,
         });
         sse.end({ ok, version: session.version });
       }
@@ -299,7 +304,15 @@ export function readStepRefs(body, session) {
   return { names, missing };
 }
 
-export function buildUserText(body, session, img, steps) {
+// 前端 body.locale(介面文字系統):白名單外一律當 zh-Hant(舊前端/手打 API 不報錯)。
+export function resolveLocale(body) {
+  return isLocale(body?.locale) ? body.locale : "zh-Hant";
+}
+
+// locale=zh-Hans 時,注入的系統括註轉成簡體(只包括註本體,絕不碰 body.message):
+// 繁中括註會讓模型誤判使用者的文字系統(見 agent/localeRules)。
+export function buildUserText(body, session, img, steps, locale = "zh-Hant") {
+  const n = locale === "zh-Hans" ? (s) => toHans(s) : (s) => s;
   let t = String(body.message || "").trim();
   // 多選幾何參考(pickRefs[]);舊單選字串 pickRef 保留相容
   const refs = Array.isArray(body.pickRefs)
@@ -315,34 +328,35 @@ export function buildUserText(body, session, img, steps) {
   if (refs.length > 1) {
     const list = refs.map((r, i) => `  ${i + 1}. ${fmt(r)}`).join("\n");
     const src = session?.lastName ? `,來自 ${session.lastName}.step` : "";
-    t = `（已帶入 ${refs.length} 個幾何參考${src}:\n${list}\n可用 cad_measure / cad_align 對這些參考取決定性距離與對齊平移。）\n${t}`;
+    t = `${n(`（已帶入 ${refs.length} 個幾何參考${src}:\n${list}\n可用 cad_measure / cad_align 對這些參考取決定性距離與對齊平移。）`)}\n${t}`;
   } else if (refs.length === 1) {
-    t = `（已帶入幾何參考 ${fmt(refs[0])}）\n${t}`;
+    t = `${n(`（已帶入幾何參考 ${fmt(refs[0])}）`)}\n${t}`;
   } else if (body.pickRef) {
-    t = `（已帶入幾何參考 ${body.pickRef}）\n${t}`;
+    t = `${n(`（已帶入幾何參考 ${body.pickRef}）`)}\n${t}`;
   }
   if (body.params && Object.keys(body.params).length) {
-    t += `\n（使用者把參數調整為 ${JSON.stringify(body.params)},請據此重生新版本。）`;
+    t += `\n${n(`（使用者把參數調整為 ${JSON.stringify(body.params)},請據此重生新版本。）`)}`;
   }
   // 附圖註記:image blocks 已內嵌在同一則 user message(runner streaming input),
   // 這行讓 transcript/教訓錄製可讀,也保證「純圖無文字」的 userText 非空。
   if (img?.names?.length) {
-    t += `\n（附圖 ${img.names.length} 張:${img.names.join("、")}——圖已內嵌於本訊息,直接讀圖,不需 Read 開檔。）`;
+    t += `\n${n(`（附圖 ${img.names.length} 張:${img.names.join("、")}——圖已內嵌於本訊息,直接讀圖,不需 Read 開檔。）`)}`;
   }
   if (img?.missing?.length) {
-    t += `\n（附圖 ${img.missing.join("、")} 已遺失,未內嵌。）`;
+    t += `\n${n(`（附圖 ${img.missing.join("、")} 已遺失,未內嵌。）`)}`;
   }
   // 上傳 STEP 註記(僅 library/cable session;readStepRefs 已驗證沙箱與檔頭):
   // 給 agent 的是路徑不是位元組——library 走 library_preview/library_add,
   // cable 走 cad_import(pipeline 已收 uploads/ 來源)當參考件量測擬合。
   if (steps?.names?.length) {
-    t +=
+    t += `\n${n(
       session?.mode === "cable"
-        ? `\n（已上傳客戶參考 STEP ${steps.names.length} 件:${steps.names.join("、")}——先用 cad_import 匯入取得 bbox 事實,對照工程圖量測擬合,再照無塵電纜範本寫參數化產生器。）`
-        : `\n（已上傳 STEP 檔 ${steps.names.length} 件:${steps.names.join("、")}——先用 library_preview 預覽並量測,訪談後用 library_add 收庫。）`;
+        ? `（已上傳客戶參考 STEP ${steps.names.length} 件:${steps.names.join("、")}——先用 cad_import 匯入取得 bbox 事實,對照工程圖量測擬合,再照無塵電纜範本寫參數化產生器。）`
+        : `（已上傳 STEP 檔 ${steps.names.length} 件:${steps.names.join("、")}——先用 library_preview 預覽並量測,訪談後用 library_add 收庫。）`,
+    )}`;
   }
   if (steps?.missing?.length) {
-    t += `\n（上傳檔 ${steps.missing.join("、")} 已遺失。）`;
+    t += `\n${n(`（上傳檔 ${steps.missing.join("、")} 已遺失。）`)}`;
   }
   // 當前畫布語境(安全網):使用者在唯讀檢視某外部檔案時,agent 否則完全不知道
   // 畫布上開著什麼(此 turn 的 session 通常沒 lastName)。只在 source="opened" 且
@@ -358,12 +372,12 @@ export function buildUserText(body, session, img, steps) {
     const pd = cv.projectDir ? String(cv.projectDir).slice(0, 200) : null;
     if (session?.mode === "library") {
       if (file) {
-        t = `（使用者目前在畫布上檢視 ${file}。可 library_preview 重看,或依訪談流程 library_add 收庫。）\n${t}`;
+        t = `${n(`（使用者目前在畫布上檢視 ${file}。可 library_preview 重看,或依訪談流程 library_add 收庫。）`)}\n${t}`;
       }
     } else if (pd) {
-      t = `（使用者目前在畫布上開著專案「${nm}」,產生器在 models/${pd}/${nm}.py。要了解它先 Read 該 .py;若他要求修改或調參數,提醒他用檔案瀏覽器的「開啟」把它帶入可編輯工作區。）\n${t}`;
+      t = `${n(`（使用者目前在畫布上開著專案「${nm}」,產生器在 models/${pd}/${nm}.py。要了解它先 Read 該 .py;若他要求修改或調參數,提醒他用檔案瀏覽器的「開啟」把它帶入可編輯工作區。）`)}\n${t}`;
     } else if (file) {
-      t = `（使用者目前在畫布上檢視 models/${file}(匯入/獨立檔,無產生器,無法參數化編輯)。可 Read 它回答問題,或另外建模新版本。）\n${t}`;
+      t = `${n(`（使用者目前在畫布上檢視 models/${file}(匯入/獨立檔,無產生器,無法參數化編輯)。可 Read 它回答問題,或另外建模新版本。）`)}\n${t}`;
     }
   }
   // rehydrate 後首個 turn 的一次性接續提示(open-project / resume 降級時設定)。
@@ -371,7 +385,7 @@ export function buildUserText(body, session, img, steps) {
   // 若在這裡就清,turn 又在 pre-init 失敗,提示就永久遺失,之後成功的 turn
   // 對既有產物零語境。
   if (session?._rehydrateNote) {
-    t = `${session._rehydrateNote}\n${t}`;
+    t = `${n(session._rehydrateNote)}\n${t}`;
   }
   // PARAMS 現值一行(設計鏈模式、已有產生器、且不是 rehydrate 首回合):滑桿與
   // 規格表單的決定性重生**不進 SDK transcript**——agent 只知道 rehydrate 當下那組
@@ -380,10 +394,10 @@ export function buildUserText(body, session, img, steps) {
   if (isDesignLike(session?.mode) && session?.lastName && !session?._rehydrateNote) {
     const vals = paramValuesFromGenerator(session, session.lastName);
     if (vals && Object.keys(vals).length) {
-      t = `（產生器 ${session.lastName}.py 的 PARAMS 現值:${JSON.stringify(vals)}——以這組為準,不要沿用先前對話裡的舊值。）\n${t}`;
+      t = `${n(`（產生器 ${session.lastName}.py 的 PARAMS 現值:${JSON.stringify(vals)}——以這組為準,不要沿用先前對話裡的舊值。）`)}\n${t}`;
     }
   }
-  return t || "（空訊息）";
+  return t || n("（空訊息）");
 }
 
 // 參數即時重生:改 PARAMS → step → validate → present,免 LLM round-trip。

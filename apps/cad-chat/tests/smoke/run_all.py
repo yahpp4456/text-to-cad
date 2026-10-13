@@ -51,6 +51,7 @@ ORDER = [
 # 消耗訂閱/API 回合
 LLM_GATED = [
     "smoke_queue_live.py",
+    "smoke_locale_live.py",  # AI 回覆文字系統(zh-Hans 回簡體 / 預設回繁體)
     "smoke_revolute_live.py",
     "smoke_gear_rackpinion_live.py",
     "smoke_image_clarify_live.py",

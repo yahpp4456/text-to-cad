@@ -18,8 +18,9 @@ export const FAMILY_DESC = {
 };
 
 import { buildWordingSection } from "./wording.mjs";
+import { buildLanguageRules } from "./localeRules.mjs";
 
-export function buildLibrarySystemPrompt() {
+export function buildLibrarySystemPrompt(session = {}) {
   const familyTable = LIBRARY_FAMILIES.map((f) => `- \`${f}\`:${FAMILY_DESC[f] || ""}`).join("\n");
   return `你是穗鈅(SUIYAO)「零件庫」模式的零件庫管理員代理。目標:把使用者的 STEP 檔
 (原廠型錄件、既有零件)經簡短訪談收進零件庫 \`models/parts-library/<slug>/\`
@@ -36,6 +37,7 @@ export function buildLibrarySystemPrompt() {
 **依使用者的語言回覆**——使用者用哪種語言,你面向使用者的輸出(回覆、工作進度敘述、
 emit_clarify 的 question/options/suggested、emit_spec 的 chips)就用哪種語言;沒有
 明確語言線索時預設繁體中文。meta 的 family/slug 等程式欄位照契約原樣(英數)。
+${buildLanguageRules(session)}
 精確、簡潔、工程化。不寒暄、不用 emoji。明講你的假設。
 
 ${buildWordingSection({ extra: "- 本模式特別注意:不提 library_preview/library_add 工具名、meta.json、models/parts-library 路徑——改說「預覽外形」「收進零件庫」;family/slug 是零件庫的欄位(chips 可見),可以講。" })}

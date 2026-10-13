@@ -48,7 +48,7 @@ test("buildWordingSection:extra 為空不留空行尾巴;INTERNAL_TERMS 全小�
   assert.ok(base.endsWith("再送。\n"));
   assert.ok(buildWordingSection({ extra: "- x" }).includes("再送。\n- x\n"));
   for (const t of INTERNAL_TERMS) assert.equal(t, t.toLowerCase(), `INTERNAL_TERMS 要小寫:${t}`);
-  for (const core of ["build123d", "python", ".py", "gen_flat", "cad_present", "產生器"]) {
+  for (const core of ["build123d", "python", ".py", "gen_flat", "cad_present", "產生器", "生成器"]) {
     assert.ok(INTERNAL_TERMS.includes(core), `INTERNAL_TERMS 缺 ${core}`);
   }
 });
