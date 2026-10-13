@@ -14,11 +14,13 @@ import ParamsBar from "./components/canvas/ParamsBar.jsx";
 import SketchCanvas3D from "./components/canvas/SketchCanvas3D.jsx";
 import VersionTimeline from "./components/versions/VersionTimeline.jsx";
 import { useChatStream } from "./hooks/useChatStream.js";
+import { useLocale } from "./hooks/useLocale.js";
 import { composeCableSpecText } from "./lib/cableSpec.js";
 import { isDemoAllowedMode, isDesignLike, normalizeMode } from "./lib/chatModes.js";
 import { isProjectDirty, projectChipLabel } from "./lib/projectState.js";
 import { latestSpecItem, pendingLessonOffer } from "./lib/clarifyText.js";
 import { DEMO_TIP } from "./lib/demo.js";
+import { setLocale } from "./lib/localeStore.js";
 import { buildPromoteText } from "./lib/promoteText.js";
 import { apiUrl } from "@/lib/apiBase";
 import { initialState, reducer } from "./state/chatStore.js";
@@ -291,6 +293,14 @@ export default function App() {
   // server 端 demoGuard 對應端點回 403;前端禁用只是 UX,不是安全邊界。
   // health 未回前 demo=false:入口短暫可用,點了也被 403 擋。
   const demo = !!health?.demo;
+
+  // 介面文字系統(繁/簡):切換 = 寫偏好後整頁重載(DOM 層轉換不做還原;狀態在
+  // cadchat.session.v1 快照裡,重整續聊是現有能力)。running 中由 Header 禁用。
+  const locale = useLocale();
+  const toggleLocale = useCallback(() => {
+    setLocale(locale === "zh-Hans" ? "zh-Hant" : "zh-Hans");
+    window.location.reload();
+  }, [locale]);
 
   // DEMO 進場問「要不要看 30 秒介紹影片」:server 回 introVideo:true(檔案真的在)就問,
   // **每次載入頁面都問**(Sam 2026-10-09 決定:不記 localStorage;重整/再登入都再問一次)。
@@ -1575,6 +1585,8 @@ export default function App() {
         project={projectChip}
         onNewChat={newChat}
         onOpenLessons={() => setLessonsOpen(true)}
+        locale={locale}
+        onToggleLocale={toggleLocale}
         running={state.running}
       />
       <LessonsPanel open={lessonsOpen} onClose={() => setLessonsOpen(false)} />

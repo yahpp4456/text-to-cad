@@ -23,6 +23,8 @@ export default function Header({
   onNewChat,
   onOpenLessons,
   running,
+  locale = "zh-Hant", // 介面文字系統;切換鈕顯示「目標」文字(繁→简、簡→繁)
+  onToggleLocale = null,
 }) {
   const saveBlocked = demo || saving || running;
   const saveTitle = demo
@@ -123,6 +125,18 @@ export default function Header({
         {/* 綁定專案時讓位給右側儲存鈕(1480px 寬右側群組本就只剩 4px 才碰到置中切換器);
             chip 已標明這條 session 綁在哪個 models 目錄,「session · local」沒有新資訊 */}
         {!project && <span className="session-tag">session · local</span>}
+        {onToggleLocale && (
+          <a
+            className="hdr-btn hdr-locale"
+            data-no-convert
+            data-disabled={running || undefined}
+            onClick={running ? undefined : onToggleLocale}
+            title={running ? "回合進行中,結束後才能切換" : locale === "zh-Hans" ? "切換為繁體中文介面" : "切换为简体中文界面"}
+            aria-label={locale === "zh-Hans" ? "切換為繁體中文" : "切换为简体中文"}
+          >
+            {locale === "zh-Hans" ? "繁" : "简"}
+          </a>
+        )}
       </div>
     </header>
   );

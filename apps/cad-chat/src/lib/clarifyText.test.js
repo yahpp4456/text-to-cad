@@ -156,3 +156,10 @@ test("pendingLessonOffer:全答完/無卡/空 → null", () => {
   assert.equal(pendingLessonOffer([]), null);
   assert.equal(pendingLessonOffer(null), null);
 });
+
+test("簡繁皆認:AI 以簡中回覆時「(假设)」一樣是假設 chip、一樣剝掉", () => {
+  assert.equal(isAssumedChip({ v: "外徑 100mm(假设)" }), true);
+  assert.equal(isAssumedChip({ v: "外徑 100mm (假設)" }), true);
+  assert.equal(stripAssumedTag("外徑 100mm(假设)"), "外徑 100mm");
+  assert.equal(isAssumedChip({ v: "外徑 100mm" }), false);
+});

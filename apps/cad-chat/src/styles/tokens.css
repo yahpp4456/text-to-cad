@@ -23,7 +23,7 @@
   /* 字型 */
   --font-display: "Anton", sans-serif;
   --font-eyebrow: "Oswald", sans-serif;
-  --font-body: "Noto Sans TC", system-ui, sans-serif;
+  --font-body: "Noto Sans TC", "Noto Sans SC", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", monospace;
 
   /* 切角 clip-path(對角缺角,非圓角) */
@@ -118,4 +118,10 @@ body {
   100% {
     background-position: 40px 0;
   }
+}
+
+/* 簡體介面(lib/localeStore.applyLocale 設 html lang):簡體字形優先。
+   html[lang] 特異度 (0,1,1) > :root (0,1,0),覆蓋上面的 --font-body。 */
+html[lang="zh-Hans"] {
+  --font-body: "Noto Sans SC", "Noto Sans TC", system-ui, sans-serif;
 }

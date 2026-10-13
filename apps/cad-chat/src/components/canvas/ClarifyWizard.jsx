@@ -21,7 +21,7 @@ import SpecChips from "./SpecChips.jsx";
 // .cw-fixes-only(有修改才存在)、.cw-edited(含「k 改為 v」)、.cw-back、.cw-steps。
 
 // label 尾的「(建議)」改成 badge 呈現(送出的 value 不受影響)。
-const RECOMMEND_RE = /\s*[(（]\s*(?:AI\s*)?建議\s*[)）]\s*$/;
+const RECOMMEND_RE = /\s*[(（]\s*(?:AI\s*)?建[議议]\s*[)）]\s*$/; // 簡繁皆認
 
 export default function ClarifyWizard({ clarify, onSubmitText, initialEdits }) {
   const specs = clarify.specs || [];

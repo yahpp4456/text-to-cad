@@ -10,7 +10,7 @@ export function unescapeNewlines(s) {
 
 // 「(假設)」偵測:結構化旗標 assumed:true 為主(emit_spec schema),v 內文字慣例為
 // fallback(舊 localStorage 快照、模型不聽話時兜底)。全半形括號都認。
-export const ASSUMED_RE = /[(（]\s*假設\s*[)）]/;
+export const ASSUMED_RE = /[(（]\s*假[設设]\s*[)）]/; // 簡繁皆認(AI 可能以簡中回覆)
 
 export function isAssumedChip(c) {
   return c?.assumed === true || ASSUMED_RE.test(String(c?.v ?? ""));
@@ -19,7 +19,7 @@ export function isAssumedChip(c) {
 // 顯示用:剝掉 v 裡的「(假設)」字樣(改由 badge 呈現,兩種來源視覺統一)。
 export function stripAssumedTag(v) {
   return String(v ?? "")
-    .replace(/[(（]\s*假設\s*[)）]/g, "")
+    .replace(/[(（]\s*假[設设]\s*[)）]/g, "")
     .trim();
 }
 

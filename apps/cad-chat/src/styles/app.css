@@ -128,6 +128,17 @@
   align-items: center;
   gap: 8px; /* 7 個項目:每 1px 間距 = 7px,右側群組與置中切換器只差幾十 px */
 }
+/* 繁/簡切換鈕:極窄(右側群組已滿),字用 body 字型讓「简/繁」兩字形都正常 */
+.hdr-locale {
+  padding: 5px 8px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+.hdr-locale[data-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}
 .status-pill {
   display: flex;
   align-items: center;
