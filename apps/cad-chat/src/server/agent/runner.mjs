@@ -64,6 +64,11 @@ const LIBRARY_ALLOWED = ["Read", "Glob", "Grep", ...LIBRARY_MCP_TOOLS];
 // 之後 in-process MCP 通道對 CLI 端已死,emit_*/cad_* 全部 Stream closed。
 // (export 供 lessons.distill.mjs 的一次性蒸餾 query 共用同一份禁用清單)
 export const DISALLOWED = [
+  // 2026-10-25 補:SDK permissionMode "default" 把唯讀 shell 指令(ls/grep/sed/wc/find…)判為
+  // 安全**直接放行,不經 canUseTool**(與 Read/Glob/Grep 同類繞過;transcript 自 07-15 起數十次
+  // 真執行,含 ls 他人 demo 目錄)。Bash 整個移除;Write/Edit 家族 agent 也從不該用(產生器一律
+  // 走 cad_build 的 code 參數),一併移除。驗證:runner.guard.test.js。
+  "Bash", "Write", "Edit", "MultiEdit", "NotebookEdit",
   "WebSearch", "WebFetch", "AskUserQuestion",
   "Task", "Agent", "ScheduleWakeup", "SendMessage", "Monitor", "Workflow", "Skill",
   "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskOutput", "TaskStop",
