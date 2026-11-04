@@ -59,7 +59,7 @@ function copyVerbatim(srcDir, dstDir) {
 // stems 取「目的地 + 來源」所有頂層 *.py 的 stem:產生器中途改名也不留舊家族殘檔,
 // 之後 open-project 的 pickGenerator 不會被干擾。
 const OWNED_DIRS = new Set(["imported", "__pycache__"]);
-const OWNED_SUFFIXES = [".py", ".step", ".asm.json"];
+const OWNED_SUFFIXES = [".py", ".step", ".asm.json", ".surface.draft.json"];
 const OWNED_HIDDEN_SUFFIXES = [
   ".step.glb",
   ".step.meta.json",
@@ -67,6 +67,7 @@ const OWNED_HIDDEN_SUFFIXES = [
   ".flat.step.glb",
   ".flat.lines.json",
   ".sweep.json",
+  ".surface.json",
 ];
 
 export function generatorStems(dir) {

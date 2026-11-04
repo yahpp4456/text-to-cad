@@ -144,6 +144,7 @@ export function handleEvent(dispatch, type, data = {}) {
           flatGlbUrl: data.flatGlbUrl ?? null, // 鈑金件(有 gen_flat)→ 摺疊/攤平即時切換
           flatLinesUrl: data.flatLinesUrl ?? null, // 折彎線 sidecar → 攤平態虛線 overlay
           sweepPathsUrl: data.sweepPathsUrl ?? null, // 掃出路徑 sidecar → 3D 路徑虛線 overlay
+          surfaceUrl: data.surfaceUrl ?? null, // 曲面分析 sidecar(產品設計)→ 連續性/籠/梳 overlay
           projectDir: data.projectDir ?? null, // 唯讀檢視版的升級目錄(一般產出=null)
           sceneUrl: data.sceneUrl ?? null, // 草模場景 JSON(type:"sketch";CAD 版=null)
           dofs: Array.isArray(data.dofs) ? data.dofs : undefined, // 草模 DOF 摘要
@@ -168,7 +169,18 @@ export function handleEvent(dispatch, type, data = {}) {
         flatGlbUrl: data.flatGlbUrl ?? null,
         flatLinesUrl: data.flatLinesUrl ?? null,
         sweepPathsUrl: data.sweepPathsUrl ?? null,
+        surfaceUrl: data.surfaceUrl ?? null, // 曲面分析 sidecar(產品設計)
         sceneUrl: data.sceneUrl ?? null, // 草模場景(type:"sketch" 的 present 帶)
+      });
+      break;
+    case "surface_draft":
+      // 產品設計:agent 建立/更新曲面草稿(不建模)→ 工作窗資料源(revision 單調遞增)
+      dispatch({
+        type: "SET_SURFACE_DRAFT",
+        surfaceDraft:
+          data && data.draft && typeof data.draft === "object"
+            ? { name: data.name || "", revision: Number(data.revision) || 0, draft: data.draft, source: data.source === "user" ? "user" : "ai" }
+            : null,
       });
       break;
     case "params":

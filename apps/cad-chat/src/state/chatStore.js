@@ -35,7 +35,8 @@ export const initialState = {
   // flatLinesUrl:折彎線 sidecar;攤平態疊虛線 overlay 用。
   // sweepPathsUrl:掃出路徑 sidecar(SWEEP_PATHS);非 null → 3D 視圖疊路徑虛線 overlay + 「⌒ 路徑」chip。
   // sceneUrl:草模場景 JSON(type:"sketch" 的版本);SketchCanvas3D 據此載入播放。
-  canvas: { glbUrl: "", name: "", code: "", ver: "", status: "empty", type: "", source: "", projectDir: null, flatGlbUrl: null, flatLinesUrl: null, sweepPathsUrl: null, sceneUrl: null }, // status: empty|loading|ready|error
+  // surfaceUrl:曲面分析 sidecar(產品設計);非 null → 3D 視圖出連續性/開放邊/控制點籠/曲率梳 chips。
+  canvas: { glbUrl: "", name: "", code: "", ver: "", status: "empty", type: "", source: "", projectDir: null, flatGlbUrl: null, flatLinesUrl: null, sweepPathsUrl: null, surfaceUrl: null, sceneUrl: null }, // status: empty|loading|ready|error
   params: { defs: [], values: {}, dirty: false },
   pickRefs: [], // [{token,label}] 帶入對話的幾何參考(多選;UI 上限 4,去重,超限丟最舊)
   propsOpen: false,
@@ -49,6 +50,9 @@ export const initialState = {
   // 用它管精靈 remount(跨回合連續 clarify 自動歸零 step/edits);specs 併自 turnSpec。
   clarify: null, // { id, q, opts, suggested, specs } | null
   turnSpec: null, // 本回合最新 emit_spec 的 chips(START_RUN 清空;SET_CLARIFY 併進 clarify.specs)
+  // 產品設計工作草稿(surface-draft-v1):{name, revision, draft, source}|null。agent 的
+  // surface_draft 事件與工作窗保存都更新它;RESTORE 回灌(跨重整工作窗不掉草稿)。
+  surfaceDraft: null,
 };
 
 function nextId(state) {
@@ -283,6 +287,7 @@ export function reducer(state, action) {
           flatGlbUrl: v.flatGlbUrl ?? null, // 切版帶回該版攤平 GLB(非鈑金版=null)
           flatLinesUrl: v.flatLinesUrl ?? null, // 切版帶回該版折彎線
           sweepPathsUrl: v.sweepPathsUrl ?? null, // 切版帶回該版掃出路徑 overlay
+          surfaceUrl: v.surfaceUrl ?? null, // 切版帶回該版曲面分析 overlay
           sceneUrl: v.sceneUrl ?? null, // 草模版帶回場景 JSON(CAD 版=null)
         },
       };
@@ -313,6 +318,7 @@ export function reducer(state, action) {
           flatGlbUrl: action.flatGlbUrl ?? null, // 鈑金攤平 GLB(present 帶;非鈑金=null)
           flatLinesUrl: action.flatLinesUrl ?? null, // 折彎線 sidecar
           sweepPathsUrl: action.sweepPathsUrl ?? null, // 掃出路徑 sidecar(present 帶;無=null)
+          surfaceUrl: action.surfaceUrl ?? null, // 曲面分析 sidecar(產品設計 present 帶;無=null)
           sceneUrl: action.sceneUrl ?? null, // 草模場景 JSON(present type:"sketch" 帶)
         },
       };
@@ -374,6 +380,9 @@ export function reducer(state, action) {
     case "SET_TURN_SPEC":
       return { ...state, turnSpec: action.chips || null };
 
+    case "SET_SURFACE_DRAFT":
+      return { ...state, surfaceDraft: action.surfaceDraft || null };
+
     case "SET_CLARIFY": {
       if (!action.clarify) return { ...state, clarify: null };
       // mint 遞增 id(精靈 remount key);specs 放 spread 前 → 煙測注入可覆寫
@@ -414,6 +423,7 @@ export function reducer(state, action) {
         sessionId: s.sessionId || null,
         // mode normalize:白名單外一律 design(舊快照無欄位 → design,向後相容)
         mode: normalizeMode(s.mode),
+        surfaceDraft: s.surfaceDraft && typeof s.surfaceDraft === "object" && s.surfaceDraft.draft ? s.surfaceDraft : null,
         _seq: Math.max(Math.trunc(Number(s._seq)) || 0, items.length),
         items,
         versions,

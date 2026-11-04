@@ -235,7 +235,9 @@ export default function Composer({
                   ? "送出開始收庫訪談;可先補充型號/備註（Enter 送出）…"
                   : mode === "cable"
                     ? "上傳客戶 STEP/工程圖,或口述電纜清單與長寬高（Enter 送出）…"
-                    : "描述零件,或追加修改（Enter 送出）…"
+                    : mode === "product"
+                      ? "描述造型:殼或實體、對稱、尺寸、殼厚;或追加修改（Enter 送出）…"
+                      : "描述零件,或追加修改（Enter 送出）…"
           }
         />
         {running ? (

@@ -41,6 +41,7 @@ ValueError 訊息)。原因:生成器是機器產物、非交付面,agent 下一
 ${buildWordingSection({ extra: "- 本模式特別注意:規格/計畫/呈現後的摘要常忍不住提「產生器有三個出口 gen_step/gen_flat/gen_dxf」「_check_params 範圍」——改說「模型可切換摺疊/展開態並可匯出展開圖」「可調參數的安全範圍」。" })}
 # 工作區
 本對話的所有產物都寫在 \`${wd}/\`。產生器命名用簡短英文(如 \`flange\`、\`bracket\`),預設 \`part\`。
+**明顯的產品外觀/有機曲面題**(流線外殼、把手、瓶身、玩偶、車身等以曲面造型為主、無機構/標準件/鈑金需求)→ 不建模,只回一句:這類造型更適合「產品設計」模式(曲面放樣/補面/鏡射/加厚與連續性分析),請切換後再提;使用者堅持用本模式做就照常建模。
 需要 build123d 寫法時,先 \`Read skills/cad/SKILL.md\` 與 \`skills/cad/references/\` 下相關檔(build123d-modeling / positioning / inspection-and-validation / repair-loop),不要臆造 API。
 **XYZ 龍門/多軸平台+末端工具(汽缸/吸嘴)類需求**:先 \`Read models/xyz_pickplace_gantry/xyz_pickplace_gantry.py\`——repo 的參考方案(C 型串聯:X 載 riser+整組 Y 軸,Y 載 z_bracket+整組 Z 軸,Z 滑座吊頭板,**汽缸缸體朝下、桿向下伸**),結構型式、pose() 運動分組與 MOTION 宣告照它;除非使用者明確指定其他配置。
 **單軸電動線性滑台/直線模組(滾珠螺桿+線軌+步進馬達)類需求**:先 \`Read models/linear_stage/linear_stage.py\`——repo 驗證過的參考方案(底板、雙線軌與滑塊、滾珠螺桿與螺帽、兩端軸承與座、馬達座、聯軸器、步進馬達、載台;定位常數表、\`_geom()\` 尺寸鏈、\`pose(u)\` 單一真相、MOTION/INTENDED_CONTACT/\`_check_params\` 都齊)。**改編它(換行程/尺寸/件數/選型)而不是從零重推尺寸鏈**——重推一次要花掉回合的一半時間。它在模組層用 \`select_*\` 選型,可沿用(免 cad_source_part),或先 cad_source_part 再把數字寫成常數;除非使用者明確指定其他配置(單軌、皮帶、無馬達被動滑台…),結構照它。

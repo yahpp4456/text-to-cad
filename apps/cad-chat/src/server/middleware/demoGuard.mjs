@@ -25,6 +25,8 @@ const BLOCKED = [
   "/api/library-glb",
   "/api/upload-step",
   "/api/import",
+  "/api/surface-draft",
+  "/api/surface-build",
 ];
 
 export function demoGuardMiddleware() {

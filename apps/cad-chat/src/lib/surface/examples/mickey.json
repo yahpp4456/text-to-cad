@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "unit": "mm",
+  "revision": 0,
+  "result": "solid",
+  "symmetry": "YZ",
+  "fuse": true,
+  "curves": [
+    {"id": "head_arc", "kind": "arc3", "points": [[0, 0, -20], [20, 0, 0], [0, 0, 20]], "plane": "XZ"},
+    {"id": "ear_arc", "kind": "arc3", "points": [[16, 0, 9], [27, 0, 20], [16, 0, 31]], "plane": "XZ"}
+  ],
+  "surfaces": [
+    {"id": "head", "op": "revolve", "curve": "head_arc", "axis": {"origin": [0, 0, 0], "dir": [0, 0, 1]}, "angle": 360},
+    {"id": "ear", "op": "revolve", "curve": "ear_arc", "axis": {"origin": [16, 0, 20], "dir": [0, 0, 1]}, "angle": 360}
+  ],
+  "ops": [
+    {"op": "sew", "tol": 0.01},
+    {"op": "fillet", "r": 3.0}
+  ],
+  "analysis": {"minContinuity": "G1", "creases": 0, "zebra": true}
+}

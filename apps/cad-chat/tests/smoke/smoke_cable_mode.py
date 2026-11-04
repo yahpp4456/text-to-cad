@@ -4,7 +4,7 @@
 A. API 護欄(純 HTTP):cable/design session 互斥、cable 放行設計端點、
    可匯入 STEP，並可上傳 STEP 至既有 cable session。
 A2. open-project × mode 死路回歸鎖(mint 帶 mode / 參數 mint 前驗 / 滑桿重生 200)。
-B. 切換器 UI:四段順序、cable 青色選中、localStorage、cable 專屬五段 stepper,
+B. 切換器 UI:五段順序(含產品設計)、cable 青色選中、localStorage、cable 專屬五段 stepper,
    以及 cable 空狀態(指向工作台)與 composer 不鎖。
 C. Composer STEP 附件邊界:cable 接受 STEP 並顯示 ready chip；design 濾除 STEP。
 D. 跨重整:seed cable session 加 localStorage 快照後，reload 保持 cable 且無 JS 錯誤。
@@ -241,12 +241,12 @@ try:
         page.wait_for_selector(".mode-switch")
 
         print("== B. ModeSwitch ==")
-        c.check("B: 切換器四段", page.locator(".mode-seg").count() == 4)
+        c.check("B: 切換器五段(含產品設計)", page.locator(".mode-seg").count() == 5)
         c.check("B: 分隔線存在(創作組|管理組)", page.locator(".mode-divider").count() == 1)
         c.check(
-            "B: 段順序=sketch/design/cable/library",
+            "B: 段順序=sketch/design/product/cable/library",
             page.locator(".mode-seg").evaluate_all("els => els.map(e => e.dataset.mode)")
-            == ["sketch", "design", "cable", "library"],
+            == ["sketch", "design", "product", "cable", "library"],
         )
         page.locator('.mode-seg[data-mode="cable"]').click()
         page.wait_for_selector('.mode-seg[data-mode="cable"][data-on="true"]')

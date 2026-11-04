@@ -14,7 +14,7 @@ description: apps/cad-chat 的分層驗證流程與擴充守則。改動 cad-cha
 | 層 | 驗什麼 | 指令 | 時間 |
 |---|---|---|---|
 | L0 建置 | 語法/import/JSX | `npm --prefix apps/cad-chat run build` | ~5s |
-| L1 單元 | 純函數/reducer/server 邏輯 | `cd apps/cad-chat && node --test src/server/*.test.js src/server/cad/*.test.js src/lib/*.test.js src/lib/sketch/*.test.js src/state/*.test.js` | ~1s |
+| L1 單元 | 純函數/reducer/server 邏輯 | `cd apps/cad-chat && node --test src/server/*.test.js src/server/cad/*.test.js src/lib/*.test.js src/lib/surface/*.test.js src/lib/draft/*.test.js src/lib/sketch/*.test.js src/state/*.test.js` | ~1s |
 | L2 API | 免 LLM 端點鏈路(open-project/save/revert/export/asset…) | 煙測內含(smoke_versions),或 curl 手打 | 秒~分 |
 | L3 UI | 真瀏覽器互動與渲染 | `PYTHONUTF8=1 .venv/Scripts/python.exe apps/cad-chat/tests/smoke/run_all.py` | ~6-8min |
 | L4 LLM | 必須靠模型的行為(對話語境/工具編排) | `CADCHAT_SMOKE_LLM=1` 跑 run_all,或手動一輪對話 | 分鐘級+燒回合 |
@@ -411,6 +411,35 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   規定「英文思考、使用者輸出一律繁中」——改 prompt 措辭別動掉這段(design 模式曾因
   無語言指示被英文工具輸出帶跑);驗證=真生成一回合目測回覆語言(L4 輕量)。
 
+- **產品設計模式(2026-10-10,曲面;第五聊天模式 `product`)**:幾何語意全在
+  `cadpy.surface`(動它先 sync-vendored、跑 `test_surface_{spec,geometry}.py`;kernel 事實表
+  `skills/cad/references/surface-modeling.md`);草稿契約 `src/lib/surface/surfaceSchema.js` 與
+  Python `spec.py` **逐欄一致**,共用 `examples/*.json` 互鎖——改任一邊先改另一邊與兩邊測試。
+  產生器嵌 `SURFACE_SPEC` 是 Python 字面值 → 讀回一律 `readEmbeddedSpec`(`readFlatJsonDecl`
+  會 JSON.parse 失敗靜默回 null,open-project 就不會切到 product)。`surfaceUrl` 鏡射
+  `sweepPathsUrl` 全鏈(漏一處跨切版/重整就失效)。快路徑曲面三列文案與 validate.py
+  `_surface_profile` 逐字同步(`pipeline.design.test.js` + `tests/test_validate_surface.py`)。
+  斑馬紋在 cadjs 正本(`setSurfaceAnalysis`)→ 改完手動同步 `viewer/packages/cadjs`。L2
+  `smoke_product_mode.py` 用「無 sessionId POST /api/surface-draft 直接 mint」免 LLM;L3
+  `smoke_product_overlay.py` 注入 PRESENT(帶 surfaceUrl)驗 chips/`__cadSurface`;L4 兩支
+  (`smoke_product_live` 明說免問 / `smoke_product_clarify_live` 必問)互為對照。**目視驗收不可省**:
+  BRepCheck 對自交加厚/漂浮把手照判 valid,渲染三視圖(`tmp/product_batch/*.png` 流程)才看得到。
+  範本 `models/product_*` 重建走 API(surface-draft → surface-build → save-project)。
+  8788 曾被 CAD Viewer(`node src/server.mjs`)佔走,cad-chat 改起 8899 時 `CADCHAT_HMR_PORT=24679`。
+- **曲面草稿工作窗(2026-10-10 二輪)**:狀態核心 `hooks/useDraftEditor.js`——**所有變更先在
+  `stRef` 上算好再 `setSt(值)`**(不用 `setSt(updater)`):同一個 JS task 內的 onStart→onDrag→onEnd
+  (`__cadSurfaceWin.drag` 與真 pointer 都會這樣連發)要讀到最新 present,否則 endDrag 看到的是
+  拖曳前的草稿、以為沒動就不進歷史不保存(抓過)。窗內 `Num/IdList` **只有使用者打過字(edited)
+  才在失焦提交**:聚焦中的欄位若被 3D 拖曳/復原改了外部值,失焦不得把舊文字蓋回去(抓過:Tab 後
+  焦點停在 y 欄,拖曳後點 undo 先 blur 把 y 蓋回 0,再 undo 等於撤了這筆誤寫)。自動保存比對
+  `baseline`(伺服端正規化草稿):保存成功且期間無新編輯才把 present 換成正規化版,否則
+  isDirty 永遠 true 無限保存。JS 曲線 golden 必用 `geom_adaptor().Value(u)`(build123d
+  `position_at(t, PARAMETER)` 是弧長正規化)。拖曳攔截在 canvas **capture 階段** +
+  `stopImmediatePropagation`(OrbitControls 同元素 bubble 監聽就收不到;別去 toggle
+  `controls.enabled`,它的 pointerdown 已先跑)。動這條路 → L1 `src/lib/draft/*.test.js` +
+  L3 `smoke_product_window.py`(30 斷言;H 段用 API patch 模擬對話改草稿製造 409);
+  探針 `__cadSurfaceWin.screenPos(curveId, index)` 給真 pointer 拖曳用。
+
 ## 新需求 → 驗證擴充決策樹
 
 新功能落地時,照改動的「形狀」決定加什麼測試(可複選;由上而下問):
@@ -432,7 +461,10 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
    → 先在產品碼加 dev 鉤**(`window.__cadXxx`,只在 `import.meta.env.DEV`),
    再寫斷言。既有鉤:`__cadDispatch`(注入 store action)、`__cadChrome`(網格/軸
    visible)、`__cadFaceFill.count()/debug()`、`__cadPreview.group()`、`__cadMotion`、
-   `__cadVisual.display()/stateFor(label)`(眼睛三態:材質 opacity/mesh.visible)。
+   `__cadVisual.display()/stateFor(label)`(眼睛三態:材質 opacity/mesh.visible)、
+   `__cadSurface.mode()/continuity()/freeEdges()/cages()/combs()/summary()`(產品設計分析 overlay)、
+   `__cadSurfaceWin.open()/draft()/revision()/handles()/screenPos()/drag()/undo()/redo()/flush()/build()`
+   (曲面草稿工作窗)。
    Playwright 樹節點 locator 用 `has_text` 是**子字串比對**——label 斷言/定位要全等
    就用 `re.compile(r"^label$")`(「pinion」會先鎖到根 ASSEMBLY 列 steering_box_rack_pinion)。
    `inner_text()` 回傳**渲染後**文字:CSS `text-transform: uppercase` 的元素

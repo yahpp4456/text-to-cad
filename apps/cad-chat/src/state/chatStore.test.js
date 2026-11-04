@@ -519,3 +519,22 @@ test("RESTORE:同 session 的綁定回灌;跨 session / 舊快照無欄位 → n
   const legacy = reducer(initialState, { type: "RESTORE", snapshot: { sessionId: "s1", versions: [] } });
   assert.equal(legacy.project, null);
 });
+
+test("canvas.surfaceUrl:PRESENT 帶入、切版帶回該版、無曲面版歸 null;SET_SURFACE_DRAFT 進 state 並經 RESTORE 回灌", () => {
+  let s = reducer(initialState, { type: "PRESENT", glbUrl: "/m.glb", name: "m", code: "m", ver: "v1", surfaceUrl: "/m.surface.json" });
+  assert.equal(s.canvas.surfaceUrl, "/m.surface.json");
+  assert.equal(reducer(s, { type: "PRESENT", glbUrl: "/g.glb", name: "g", code: "g", ver: "v2" }).canvas.surfaceUrl, null);
+  let s2 = reducer(initialState, { type: "ADD_VERSION", version: { id: "v1", name: "m", glbUrl: "/m.glb", surfaceUrl: "/m.surface.json" } });
+  s2 = reducer(s2, { type: "ADD_VERSION", version: { id: "v2", name: "g", glbUrl: "/g.glb" } });
+  assert.equal(reducer(s2, { type: "SELECT_VERSION", id: "v1" }).canvas.surfaceUrl, "/m.surface.json");
+  assert.equal(reducer(s2, { type: "SELECT_VERSION", id: "v2" }).canvas.surfaceUrl, null);
+  assert.equal(initialState.surfaceDraft, null);
+  const draft = { name: "m", revision: 2, draft: { schemaVersion: 1, curves: [] }, source: "ai" };
+  const s3 = reducer(initialState, { type: "SET_SURFACE_DRAFT", surfaceDraft: draft });
+  assert.deepEqual(s3.surfaceDraft, draft);
+  assert.equal(reducer(s3, { type: "SET_SURFACE_DRAFT", surfaceDraft: null }).surfaceDraft, null);
+  const restored = reducer(initialState, { type: "RESTORE", snapshot: { sessionId: "s1", mode: "product", surfaceDraft: draft } });
+  assert.deepEqual(restored.surfaceDraft, draft);
+  assert.equal(restored.mode, "product");
+  assert.equal(reducer(initialState, { type: "RESTORE", snapshot: { sessionId: "s1", surfaceDraft: { bogus: 1 } } }).surfaceDraft, null);
+});

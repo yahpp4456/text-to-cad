@@ -277,6 +277,71 @@ def _run_motion_sweep(named, motion):
             "note": f"全程無穿透(掃 {stat})"}
 
 
+# ---------------------------------------------------------------------------
+# 產品設計(cadpy.surface)剖面。設計殼(加厚前)的連續性由 SurfaceBuilder 的程序內 registry
+# (gen_step 剛跑完,零重算)取得;開放邊看最終形狀。回 None = 非曲面產生器。
+# ---------------------------------------------------------------------------
+_SURF_VALID_LABEL = "有效幾何 (BRepCheck)"
+_SURF_FREE_LABEL = "開放邊 free-edges"
+_SURF_CONT_LABEL = "邊連續性 continuity"
+
+
+def _surface_profile(gen_module, payload, named, motion_only):
+    raw = getattr(gen_module, "SURFACE_SPEC", None)
+    if not isinstance(raw, dict):
+        return None
+    from cadpy.geometry_checks import is_valid_solid
+    from cadpy.surface import analysis as A
+    from cadpy.surface import design_rows, last_build, normalize_spec
+
+    checks = []
+    try:
+        spec = normalize_spec(raw)
+    except Exception as exc:  # noqa: BLE001
+        return [{"id": "valid_shape", "label": _SURF_VALID_LABEL, "ok": False,
+                 "note": f"曲面草稿無效: {exc}"}]
+    if motion_only:
+        checks.append({"id": "valid_shape", "label": _SURF_VALID_LABEL, "ok": True, "skipped": True,
+                       "note": "設計模式:略過驗證(未驗證)"})
+    else:
+        try:
+            ok = bool(is_valid_solid(payload))
+            note = "BRepCheck valid" if ok else "無效"
+        except Exception as exc:  # noqa: BLE001
+            ok, note = False, f"檢查失敗: {exc}"
+        checks.append({"id": "valid_shape", "label": _SURF_VALID_LABEL, "ok": ok, "note": note})
+    try:
+        n_free = len(A.free_edges(payload, polyline_points=2))
+    except Exception:  # noqa: BLE001
+        n_free = 0
+    solid = spec["result"] != "shell"
+    checks.append({
+        "id": "free_edges", "label": _SURF_FREE_LABEL,
+        "ok": (n_free == 0) if solid else True,
+        "note": ("0 條開放邊" if n_free == 0 else f"{n_free} 條開放邊(result=solid 需 0)") if solid
+                else f"{n_free} 條開放邊(開放殼允許)",
+    })
+    build = last_build()
+    try:
+        rows = design_rows(build)[0] if build else A.edge_continuity(payload)
+        summary = A.summarize(rows, [], spec["analysis"])
+        g = f"G2 {summary['g2']} / G1 {summary['g1']} / G0 {summary['g0']}"
+        note = (f"{g} 條,最低要求 {summary['minContinuity']}" if summary["ok"]
+                else f"{summary['violations']} 條內邊低於 {summary['minContinuity']}:{g}")
+        checks.append({"id": "continuity", "label": _SURF_CONT_LABEL, "ok": bool(summary["ok"]), "note": note})
+    except Exception as exc:  # noqa: BLE001
+        checks.append({"id": "continuity", "label": _SURF_CONT_LABEL, "ok": False, "note": f"檢查失敗: {exc}"})
+    checks.append({"id": "self_intersection", "label": "自交 self-intersection", "ok": True, "skipped": True,
+                   "note": "未支援獨立檢查"})
+    checks.append({"id": "interference", "label": "零件干涉 interference", "ok": True, "skipped": True,
+                   "note": "設計模式:略過驗證(未驗證)" if len(named) >= 2 else "單一零件,無需檢查"})
+    checks.append({"id": "motion_sweep", "label": _MOTION_LABEL, "ok": True, "skipped": True,
+                   "note": "未提供運動學"})
+    checks.append({"id": "wall_thickness", "label": "壁厚 wall-thickness", "ok": True, "skipped": True,
+                   "note": "pipeline 未支援"})
+    return checks
+
+
 def main() -> int:
     args = sys.argv[1:]
     motion_only = "--motion-only" in args  # 設計模式:跳過貴檢查,只解析 MOTION 供播放
@@ -306,121 +371,128 @@ def main() -> int:
 
     checks = []
 
-    # 1) 有效實體 (BRepCheck) — watertight / valid solid 的可信替代
-    if motion_only:
-        checks.append({
-            "id": "valid_solid",
-            "label": "封閉性 / 有效實體 (watertight)",
-            "ok": True,
-            "skipped": True,
-            "note": "設計模式:略過驗證(未驗證)",
-        })
+    # 產品設計(曲面)剖面:產生器嵌 SURFACE_SPEC → 有效幾何/開放邊/連續性(文案與
+    # pipeline.surfaceChecksFromMeta 逐字同步;MOTION/干涉對單一曲面件無意義,照舊 skipped)。
+    surface_checks = _surface_profile(gen_module, payload, named, motion_only)
+    motion = None
+    if surface_checks is not None:
+        checks = surface_checks
     else:
-        try:
-            verdicts = [(n, is_valid_solid(s)) for n, s in named]
-            bad = [n for n, ok in verdicts if not ok]
-            ok = len(bad) == 0
-            note = "BRepCheck valid" if ok else "無效: " + ", ".join(bad)
-        except Exception as exc:  # noqa: BLE001
-            ok, note = False, f"檢查失敗: {exc}"
-        checks.append({
-            "id": "valid_solid",
-            "label": "封閉性 / 有效實體 (watertight)",
-            "ok": ok,
-            "note": note,
-        })
-
-    # 2) 自交 — 無獨立檢查;BRepCheck 已涵蓋基本有效性(誠實標 skipped)
-    checks.append({
-        "id": "self_intersection",
-        "label": "自交 self-intersection",
-        "ok": True,
-        "skipped": True,
-        "note": "未支援獨立檢查",
-    })
-
-    # 3) 零件干涉 — 只在多件組合時有意義。尊重產生器宣告的 INTENDED_CONTACT
-    # (與其 check_geometry gate 同一份 allow-list),但把 allowed 對數報出來,
-    # 不靜默(L-5:黏方塊白名單必須可見)。
-    if motion_only:
-        checks.append({
-            "id": "interference",
-            "label": "零件干涉 interference",
-            "ok": True,
-            "skipped": True,
-            "note": "設計模式:略過驗證(未驗證)",
-        })
-    elif len(named) >= 2:
-        try:
-            allow = getattr(gen_module, "INTENDED_CONTACT", ()) or ()
-            report = enumerate_interferences(payload, allow=allow)
-            n_over = len(report.overlaps)
-            n_allowed = len(report.allowed)
-            ok = n_over == 0
-            note = "0 undeclared overlaps" if ok else f"{n_over} 處未宣告干涉"
-            if n_allowed:
-                note += f" · {n_allowed} 對宣告接觸(allowed)"
+        # 1) 有效實體 (BRepCheck) — watertight / valid solid 的可信替代
+        if motion_only:
             checks.append({
-                "id": "interference",
-                "label": "零件干涉 interference",
+                "id": "valid_solid",
+                "label": "封閉性 / 有效實體 (watertight)",
+                "ok": True,
+                "skipped": True,
+                "note": "設計模式:略過驗證(未驗證)",
+            })
+        else:
+            try:
+                verdicts = [(n, is_valid_solid(s)) for n, s in named]
+                bad = [n for n, ok in verdicts if not ok]
+                ok = len(bad) == 0
+                note = "BRepCheck valid" if ok else "無效: " + ", ".join(bad)
+            except Exception as exc:  # noqa: BLE001
+                ok, note = False, f"檢查失敗: {exc}"
+            checks.append({
+                "id": "valid_solid",
+                "label": "封閉性 / 有效實體 (watertight)",
                 "ok": ok,
                 "note": note,
             })
-        except Exception as exc:  # noqa: BLE001
+
+        # 2) 自交 — 無獨立檢查;BRepCheck 已涵蓋基本有效性(誠實標 skipped)
+        checks.append({
+            "id": "self_intersection",
+            "label": "自交 self-intersection",
+            "ok": True,
+            "skipped": True,
+            "note": "未支援獨立檢查",
+        })
+
+        # 3) 零件干涉 — 只在多件組合時有意義。尊重產生器宣告的 INTENDED_CONTACT
+        # (與其 check_geometry gate 同一份 allow-list),但把 allowed 對數報出來,
+        # 不靜默(L-5:黏方塊白名單必須可見)。
+        if motion_only:
             checks.append({
                 "id": "interference",
                 "label": "零件干涉 interference",
-                "ok": False,
-                "note": f"檢查失敗: {exc}",
+                "ok": True,
+                "skipped": True,
+                "note": "設計模式:略過驗證(未驗證)",
             })
-    else:
-        checks.append({
-            "id": "interference",
-            "label": "零件干涉 interference",
-            "ok": True,
-            "skipped": True,
-            "note": "單一零件,無需檢查",
-        })
+        elif len(named) >= 2:
+            try:
+                allow = getattr(gen_module, "INTENDED_CONTACT", ()) or ()
+                report = enumerate_interferences(payload, allow=allow)
+                n_over = len(report.overlaps)
+                n_allowed = len(report.allowed)
+                ok = n_over == 0
+                note = "0 undeclared overlaps" if ok else f"{n_over} 處未宣告干涉"
+                if n_allowed:
+                    note += f" · {n_allowed} 對宣告接觸(allowed)"
+                checks.append({
+                    "id": "interference",
+                    "label": "零件干涉 interference",
+                    "ok": ok,
+                    "note": note,
+                })
+            except Exception as exc:  # noqa: BLE001
+                checks.append({
+                    "id": "interference",
+                    "label": "零件干涉 interference",
+                    "ok": False,
+                    "note": f"檢查失敗: {exc}",
+                })
+        else:
+            checks.append({
+                "id": "interference",
+                "label": "零件干涉 interference",
+                "ok": True,
+                "skipped": True,
+                "note": "單一零件,無需檢查",
+            })
 
-    # 4) 運動掃掠干涉 — 產生器宣告 MOTION 時真跑 cadpy sweep;未宣告誠實跳過
-    motion, motion_errs = _read_motion(gen_module, named)
-    if motion_errs:
-        # 宣告已知錯誤 = 真 fail(兩條路徑一致;--motion-only 也不偽裝成 skipped,
-        # 否則 agent 的「非 skipped 且 fail 才自修」永遠不觸發)。note 前綴與
-        # pipeline.designChecksFromMeta / lessons signature 同字。
-        checks.append({
-            "id": "motion_sweep",
-            "label": _MOTION_LABEL,
-            "ok": False,
-            "note": "MOTION 宣告無效: " + "; ".join(motion_errs[: 2 if motion_only else 3]),
-        })
-    elif motion is None:
-        checks.append({
-            "id": "motion_sweep",
-            "label": _MOTION_LABEL,
-            "ok": True,
-            "skipped": True,
-            "note": "未提供運動學",
-        })
-    elif motion_only:
-        checks.append({
-            "id": "motion_sweep",
-            "label": _MOTION_LABEL,
-            "ok": True,
-            "skipped": True,
-            "note": "設計模式:略過掃掠(未驗證)",
-        })
-    else:
-        checks.append(_run_motion_sweep(named, motion))
+        # 4) 運動掃掠干涉 — 產生器宣告 MOTION 時真跑 cadpy sweep;未宣告誠實跳過
+        motion, motion_errs = _read_motion(gen_module, named)
+        if motion_errs:
+            # 宣告已知錯誤 = 真 fail(兩條路徑一致;--motion-only 也不偽裝成 skipped,
+            # 否則 agent 的「非 skipped 且 fail 才自修」永遠不觸發)。note 前綴與
+            # pipeline.designChecksFromMeta / lessons signature 同字。
+            checks.append({
+                "id": "motion_sweep",
+                "label": _MOTION_LABEL,
+                "ok": False,
+                "note": "MOTION 宣告無效: " + "; ".join(motion_errs[: 2 if motion_only else 3]),
+            })
+        elif motion is None:
+            checks.append({
+                "id": "motion_sweep",
+                "label": _MOTION_LABEL,
+                "ok": True,
+                "skipped": True,
+                "note": "未提供運動學",
+            })
+        elif motion_only:
+            checks.append({
+                "id": "motion_sweep",
+                "label": _MOTION_LABEL,
+                "ok": True,
+                "skipped": True,
+                "note": "設計模式:略過掃掠(未驗證)",
+            })
+        else:
+            checks.append(_run_motion_sweep(named, motion))
 
-    # 5) 壁厚 — pipeline 目前無此檢查
-    checks.append({
-        "id": "wall_thickness",
-        "label": "壁厚 wall-thickness",
-        "ok": True,
-        "skipped": True,
-        "note": "pipeline 未支援",
-    })
+        # 5) 壁厚 — pipeline 目前無此檢查
+        checks.append({
+            "id": "wall_thickness",
+            "label": "壁厚 wall-thickness",
+            "ok": True,
+            "skipped": True,
+            "note": "pipeline 未支援",
+        })
 
     overall = all(c["ok"] for c in checks if not c.get("skipped"))
     # parts: 權威 label 清單(真跑 gen_step 後),伺服端據此寫組合件 manifest

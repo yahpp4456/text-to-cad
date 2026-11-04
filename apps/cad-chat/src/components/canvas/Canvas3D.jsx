@@ -14,14 +14,19 @@ import {
   orientationAxesChanged,
   orientationAxesFromQuaternion,
 } from "../../lib/viewOrientations.js";
-import { STAGES } from "../StageStepper.jsx";
+import { STAGES, STAGES_PRODUCT } from "../StageStepper.jsx";
+import { buildSurfaceOverlay } from "../../lib/surfaceOverlay.js";
 import ClarifyWizard from "./ClarifyWizard.jsx";
 import CableSpecWindow from "./CableSpecWindow.jsx";
 import LessonOfferPanel from "./LessonOfferPanel.jsx";
 import PropertiesDrawer from "./PropertiesDrawer.jsx";
 import SpecPanel from "./SpecPanel.jsx";
 import SweepWindow from "./SweepWindow.jsx";
+import SurfaceWindow from "./SurfaceWindow.jsx";
 import ViewCube from "./ViewCube.jsx";
+import { useDraftEditor } from "../../hooks/useDraftEditor.js";
+import { buildDraftView } from "../../lib/draft/draftView.js";
+import { apiUrl } from "../../lib/apiBase.js";
 
 // 面標記「預設顯示」上限:每件 6 個、整體 12(避免菱形海)。這只是預設——
 // 候選面不設限,使用者可從「◇ 面標記」面板切全部/隱藏/逐面勾選。
@@ -100,6 +105,7 @@ function spreadPick(nodes, k) {
 
 export default function Canvas3D({
   canvas,
+  chatMode = "design",
   propsOpen,
   selNode,
   dispatch,
@@ -110,6 +116,7 @@ export default function Canvas3D({
   live,
   pending,
   cable, // 無塵電纜規格表單:{form, busy, onValue, onPatch, onClose, onGenerate, onAskAi}
+  surface, // 產品設計草稿:{draft, sessionId, onSession, onDraft, onBuilt}(非 product 為 null)
   stageIdx,
   toolFeed,
   clarify,
@@ -218,6 +225,86 @@ export default function Canvas3D({
   sweepWinOpenRef.current = sweepWinOpen;
   const sweepDataRef = useRef(null);
   sweepDataRef.current = sweepData;
+  // 曲面草稿工作窗(產品設計):編輯器狀態放這層(3D 拖曳把手要讀 present/selected、
+  // 視圖重建要回灌把手),SurfaceWindow 只是它的視圖。locked=對話回合/同步重建中
+  //(伺服端 session busy;自動保存會延後重試)。hook 永遠呼叫,非 product 時零成本。
+  const draftLocked = !!running || !!pending;
+  const editor = useDraftEditor({
+    surfaceDraft: surface?.draft ?? null,
+    sessionId: surface?.sessionId ?? null,
+    locked: draftLocked,
+    onSession: surface?.onSession,
+    onDraft: surface?.onDraft,
+    onBuilt: surface?.onBuilt,
+  });
+  const editorRef = useRef(editor);
+  editorRef.current = editor;
+  const [surfWinOpen, setSurfWinOpen] = useState(false);
+  const surfWinOpenRef = useRef(false);
+  surfWinOpenRef.current = surfWinOpen;
+  const surfaceRef = useRef(null);
+  surfaceRef.current = surface;
+  // 對話給了新草稿(source ai、revision 變)→ 自動開窗;草稿沒了(捨棄/新對話)→ 關窗
+  const lastAiRevRef = useRef(null);
+  useEffect(() => {
+    const sd = surface?.draft;
+    if (!sd || sd.source !== "ai") return;
+    const key = `${sd.name}:${sd.revision}`;
+    if (lastAiRevRef.current === key) return;
+    lastAiRevRef.current = key;
+    setSurfWinOpen(true);
+  }, [surface?.draft]);
+  useEffect(() => {
+    if (!editor.present) setSurfWinOpen(false);
+  }, [editor.present]);
+  // 換版(生成/回退/開專案)時對齊伺服端工作草稿:open-project/revert 的 JSON 路徑不帶草稿,
+  // 回退還會 bump revision(resetDraftFromGenerator)→ 這裡 fetch 後交給 editor 比 revision 接管。
+  useEffect(() => {
+    const sid = surface?.sessionId;
+    if (chatMode !== "product" || !sid || !canvas.ver || !canvas.name) return undefined;
+    let live = true;
+    fetch(apiUrl(`/api/surface-draft?sessionId=${encodeURIComponent(sid)}&name=${encodeURIComponent(canvas.name)}`))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!live || !j?.ok || !j.draft) return;
+        const cur = surfaceRef.current?.draft;
+        if (cur && cur.name === j.name && cur.revision === j.revision) return;
+        surfaceRef.current?.onDraft?.({ name: j.name, revision: j.revision, draft: j.draft, source: j.source === "user" ? "user" : "ai" });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [chatMode, surface?.sessionId, canvas.ver, canvas.name]);
+  // 3D 拖曳把手 → 編輯器(viewport 經 ref 讀最新 handler;enabled 只在窗開且未鎖定)
+  const draftDragRef = useRef({});
+  draftDragRef.current = {
+    enabled: surfWinOpen && !draftLocked && !!editor.present && view !== "flat",
+    snap: 0,
+    onStart: (h) => {
+      editorRef.current.select(h.curveId);
+      editorRef.current.beginDrag();
+    },
+    onDrag: (h, p) => editorRef.current.dragTo(h.curveId, h.index, p),
+    onEnd: () => editorRef.current.endDrag(),
+  };
+  const draftView = useMemo(
+    () => (surfWinOpen && editor.present && view !== "flat" ? buildDraftView(editor.present, editor.selected) : null),
+    [surfWinOpen, editor.present, editor.selected, view],
+  );
+  const draftViewRef = useRef(null);
+  draftViewRef.current = draftView;
+  useEffect(() => {
+    apiRef.current.setDraftHandles?.(draftView);
+  }, [draftView]);
+  const toggleSurfWin = () => {
+    if (surfWinOpen) {
+      setSurfWinOpen(false);
+      return;
+    }
+    if (!editor.present) editor.newDraft(canvas.name || "product");
+    setSurfWinOpen(true);
+  };
   useEffect(() => {
     if (!canvas.sweepPathsUrl) {
       setSweepData(null);
@@ -234,6 +321,35 @@ export default function Canvas3D({
       live = false;
     };
   }, [canvas.sweepPathsUrl]);
+  // 曲面分析資料(產品設計):換版時 fetch 該版 sidecar(連續性/開放邊/籠/梳),useMemo 轉成
+  // overlay 線段(viewport 以參照相等決定是否重建場景)。chips:斑馬紋(shader)+ 四個 overlay 開關。
+  const [surfaceData, setSurfaceData] = useState(null);
+  const surfaceOverlay = useMemo(() => buildSurfaceOverlay(surfaceData), [surfaceData]);
+  const [zebraOn, setZebraOn] = useState(false);
+  const [contOn, setContOn] = useState(true);
+  const [freeOn, setFreeOn] = useState(true);
+  const [cageOn, setCageOn] = useState(false);
+  const [combOn, setCombOn] = useState(false);
+  const zebraOnRef = useRef(false);
+  zebraOnRef.current = zebraOn;
+  const surfaceDataRef = useRef(null);
+  surfaceDataRef.current = surfaceData;
+  useEffect(() => {
+    if (!canvas.surfaceUrl) {
+      setSurfaceData(null);
+      return undefined;
+    }
+    let live = true;
+    fetch(canvas.surfaceUrl)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (live) setSurfaceData(j && j.schemaVersion === 1 && Array.isArray(j.edges) ? j : null);
+      })
+      .catch(() => live && setSurfaceData(null));
+    return () => {
+      live = false;
+    };
+  }, [canvas.surfaceUrl]);
   // 換版重置回摺疊(避免上一版停在攤平、新版無 flatGlbUrl 時卡住)
   useEffect(() => {
     setView("folded");
@@ -316,6 +432,9 @@ export default function Canvas3D({
     bendLines: view === "flat" ? flatLines : null,
     // 掃出路徑中心虛線(攤平態不疊——路徑是 3D 摺疊幾何的語境)
     sweepPaths: view !== "flat" ? sweepData?.paths || null : null,
+    // 曲面分析 overlay(產品設計 sidecar;攤平態不疊)
+    surfaceOverlay: view !== "flat" ? surfaceOverlay : null,
+    draftDragRef,
     onStatus: (status) => dispatch({ type: "SET_CANVAS_STATUS", status }),
     onReady: ({
       camera,
@@ -334,6 +453,9 @@ export default function Canvas3D({
       setAxes,
       setBendLines,
       setSweepPaths,
+      setSurfaceOverlay,
+      setAnalysis,
+      setDraftHandles,
       setFaceHighlights,
       setMeasure,
       clearMeasure,
@@ -361,6 +483,9 @@ export default function Canvas3D({
         setAxes,
         setBendLines,
         setSweepPaths,
+        setSurfaceOverlay,
+        setAnalysis,
+        setDraftHandles,
         setFaceHighlights,
         setMeasure,
         clearMeasure,
@@ -369,6 +494,15 @@ export default function Canvas3D({
         chrome,
       };
       playerRef.current = model ? createMotionPlayer(THREE, model, runtime) : null;
+      // 曲面分析 chips 跟著新模型回到預設:連續性/開放邊開、籠/梳關、斑馬紋沿用使用者上次的開關
+      //(換版比較前後接縫時常要一直開著)。
+      setContOn(true);
+      setFreeOn(true);
+      setCageOn(false);
+      setCombOn(false);
+      setSurfaceOverlay?.({ continuity: true, freeEdges: true, cages: false, combs: false });
+      if (zebraOnRef.current) setAnalysis?.({ mode: "zebra" });
+      setDraftHandles?.(draftViewRef.current); // 換版重建場景後回灌草稿 live 層
       selRef.current = [];
       playingRef.current = false;
       setSelParts([]);
@@ -485,6 +619,63 @@ export default function Canvas3D({
       window.__cadSweepWin = {
         open: () => sweepWinOpenRef.current,
         view: () => sweepDataRef.current?.view || null,
+      };
+      // 曲面分析探針(產品設計;smoke 用):mode=斑馬紋開關、各 overlay {visible,count}、sidecar summary
+      const grp = (key) => {
+        const g = apiRef.current.chrome?.[key];
+        return g ? { visible: g.visible, count: g.children.length } : null;
+      };
+      window.__cadSurface = {
+        mode: () => (zebraOnRef.current ? "zebra" : "none"),
+        continuity: () => grp("continuity"),
+        freeEdges: () => grp("freeEdges"),
+        cages: () => grp("cages"),
+        combs: () => grp("combs"),
+        summary: () => surfaceDataRef.current?.summary || null,
+      };
+      // 曲面草稿工作窗探針(smoke 用;全讀 ref):狀態讀取 + 模擬 3D 拖曳(走與 pointer 相同的
+      // onStart/onDrag/onEnd 路,免算像素命中把手球)+ flush/build/undo/redo
+      window.__cadSurfaceWin = {
+        open: () => surfWinOpenRef.current,
+        setOpen: (v) => setSurfWinOpen(!!v),
+        draft: () => editorRef.current.present,
+        revision: () => editorRef.current.revision,
+        selected: () => editorRef.current.selected,
+        errors: () => editorRef.current.errors,
+        serverErrors: () => editorRef.current.serverErrors,
+        dirty: () => editorRef.current.dirty,
+        saving: () => editorRef.current.saving,
+        building: () => editorRef.current.building,
+        history: () => editorRef.current.historyDepth,
+        notice: () => editorRef.current.notice,
+        handles: () => {
+          const g = apiRef.current.chrome?.draft;
+          return g ? { visible: g.visible, count: g.children.length } : null;
+        },
+        // 把手在畫布上的像素座標(真 pointer 拖曳煙測用):世界點 → NDC → canvas client rect
+        screenPos: (curveId, index) => {
+          const cam = apiRef.current.camera;
+          const canvasEl = mountRef.current?.querySelector("canvas.cad-canvas");
+          const h = (draftViewRef.current?.handles || []).find((x) => x.curveId === curveId && x.index === index);
+          if (!cam || !canvasEl || !h) return null;
+          const v = new THREE.Vector3(h.p[0], h.p[1], h.p[2]).project(cam);
+          const r = canvasEl.getBoundingClientRect();
+          return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height, p: h.p };
+        },
+        select: (id) => editorRef.current.select(id),
+        drag: (curveId, index, p) => {
+          const h = { curveId, index, p: [...p] };
+          const dd = draftDragRef.current;
+          if (!dd.enabled) return false;
+          dd.onStart?.(h);
+          dd.onDrag?.(h, p);
+          dd.onEnd?.(h);
+          return true;
+        },
+        flush: () => editorRef.current.flush(),
+        build: () => editorRef.current.build(),
+        undo: () => editorRef.current.undo(),
+        redo: () => editorRef.current.redo(),
       };
       window.__cadFaceFill = {
         count: () => apiRef.current.faceFillCount?.() ?? 0,
@@ -619,6 +810,16 @@ export default function Canvas3D({
     const next = !sweepOn;
     setSweepOn(next);
     apiRef.current.setSweepPaths?.(next);
+  };
+  const toggleZebra = () => {
+    const next = !zebraOn;
+    setZebraOn(next);
+    apiRef.current.setAnalysis?.({ mode: next ? "zebra" : "none" });
+  };
+  const toggleSurfaceLayer = (key, cur, set) => {
+    const next = !cur;
+    set(next);
+    apiRef.current.setSurfaceOverlay?.({ [key]: next });
   };
   const stopAutoOrbit = useCallback(() => {
     setOrbit(false);
@@ -869,7 +1070,7 @@ export default function Canvas3D({
           <div className="canvas-progress">
             <span className="prog-eyebrow">GENERATING · 產圖中</span>
             <div className="prog-stages">
-              {STAGES.map(([cn, en], i) => {
+              {(chatMode === "product" ? STAGES_PRODUCT : STAGES).map(([cn, en], i) => {
                 const st = i < stageIdx ? "done" : i === stageIdx ? "cur" : "pending";
                 return (
                   <div className="prog-stage" data-state={st} key={en}>
@@ -1068,6 +1269,25 @@ export default function Canvas3D({
               <a className="tool-chip sweep-toggle" data-on={sweepOn} onClick={toggleSweep}>
                 ⌒ 路徑
               </a>
+            )}
+            {surfaceOverlay && view !== "flat" && (
+              <>
+                <a className="tool-chip surface-toggle" data-key="zebra" data-on={zebraOn} onClick={toggleZebra} title="斑馬紋:條紋折=G0、有角=G1、順滑=G2">
+                  ◧ 斑馬
+                </a>
+                <a className="tool-chip surface-toggle" data-key="continuity" data-on={contOn} onClick={() => toggleSurfaceLayer("continuity", contOn, setContOn)} title="邊連續性:紅 G0 / 黃 G1 / 綠 G2 / 灰 端蓋銳邊">
+                  ⌇ 連續性
+                </a>
+                <a className="tool-chip surface-toggle" data-key="freeEdges" data-on={freeOn} onClick={() => toggleSurfaceLayer("freeEdges", freeOn, setFreeOn)} title="開放邊(殼的邊界)">
+                  ◌ 開放邊
+                </a>
+                <a className="tool-chip surface-toggle" data-key="cages" data-on={cageOn} onClick={() => toggleSurfaceLayer("cages", cageOn, setCageOn)} title="控制點籠(B-spline 極點網)">
+                  ⊡ 控制點
+                </a>
+                <a className="tool-chip surface-toggle" data-key="combs" data-on={combOn} onClick={() => toggleSurfaceLayer("combs", combOn, setCombOn)} title="曲率梳(截面曲線曲率分布)">
+                  ⫞ 曲率梳
+                </a>
+              </>
             )}
             <a
               className="tool-chip marker-toggle"
@@ -1269,6 +1489,18 @@ export default function Canvas3D({
         </>
       )}
 
+      {/* 曲面草稿工作窗(產品設計):左上「✎ 草稿」開關不綁 GLB(草稿可先於第一次生成存在;
+          無草稿時按下=開空白草稿),窗停靠左側、右側留給 3D 拖曳把手;clarify 待答時讓位。 */}
+      {chatMode === "product" && view !== "flat" && !clarify && (
+        <div className="sweep-switch draft-switch" role="group" aria-label="曲面草稿工作窗">
+          <a className="fold-seg" data-on={surfWinOpen} data-has-draft={!!editor.present} onClick={toggleSurfWin}>
+            ✎ 草稿{editor.present ? "" : " +"}
+          </a>
+        </div>
+      )}
+      {chatMode === "product" && surfWinOpen && editor.present && view !== "flat" && !clarify && (
+        <SurfaceWindow editor={editor} disabled={draftLocked} onClose={() => setSurfWinOpen(false)} />
+      )}
       {/* 掃出工作窗:浮動雙欄(左路徑+參數/右輪廓唯讀),clarify 待答時讓位。
           params 由 App 傳入(與底部 ParamsBar 共享同一份 state/dirty)。 */}
       {sweepWinOpen && sweepData?.view && view !== "flat" && !clarify && params && (

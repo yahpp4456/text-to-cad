@@ -34,6 +34,9 @@ ORDER = [
     "smoke_flat_toggle.py",
     "smoke_sweep_overlay.py",
     "smoke_sweep_window.py",
+    "smoke_product_mode.py",  # 產品設計 API 段(草稿端點/零 LLM 成形/sidecar/負案例)
+    "smoke_product_overlay.py",  # 產品設計分析 overlay(chips/__cadSurface/斑馬紋)
+    "smoke_product_window.py",  # 曲面草稿工作窗(特徵樹/數值/3D 拖曳/復原/自動保存 409/生成/捨棄)
     "smoke_library.py",
     "smoke_library_mode.py",
     "smoke_cable_mode.py",
@@ -61,6 +64,8 @@ LLM_GATED = [
     "smoke_sweep_live.py",
     "smoke_library_live.py",
     "smoke_wording_live.py",
+    "smoke_product_live.py",
+    "smoke_product_clarify_live.py",
 ]
 
 if not server_alive():

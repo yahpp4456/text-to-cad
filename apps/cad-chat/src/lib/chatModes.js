@@ -4,10 +4,12 @@
 // isDesignLike:cable(無塵電纜)是設計模式的特化——完整設計鏈(PARAMS 滑桿/
 // 版本/匯出/精算)全開;所有「只有設計模式才有」的判斷一律用它,不要
 // 逐處硬寫 === "design"。
-export const MODES = ["design", "sketch", "library", "cable"];
+// product(產品設計)= Alias 式曲面建模,獨立入口(2026-10-10);與 design 同為設計鏈(isDesignLike)。
+export const MODES = ["design", "sketch", "library", "cable", "product"];
 // 模式的中文名(單一真相源:切換器分段、錯誤訊息、確認框都引用它)。
 export const MODE_LABELS = {
-  design: "設計",
+  design: "機構設計",
+  product: "產品設計",
   sketch: "草模",
   cable: "無塵電纜",
   library: "零件庫",
@@ -15,10 +17,10 @@ export const MODE_LABELS = {
 export const modeLabel = (v) => MODE_LABELS[v] || String(v || "");
 export const isMode = (v) => MODES.includes(v);
 export const normalizeMode = (v) => (isMode(v) ? v : "design");
-export const isDesignLike = (v) => v === "design" || v === "cable";
+export const isDesignLike = (v) => v === "design" || v === "cable" || v === "product";
 // DEMO(展示身分)不開放的模式:展示只開「設計」一條線(2026-10-09 起;原本只藏
 // 無塵電纜)。草模/零件庫/無塵電纜對 demo 連分頁都不出——前端 ModeSwitch 藏分段、
 // App 校正持久化殘值,後端 chat.mjs 以此拒絕非 design 回合(403 demo_mode_forbidden)。
 // 無塵電纜另有理由:客戶案件專用工作流(範本/案件/工程圖都在 demoGuard BLOCKED 名單)。
-export const DEMO_HIDDEN_MODES = ["sketch", "cable", "library"];
+export const DEMO_HIDDEN_MODES = ["sketch", "cable", "library", "product"];
 export const isDemoAllowedMode = (v) => !DEMO_HIDDEN_MODES.includes(v);

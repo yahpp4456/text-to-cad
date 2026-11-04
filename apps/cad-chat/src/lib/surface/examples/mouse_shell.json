@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "unit": "mm",
+  "revision": 0,
+  "result": "solid",
+  "symmetry": "YZ",
+  "fuse": true,
+  "curves": [
+    {"id": "sec_front", "kind": "spline", "points": [[30, 0, 0], [26, 0, 8], [14, 0, 15], [0, 0, 17]], "tangents": {"end": [-1, 0, 0]}, "plane": "XZ"},
+    {"id": "sec_mid", "kind": "spline", "points": [[36, 50, 0], [32, 50, 12], [18, 50, 24], [0, 50, 27]], "tangents": {"end": [-1, 0, 0]}, "plane": "XZ"},
+    {"id": "sec_back", "kind": "spline", "points": [[28, 110, 0], [24, 110, 9], [12, 110, 16], [0, 110, 18]], "tangents": {"end": [-1, 0, 0]}, "plane": "XZ"}
+  ],
+  "surfaces": [
+    {"id": "body", "op": "loft", "sections": ["sec_front", "sec_mid", "sec_back"], "ruled": false}
+  ],
+  "ops": [
+    {"op": "sew", "tol": 0.01},
+    {"op": "thicken", "t": 2.0, "dir": "inward"}
+  ],
+  "analysis": {"minContinuity": "G1", "creases": 0, "zebra": true}
+}

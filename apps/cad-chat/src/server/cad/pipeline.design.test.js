@@ -96,6 +96,42 @@ test("designChecksFromMeta:六列全 skipped、文案對齊 validate.py", () => 
   assert.equal(by.facts.note, "設計模式:略過檢查(未驗證)");
 });
 
+// 產品設計(曲面)剖面:文案逐字對齊 validate.py _surface_profile(改一邊必改另一邊)
+test("designChecksFromMeta:meta.surface → 曲面剖面八列(開放邊/連續性出真值,其餘 skipped)", () => {
+  const surface = { result: "solid", summary: { g0: 0, g1: 1, g2: 3, flat: 0, free: 6, finalFree: 0, minContinuity: "G1", creases: 0, violations: 0, ok: true }, edges: [] };
+  const checks = designChecksFromMeta({ ...META, parts: ["p"], partCount: 1, motion: null, surface });
+  const by = Object.fromEntries(checks.map((c) => [c.id, c]));
+  assert.deepEqual(checks.map((c) => c.id), ["valid_shape", "free_edges", "continuity", "self_intersection", "interference", "motion_sweep", "wall_thickness", "facts"]);
+  assert.equal(by.valid_shape.label, "有效幾何 (BRepCheck)");
+  assert.equal(by.valid_shape.skipped, true);
+  assert.equal(by.valid_shape.note, "設計模式:略過驗證(未驗證)");
+  assert.equal(by.free_edges.label, "開放邊 free-edges");
+  assert.equal(by.free_edges.ok, true);
+  assert.equal(by.free_edges.skipped, undefined);
+  assert.equal(by.free_edges.note, "0 條開放邊");
+  assert.equal(by.continuity.label, "邊連續性 continuity");
+  assert.equal(by.continuity.ok, true);
+  assert.equal(by.continuity.note, "G2 3 / G1 1 / G0 0 條,最低要求 G1");
+  assert.equal(by.interference.note, "單一零件,無需檢查");
+  assert.equal(by.motion_sweep.note, "未提供運動學");
+  assert.equal(by.facts.note, "設計模式:略過檢查(未驗證)");
+  // 真 fail 分支:solid 仍有開放邊、連續性未達
+  const bad = designChecksFromMeta({ ...META, partCount: 1, surface: { result: "solid", summary: { ...surface.summary, finalFree: 2, ok: false, violations: 2, g0: 2, minContinuity: "G2" } } });
+  const b = Object.fromEntries(bad.map((c) => [c.id, c]));
+  assert.equal(b.free_edges.ok, false);
+  assert.equal(b.free_edges.note, "2 條開放邊(result=solid 需 0)");
+  assert.equal(b.continuity.ok, false);
+  assert.equal(b.continuity.note, "2 條內邊低於 G2:G2 3 / G1 1 / G0 2");
+  // 開放殼:開放邊允許
+  const shell = designChecksFromMeta({ ...META, partCount: 1, surface: { result: "shell", summary: { ...surface.summary, finalFree: 4 } } });
+  assert.equal(Object.fromEntries(shell.map((c) => [c.id, c])).free_edges.note, "4 條開放邊(開放殼允許)");
+  // 收割失敗(無 summary):兩列誠實 skipped
+  const miss = designChecksFromMeta({ ...META, partCount: 1, surface: { error: "x" } });
+  const m = Object.fromEntries(miss.map((c) => [c.id, c]));
+  assert.equal(m.free_edges.skipped, true);
+  assert.equal(m.continuity.note, "分析收割缺失(未驗證)");
+});
+
 test("designChecksFromMeta:單件 / 無 MOTION / MOTION 錯誤三分支", () => {
   const single = designChecksFromMeta({ ...META, parts: ["p"], partCount: 1, motion: null });
   const by1 = Object.fromEntries(single.map((c) => [c.id, c]));

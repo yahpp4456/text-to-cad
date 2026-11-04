@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "unit": "mm",
+  "revision": 0,
+  "result": "solid",
+  "symmetry": null,
+  "fuse": true,
+  "curves": [
+    {"id": "profile", "kind": "spline", "points": [[18, 0, 0], [28, 0, 30], [16, 0, 70], [24, 0, 110]], "plane": "XZ"}
+  ],
+  "surfaces": [
+    {"id": "body", "op": "revolve", "curve": "profile", "axis": {"origin": [0, 0, 0], "dir": [0, 0, 1]}, "angle": 360}
+  ],
+  "ops": [
+    {"op": "sew", "tol": 0.01},
+    {"op": "thicken", "t": 2.0, "dir": "inward"}
+  ],
+  "analysis": {"minContinuity": "G2", "creases": 0, "zebra": true}
+}

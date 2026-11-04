@@ -2690,6 +2690,326 @@
   border-color: var(--part);
   color: var(--part);
 }
+/* ── 曲面草稿工作窗(產品設計):停靠左側(右側留給 3D 拖曳把手),沿用 sweepwin 頭部樣式 ── */
+.draft-switch .fold-seg[data-on="true"] {
+  background: var(--product);
+}
+.surface-window {
+  position: absolute;
+  top: 88px;
+  left: 20px;
+  bottom: 88px;
+  width: 392px;
+  z-index: 9;
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--product);
+  border-radius: 10px;
+  box-shadow: 0 10px 40px rgba(20, 30, 55, 0.18);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+}
+.surface-window[data-building] {
+  opacity: 0.85;
+}
+.surfwin-state {
+  margin-left: auto;
+  margin-right: 10px;
+  font-size: 11px;
+  color: #9aa3b0;
+}
+.surfwin-notice {
+  flex: none;
+  padding: 6px 14px;
+  font-size: 11.5px;
+  color: #8a5a00;
+  background: #fff6df;
+  border-bottom: 1px solid #f1dfae;
+  cursor: pointer;
+}
+.surfwin-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.surfwin-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.surfwin-sechead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.surfwin-eyebrow {
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 10.5px;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+.surfwin-addrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.surfwin-addrow select,
+.surfwin-grid select,
+.surfwin-oprow select,
+.surfwin-controw select {
+  font: inherit;
+  font-size: 11.5px;
+  padding: 2px 4px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--text);
+}
+.surfwin-add {
+  cursor: pointer;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--product);
+  background: #fff;
+  white-space: nowrap;
+}
+.surfwin-add:hover {
+  border-color: var(--product);
+}
+.surfwin-add[data-disabled],
+.surfwin-mini[data-disabled],
+.surfwin-build[data-disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+.surfwin-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.surfwin-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+}
+.surfwin-row:hover {
+  background: #f4f2fb;
+}
+.surfwin-row[data-sel="true"] {
+  background: color-mix(in oklab, var(--product) 14%, #fff);
+}
+.surfwin-oprow {
+  cursor: default;
+  flex-wrap: wrap;
+}
+.surfwin-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--product);
+  flex: none;
+}
+.surfwin-dot[data-role="cut"] {
+  background: #d64848;
+}
+.surfwin-dot[data-role="add"] {
+  background: #34ab86;
+}
+.surfwin-rowid {
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.surfwin-rowmeta {
+  font-size: 11px;
+  color: #9aa3b0;
+  margin-left: auto;
+}
+.surfwin-empty {
+  font-size: 11.5px;
+  color: #9aa3b0;
+  padding: 4px 8px;
+}
+.surfwin-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fbfaff;
+}
+.surfwin-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+.surfwin-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+}
+.surfwin-label {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.surfwin-hint {
+  font-size: 11px;
+  color: #9aa3b0;
+}
+.surfwin-num input {
+  width: 62px;
+  font: inherit;
+  font-size: 11.5px;
+  padding: 2px 4px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--text);
+}
+.surfwin-num input:focus {
+  outline: none;
+  border-color: var(--product);
+}
+.surfwin-vec {
+  display: inline-flex;
+  gap: 3px;
+}
+.surfwin-ids {
+  width: 150px;
+  font: inherit;
+  font-size: 11.5px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+  color: var(--text);
+}
+.surfwin-pts {
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+.surfwin-pts th {
+  font-weight: 600;
+  color: var(--text-dim);
+  text-align: left;
+  padding: 0 2px 2px;
+}
+.surfwin-pts td {
+  padding: 1px 2px;
+}
+.surfwin-pts .surfwin-num input {
+  width: 58px;
+}
+.surfwin-ptidx {
+  color: #9aa3b0;
+  width: 18px;
+}
+.surfwin-ptdel {
+  cursor: pointer;
+  color: #9aa3b0;
+  padding: 0 6px;
+  font-size: 13px;
+}
+.surfwin-ptdel:hover {
+  color: #d64848;
+}
+.surfwin-cont {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+.surfwin-controw {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+}
+.surfwin-contid {
+  font-family: var(--font-mono, monospace);
+  min-width: 44px;
+}
+.surfwin-actions {
+  display: flex;
+  gap: 6px;
+}
+.surfwin-mini {
+  cursor: pointer;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--text);
+  background: #fff;
+  white-space: nowrap;
+}
+.surfwin-mini:hover {
+  border-color: var(--product);
+  color: var(--product);
+}
+.surfwin-del:hover,
+.surfwin-discard[data-arm]:hover {
+  border-color: #d64848;
+  color: #d64848;
+}
+.surfwin-discard[data-arm] {
+  color: #d64848;
+  border-color: #d64848;
+}
+.surfwin-errs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #fdeeee;
+  border: 1px solid #f3c7c7;
+}
+.surfwin-err {
+  font-size: 11px;
+  color: #a83232;
+  font-family: var(--font-mono, monospace);
+}
+.surfwin-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line-soft);
+  background: #fff;
+}
+.surfwin-spacer {
+  flex: 1;
+}
+.surfwin-build {
+  cursor: pointer;
+  padding: 7px 16px;
+  border-radius: 7px;
+  font-family: var(--font-eyebrow);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: #fff;
+  background: var(--product);
+}
 .model-info {
   position: absolute;
   left: 20px;
@@ -3984,6 +4304,9 @@
 }
 .mode-seg[data-on="true"][data-mode="library"] {
   background: var(--part);
+}
+.mode-seg[data-on="true"][data-mode="product"] {
+  background: var(--product);
 }
 .mode-seg[data-on="true"] .mode-cn,
 .mode-seg[data-on="true"] .mode-en {

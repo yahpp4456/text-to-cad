@@ -13,10 +13,10 @@ import { isDemoUser } from "../users.mjs";
 import { scrubPaths } from "../cad/python.mjs";
 import { getLessonsDigest, recordTurnError } from "../lessons.mjs";
 import { persistSession } from "../sessions.mjs";
-import { isDesignLike } from "../../lib/chatModes.js";
 import { buildSystemPrompt } from "./prompt.mjs";
 import { buildCableSystemPrompt } from "./prompt.cable.mjs";
 import { buildLibrarySystemPrompt } from "./prompt.library.mjs";
+import { buildProductSystemPrompt } from "./prompt.product.mjs";
 import { buildSketchSystemPrompt } from "./prompt.sketch.mjs";
 import { PART_BUILDER_AGENT } from "./prompt.orch.mjs";
 import {
@@ -30,6 +30,7 @@ import { STAGE_UNDERSTAND, autoStageMode, nextStage } from "./stages.mjs";
 import { buildCadchatServer } from "./tools.mjs";
 import { LIBRARY_MCP_TOOLS, buildLibraryServer } from "./tools.library.mjs";
 import { SKETCH_MCP_TOOLS, buildSketchServer } from "./tools.sketch.mjs";
+import { PRODUCT_MCP_TOOLS, buildProductServer } from "./tools.product.mjs";
 
 const MCP_TOOLS = [
   "emit_stage",
@@ -57,6 +58,10 @@ const SKETCH_ALLOWED = [...SKETCH_MCP_TOOLS];
 
 // 零件庫模式:MCP 6 工具 + Read/Glob/Grep(查庫要列/讀 parts-library/*/meta.json)。
 const LIBRARY_ALLOWED = ["Read", "Glob", "Grep", ...LIBRARY_MCP_TOOLS];
+
+// 產品設計模式:共用 emit + surface_* 工具 + Read/Glob/Grep(讀 models/product_* 範本草稿;
+// 沒有 cad_build——agent 不能繞過草稿契約手寫幾何)。
+const PRODUCT_ALLOWED = ["Read", "Glob", "Grep", ...PRODUCT_MCP_TOOLS];
 
 // CLI harness 層的非同步/編排工具不經過 canUseTool(實測 Agent 子代理與 ScheduleWakeup
 // 直接放行),必須用 disallowedTools 從工具清單整個移除。cad-chat 的契約是
@@ -143,8 +148,16 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
     ? buildSketchServer({ session, emit, signal: abort.signal })
     : mode === "library"
       ? buildLibraryServer({ session, emit, signal: abort.signal })
-      : buildCadchatServer({ session, emit, signal: abort.signal });
-  const allowed = isSketch ? SKETCH_ALLOWED : mode === "library" ? LIBRARY_ALLOWED : ALLOWED;
+      : mode === "product"
+        ? buildProductServer({ session, emit, signal: abort.signal })
+        : buildCadchatServer({ session, emit, signal: abort.signal });
+  const allowed = isSketch
+    ? SKETCH_ALLOWED
+    : mode === "library"
+      ? LIBRARY_ALLOWED
+      : mode === "product"
+        ? PRODUCT_ALLOWED
+        : ALLOWED;
   // 階段列自動推進(stages.mjs):設計/電纜模式回合開始即「理解」,之後在主代理的 tool_use
   // 區塊開始時依工具名推階段(prompt 已不再要求 emit_stage;遙測顯示每回合省 5 次呼叫)。
   const autoStage = autoStageMode(mode);
@@ -157,7 +170,8 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
   // buildSystemPrompt 讀 session._lessonsDigest 注入「# 累積教訓」段。
   // 只有設計鏈模式(design/cable)注入:現有教訓全是 build123d/幾何驗證語彙,
   // 對草模/零件庫是純 token 浪費+契約污染。
-  session._lessonsDigest = isDesignLike(mode) ? getLessonsDigest() : "";
+  // product(產品設計)不注入:教訓庫是 build123d 產生器語彙,曲面草稿契約用不到。
+  session._lessonsDigest = mode === "design" || mode === "cable" ? getLessonsDigest() : "";
 
   // prompt 恆走 streaming input(單一程式路徑):SDK 的字串 prompt 會被傳輸層硬編成
   // 純 text block,永遠帶不了 image content block;這裡自組同形狀的 user message
@@ -201,7 +215,9 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
             ? buildLibrarySystemPrompt(session)
             : mode === "cable"
               ? buildCableSystemPrompt(session)
-              : buildSystemPrompt(session),
+              : mode === "product"
+                ? buildProductSystemPrompt(session)
+                : buildSystemPrompt(session),
         // SDK ≥0.3.267 預設 snapshot:true = 系統提示只在對話首回合錄製一次,之後 resume
         // 一律送錄製版——append 變了也要等 compaction 才生效。cad-chat 的 append 每回合
         // 都會變(累積教訓摘要、已匯入元件註記、rehydrate 接續註記),必須每回合現算。
@@ -272,7 +288,7 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
             emit("busy", { what: typing.name });
             if (autoStage) {
               // 工具開始被寫出的瞬間推階段(先於執行:「生成」在開始寫產生器原始碼時就亮)
-              const st = nextStage(session._stageCur, b.name);
+              const st = nextStage(session._stageCur, b.name, mode);
               if (st != null) {
                 session._stageCur = st;
                 emit("stage", { index: st });

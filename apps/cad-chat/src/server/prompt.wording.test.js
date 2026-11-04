@@ -8,6 +8,7 @@ import { buildSystemPrompt } from "./agent/prompt.mjs";
 import { buildSketchSystemPrompt } from "./agent/prompt.sketch.mjs";
 import { buildLibrarySystemPrompt } from "./agent/prompt.library.mjs";
 import { buildCableSystemPrompt } from "./agent/prompt.cable.mjs";
+import { buildProductSystemPrompt } from "./agent/prompt.product.mjs";
 import { INTERNAL_TERMS, WORDING_SECTION_TITLE, buildWordingSection } from "./agent/wording.mjs";
 
 const session = { sessionId: "s_test", workdirRel: "models/.cadchat/s_test", mode: "design" };
@@ -16,9 +17,10 @@ const prompts = {
   sketch: buildSketchSystemPrompt(),
   library: buildLibrarySystemPrompt(),
   cable: buildCableSystemPrompt({ ...session, mode: "cable" }),
+  product: buildProductSystemPrompt({ ...session, mode: "product" }),
 };
 
-test("四個模式的 prompt 都含對外措辭段(標題 + 核心禁詞 + 改寫對照)", () => {
+test("五個模式的 prompt 都含對外措辭段(標題 + 核心禁詞 + 改寫對照)", () => {
   for (const [mode, p] of Object.entries(prompts)) {
     assert.ok(p.includes(WORDING_SECTION_TITLE), `${mode}: 缺措辭段標題`);
     for (const must of ["build123d", "Python", "副檔名", "traceback", "設計語言", "送出前自檢",
@@ -41,6 +43,7 @@ test("模式特有補充條目有注入(design/sketch/library 各一;cable 繼�
   assert.ok(prompts.cable.includes("gen_step/gen_flat/gen_dxf」"));
   assert.ok(prompts.sketch.includes("sketch_present/bodies/drives"));
   assert.ok(prompts.library.includes("library_preview/library_add 工具名"));
+  assert.ok(prompts.product.includes("surface_present_draft/surface_build/curves/surfaces/ops"));
 });
 
 test("buildWordingSection:extra 為空不留空行尾巴;INTERNAL_TERMS 全小寫且含核心詞", () => {

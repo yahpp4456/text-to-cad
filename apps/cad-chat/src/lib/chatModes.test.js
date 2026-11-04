@@ -3,11 +3,11 @@ import { test } from "node:test";
 import { DEMO_HIDDEN_MODES, isDemoAllowedMode, isDesignLike, isMode, MODES, normalizeMode } from "./chatModes.js";
 
 test("MODES:鎖定聊天模式與順序", () => {
-  assert.deepEqual(MODES, ["design", "sketch", "library", "cable"]);
+  assert.deepEqual(MODES, ["design", "sketch", "library", "cable", "product"]);
 });
 
 test("isMode:只接受大小寫相符的白名單值", () => {
-  for (const mode of ["design", "sketch", "library", "cable"]) {
+  for (const mode of ["design", "sketch", "library", "cable", "product"]) {
     assert.equal(isMode(mode), true);
   }
   for (const value of ["bogus", "", undefined, null, "DESIGN", "CABLE", 3]) {
@@ -16,7 +16,7 @@ test("isMode:只接受大小寫相符的白名單值", () => {
 });
 
 test("normalizeMode:合法值恆等", () => {
-  for (const mode of ["design", "sketch", "library", "cable"]) {
+  for (const mode of ["design", "sketch", "library", "cable", "product"]) {
     assert.equal(normalizeMode(mode), mode);
   }
 });
@@ -27,17 +27,18 @@ test("normalizeMode:垃圾值收斂至 design", () => {
   }
 });
 
-test("isDesignLike:cable 是設計特化,草模/零件庫/垃圾值都不是", () => {
+test("isDesignLike:cable/product 是設計特化,草模/零件庫/垃圾值都不是", () => {
   assert.equal(isDesignLike("design"), true);
   assert.equal(isDesignLike("cable"), true);
+  assert.equal(isDesignLike("product"), true);
   for (const value of ["sketch", "library", "bogus", undefined, null]) {
     assert.equal(isDesignLike(value), false);
   }
 });
 
 test("isDemoAllowedMode:demo 只開 design,其餘模式藏;缺席(=沿用 session)放行", () => {
-  assert.deepEqual(DEMO_HIDDEN_MODES, ["sketch", "cable", "library"]);
-  for (const value of ["sketch", "cable", "library"]) {
+  assert.deepEqual(DEMO_HIDDEN_MODES, ["sketch", "cable", "library", "product"]);
+  for (const value of ["sketch", "cable", "library", "product"]) {
     assert.equal(isDemoAllowedMode(value), false, value);
   }
   for (const value of ["design", undefined, null]) {

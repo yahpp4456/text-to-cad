@@ -15,7 +15,7 @@ import SketchCanvas3D from "./components/canvas/SketchCanvas3D.jsx";
 import VersionTimeline from "./components/versions/VersionTimeline.jsx";
 import { useChatStream } from "./hooks/useChatStream.js";
 import { composeCableSpecText } from "./lib/cableSpec.js";
-import { isDemoAllowedMode, isDesignLike, normalizeMode } from "./lib/chatModes.js";
+import { isDemoAllowedMode, isDesignLike, modeLabel, normalizeMode } from "./lib/chatModes.js";
 import { isProjectDirty, projectChipLabel } from "./lib/projectState.js";
 import { latestSpecItem, pendingLessonOffer } from "./lib/clarifyText.js";
 import { DEMO_TIP } from "./lib/demo.js";
@@ -566,6 +566,43 @@ export default function App() {
   // opts.auto:由聊天自動觸發(非使用者手動開專案),notify 文案改成貼合語境。
   // opts.params:規格表單「直接生成」帶的 PARAMS 覆寫(伺服端於 build 前決定性改寫,
   //   一次 build 就是使用者要的配置);opts.note:notify 首句改寫(表單路徑用)。
+  // 產品設計工作窗「確認生成」的回應(JSON 收集模式,同 open-project):分發 version/present/params;
+  // 失敗(400 草稿不完整 / 建模失敗已回滾)走 notify,版本與產物不動。
+  const onSurfaceBuilt = useCallback(
+    (j) => {
+      if (!j?.ok) {
+        const errs = Array.isArray(j?.errors)
+          ? j.errors.slice(0, 4).map((e) => `${e.path ? `${e.path}:` : ""}${e.message}`).join(";")
+          : "";
+        notify(`${j?.error || "草稿生成失敗"}${errs ? `(${errs})` : ""}${j?.rolledBack ? ",已回滾到上一版" : ""}`, true);
+        return;
+      }
+      if (j.version) dispatch({ type: "ADD_VERSION", version: j.version });
+      if (j.present) {
+        dispatch({
+          type: "PRESENT",
+          glbUrl: j.present.glbUrl,
+          name: j.present.name,
+          code: j.present.code,
+          ver: j.present.ver,
+          fileType: j.present.type || "",
+          flatGlbUrl: j.present.flatGlbUrl ?? null,
+          flatLinesUrl: j.present.flatLinesUrl ?? null,
+          sweepPathsUrl: j.present.sweepPathsUrl ?? null,
+          surfaceUrl: j.present.surfaceUrl ?? null, // 曲面分析 sidecar(JSON 路徑亦需帶)
+        });
+      }
+      if (j.params?.length) dispatch({ type: "SET_PARAMS", defs: j.params });
+      (j.warnings || []).forEach((w) => notify(w, true));
+      const s = j.summary;
+      notify(
+        `草稿已生成為 ${j.present?.ver || "新版本"}${
+          s ? `:${s.finalFree ? `開放邊 ${s.finalFree} 條` : "零開放邊"}、連續性未達目標 ${s.violations || 0} 處` : ""
+        }。`,
+      );
+    },
+    [notify],
+  );
   const openProject = useCallback(
     async (dirRel, opts = {}) => {
       if (state.running) return null;
@@ -629,6 +666,7 @@ export default function App() {
             flatGlbUrl: j.present.flatGlbUrl ?? null, // 鈑金攤平切換(JSON 路徑亦需帶)
             flatLinesUrl: j.present.flatLinesUrl ?? null, // 攤平折彎線 overlay
             sweepPathsUrl: j.present.sweepPathsUrl ?? null, // 掃出路徑 overlay(JSON 路徑亦需帶)
+            surfaceUrl: j.present.surfaceUrl ?? null, // 曲面分析 sidecar(產品設計;JSON 路徑亦需帶)
           });
         }
         if (j.params?.length) dispatch({ type: "SET_PARAMS", defs: j.params });
@@ -777,6 +815,7 @@ export default function App() {
             flatGlbUrl: j.present.flatGlbUrl ?? null, // 鈑金攤平切換(JSON 路徑亦需帶)
             flatLinesUrl: j.present.flatLinesUrl ?? null, // 攤平折彎線 overlay
             sweepPathsUrl: j.present.sweepPathsUrl ?? null, // 掃出路徑 overlay(JSON 路徑亦需帶)
+            surfaceUrl: j.present.surfaceUrl ?? null, // 曲面分析 sidecar(產品設計;JSON 路徑亦需帶)
           });
         }
         if (j.params?.length) dispatch({ type: "SET_PARAMS", defs: j.params });
@@ -1090,8 +1129,7 @@ export default function App() {
         dispatch({ type: "SET_MODE", mode: next });
         return;
       }
-      const name =
-        next === "sketch" ? "草模" : next === "library" ? "零件庫" : next === "cable" ? "無塵電纜" : "設計";
+      const name = modeLabel(next);
       setConfirmBox({
         eyebrow: `SWITCH MODE · 切換到「${name}」`,
         body:
@@ -1308,6 +1346,7 @@ export default function App() {
             params: state.params,
             motion: state.motion,
             project: state.project,
+            surfaceDraft: state.surfaceDraft, // 產品設計草稿(工作窗跨重整回灌)
             savedAt: Date.now(),
           }),
         );
@@ -1692,6 +1731,7 @@ export default function App() {
             <>
               <Canvas3D
                 canvas={state.canvas}
+                chatMode={state.mode}
                 propsOpen={state.propsOpen}
                 selNode={state.selNode}
                 dispatch={dispatch}
@@ -1710,6 +1750,21 @@ export default function App() {
                         onClose: () => dispatch({ type: "SET_CABLE_FORM", form: null }),
                         onGenerate: generateFromCableForm,
                         onAskAi: askAiFromCableForm,
+                      }
+                    : null
+                }
+                surface={
+                  state.mode === "product"
+                    ? {
+                        draft: state.surfaceDraft,
+                        sessionId: state.sessionId,
+                        // 工作窗首次自動保存可 mint product session(無對話先畫草稿)
+                        onSession: (sid) => {
+                          setSessionId(sid);
+                          dispatch({ type: "SET_SESSION", sessionId: sid });
+                        },
+                        onDraft: (sd) => dispatch({ type: "SET_SURFACE_DRAFT", surfaceDraft: sd }),
+                        onBuilt: onSurfaceBuilt,
                       }
                     : null
                 }

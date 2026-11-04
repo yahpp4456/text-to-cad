@@ -344,6 +344,9 @@ export function readBuildMeta(session, name) {
       sweepPaths: Array.isArray(meta.sweepPaths) ? meta.sweepPaths : [],
       // 掃出工作窗資料(SWEEP_VIEW;cadpy 收割「任一欄壞=整份 None」)
       sweepView: meta.sweepView && typeof meta.sweepView === "object" ? meta.sweepView : null,
+      // 產品設計(cadpy.surface)分析收割:{spec, edges, freeEdges, faces, cages, curves, combs, summary}
+      // 或 {error};非曲面產生器 = null
+      surface: meta.surface && typeof meta.surface === "object" ? meta.surface : null,
     };
   } catch {
     return null;
@@ -368,6 +371,30 @@ export function writeSweepSidecar(session, name, sweepPaths, sweepView = null) {
   return p;
 }
 
+// 曲面分析 sidecar(`.{name}.surface.json`):cadpy.surface 收割的分析資料落成 /api/asset 可服務的
+// 獨立 JSON(連續性/開放邊/控制點籠/曲率梳/曲線折線)。無收割或收割失敗 → 刪殘留(鏡射 sweep)。
+export function writeSurfaceSidecar(session, name, surface) {
+  const p = path.join(session.workdir, `.${sanitizeName(name)}.surface.json`);
+  if (!surface || typeof surface !== "object" || surface.error || !Array.isArray(surface.edges)) {
+    fs.rmSync(p, { force: true });
+    return null;
+  }
+  fs.writeFileSync(p, JSON.stringify(surface), "utf8");
+  return p;
+}
+
+// 產品設計產生器偵測:頂層 `SURFACE_SPEC = {`(surfaceGen.mjs 編譯輸出)。決定性、零 spawn。
+export function generatorHasSurface(session, name) {
+  try {
+    return /^SURFACE_SPEC\s*=/m.test(fs.readFileSync(genPyPath(session, name), "utf8"));
+  } catch {
+    return false;
+  }
+}
+
+// 曲面件網格密度(斑馬紋/曲率著色要細網格;scripts/step --mesh-tolerance 既有旗標)
+const SURFACE_MESH_ARGS = ["--mesh-tolerance", "0.005", "--mesh-angular-tolerance", "0.15"];
+
 // 跑 scripts/step:產 STEP + 隱藏 GLB。回 {ok, log, stderr, stepRel, glbRel, ms}。
 export async function runStep(session, name, { onLog, signal } = {}) {
   const t0 = Date.now();
@@ -388,7 +415,7 @@ export async function runStep(session, name, { onLog, signal } = {}) {
     : null;
   const { code, stdout, stderr } = await spawnPython(
     STEP_DIR,
-    [target, "--force"],
+    [target, "--force", ...(generatorHasSurface(session, name) ? SURFACE_MESH_ARGS : [])],
     { session, onLog, signal },
   );
   const flatRes = flatPromise ? await flatPromise.catch(() => null) : null;
@@ -416,6 +443,11 @@ export async function runStep(session, name, { onLog, signal } = {}) {
       writeSweepSidecar(session, name, meta?.sweepPaths, meta?.sweepView);
     } catch {
       /* overlay 是輔助資訊,寫失敗不擋 build */
+    }
+    try {
+      writeSurfaceSidecar(session, name, meta?.surface);
+    } catch {
+      /* 曲面分析 overlay 同上 */
     }
   } else {
     // 失敗 build(Python 側已先 unlink sidecar):清掉記憶體 meta,雙保險防 stale。
@@ -598,6 +630,7 @@ export async function runValidate(session, name, { signal, motionOnly = false } 
 // fail 自修;審查 F2)。note 前綴與 validate.py full 模式、lessons signature 同字。
 export function designChecksFromMeta(meta) {
   const skip = (id, label, note) => ({ id, label, ok: true, skipped: true, note });
+  if (meta.surface) return surfaceChecksFromMeta(meta, skip);
   const MOTION_LABEL = "運動掃掠干涉 motion-sweep";
   let motionRow;
   if (meta.motionErrs.length) {
@@ -626,6 +659,41 @@ export function designChecksFromMeta(meta) {
     // 零 spawn 後沒有 inspect 的 bbox/faceCount:誠實標 SKIP(精算此版會補真值)
     skip("facts", "拓撲 / 尺寸 topology", "設計模式:略過檢查(未驗證)"),
   ];
+}
+
+// 產品設計(曲面)剖面的快路徑 checks:值來自 build 收割(cadpy.surface.harvest_meta 的 summary),
+// 文案逐字對齊 validate.py --motion-only 的曲面分支(pipeline.design.test.js 釘死)。
+// 有效幾何只在精算/匯出閘(full)真跑;開放邊/連續性在 build 時已算好,直接出真值。
+export function surfaceChecksFromMeta(meta, skip) {
+  const s = meta.surface || {};
+  const sum = s.summary || null;
+  const rows = [skip("valid_shape", "有效幾何 (BRepCheck)", "設計模式:略過驗證(未驗證)")];
+  if (!sum) {
+    rows.push(skip("free_edges", "開放邊 free-edges", "分析收割缺失(未驗證)"));
+    rows.push(skip("continuity", "邊連續性 continuity", "分析收割缺失(未驗證)"));
+  } else {
+    const nFree = Number(sum.finalFree) || 0;
+    const solid = s.result !== "shell";
+    rows.push({
+      id: "free_edges",
+      label: "開放邊 free-edges",
+      ok: solid ? nFree === 0 : true,
+      note: solid ? (nFree === 0 ? "0 條開放邊" : `${nFree} 條開放邊(result=solid 需 0)`) : `${nFree} 條開放邊(開放殼允許)`,
+    });
+    const g = `G2 ${sum.g2} / G1 ${sum.g1} / G0 ${sum.g0}`;
+    rows.push({
+      id: "continuity",
+      label: "邊連續性 continuity",
+      ok: !!sum.ok,
+      note: sum.ok ? `${g} 條,最低要求 ${sum.minContinuity}` : `${sum.violations} 條內邊低於 ${sum.minContinuity}:${g}`,
+    });
+  }
+  rows.push(skip("self_intersection", "自交 self-intersection", "未支援獨立檢查"));
+  rows.push(skip("interference", "零件干涉 interference", meta.partCount >= 2 ? "設計模式:略過驗證(未驗證)" : "單一零件,無需檢查"));
+  rows.push(skip("motion_sweep", "運動掃掠干涉 motion-sweep", "未提供運動學"));
+  rows.push(skip("wall_thickness", "壁厚 wall-thickness", "pipeline 未支援"));
+  rows.push(skip("facts", "拓撲 / 尺寸 topology", "設計模式:略過檢查(未驗證)"));
+  return rows;
 }
 
 export async function runValidateDesign(session, name, { signal } = {}) {
@@ -880,7 +948,9 @@ function snapshotVersion(session, name, verNum, { type, partCount }) {
   // .flat.step.glb + .flat.lines.json:鈑金攤平預覽 GLB 與折彎線 overlay,切舊版也要能
   // 切攤平/看折彎線 → 一併進快照(存在才複)。.sweep.json:掃出路徑預覽折線,
   // 同理跟版凍結(切舊版 overlay 要對舊幾何)。
-  for (const f of [`${n}.py`, `${n}.step`, `.${n}.step.glb`, `.${n}.flat.step.glb`, `.${n}.flat.lines.json`, `.${n}.sweep.json`, `${n}.asm.json`, `.${n}.step.js`]) {
+  // .surface.json + .surface.draft.json:產品設計的分析 overlay 與工作草稿,跟版凍結(回退時草稿
+  // 一起回到產出該版的狀態)。
+  for (const f of [`${n}.py`, `${n}.step`, `.${n}.step.glb`, `.${n}.flat.step.glb`, `.${n}.flat.lines.json`, `.${n}.sweep.json`, `.${n}.surface.json`, `${n}.surface.draft.json`, `${n}.asm.json`, `.${n}.step.js`]) {
     const src = path.join(session.workdir, f);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, f));
   }
@@ -991,6 +1061,12 @@ export function emitPresent(session, name, emit) {
     const sweepRelP = `${snapPre}.${nn}.sweep.json`;
     if (fs.existsSync(path.join(session.workdir, sweepRelP))) sweepPathsUrl = assetUrl(sweepRelP);
   }
+  // 曲面分析 sidecar(產品設計;鏡射 sweepPathsUrl 全鏈:快照/revert/events/store/App 手組 PRESENT)
+  let surfaceUrl = null;
+  {
+    const surfRelP = `${snapPre}.${nn}.surface.json`;
+    if (fs.existsSync(path.join(session.workdir, surfRelP))) surfaceUrl = assetUrl(surfRelP);
+  }
   emit("artifact", {
     ver, name, code: name, ghost, formats,
     type, partCount, source: "generated",
@@ -1013,9 +1089,10 @@ export function emitPresent(session, name, emit) {
     flatGlbUrl, // 鈑金件(有 gen_flat)→ 前端「摺疊/攤平」即時切換(null=無)
     flatLinesUrl, // 折彎線 sidecar → 攤平態疊虛線 overlay(null=無)
     sweepPathsUrl, // 掃出路徑 sidecar → 3D 視圖路徑中心虛線 overlay(null=無)
+    surfaceUrl, // 曲面分析 sidecar(產品設計)→ 連續性/開放邊/控制點籠/曲率梳 overlay(null=無)
     ...stamp, // verified(前端 badge / 匯出閘依賴)
   });
-  emit("present", { ver, name, code: name, file: stepRel, glbUrl: gUrl, type, flatGlbUrl, flatLinesUrl, sweepPathsUrl });
+  emit("present", { ver, name, code: name, file: stepRel, glbUrl: gUrl, type, flatGlbUrl, flatLinesUrl, sweepPathsUrl, surfaceUrl });
   persistSession(session); // version/lastName 剛變動 → 落盤(重整/重啟後計數不歸零)
   return { ver, glbUrl: gUrl };
 }

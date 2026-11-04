@@ -25,6 +25,16 @@ export const STAGES_CABLE = [
   ["呈現", "PRESENT"],
 ];
 
+// 產品設計模式 5 段:草稿(surface_present_draft)取代通用「生成」前的規劃後段;
+// 生成=surface_build、呈現=其內部的 present(stages.mjs STAGE_BY_TOOL_PRODUCT)
+export const STAGES_PRODUCT = [
+  ["理解", "UNDERSTAND"],
+  ["規劃", "PLAN"],
+  ["草稿", "DRAFT"],
+  ["生成", "GENERATE"],
+  ["呈現", "PRESENT"],
+];
+
 // 零件庫模式 3 段(對齊 prompt.library 的收庫流程)
 export const STAGES_LIBRARY = [
   ["選檔", "PICK"],
@@ -40,7 +50,9 @@ export default function StageStepper({ stageIdx, mode }) {
         ? STAGES_LIBRARY
         : mode === "cable"
           ? STAGES_CABLE
-          : STAGES;
+          : mode === "product"
+            ? STAGES_PRODUCT
+            : STAGES;
   return (
     <div className="stepper">
       {stages.map(([cn, en], i) => {

@@ -36,6 +36,7 @@ import { chatMiddleware } from "./middleware/chat.mjs";
 import { interruptMiddleware } from "./middleware/interrupt.mjs";
 import { lessonsMiddleware } from "./middleware/lessons.mjs";
 import { uploadMiddleware } from "./middleware/upload.mjs";
+import { surfaceMiddleware } from "./middleware/surface.mjs";
 import { introVideoMiddleware } from "./introVideo.mjs";
 
 // dev:Vite middleware 之後,把 index.html 經 transformIndexHtml 回給所有 GET。
@@ -81,6 +82,7 @@ export async function startServer({ dev = false, port } = {}) {
     assetMiddleware(),
     filesMiddleware(),
     projectMiddleware(),
+    surfaceMiddleware(), // 產品設計:草稿保存/讀取 + 零 LLM 成形
     uploadMiddleware(),
     chatMiddleware(),
     interruptMiddleware(),

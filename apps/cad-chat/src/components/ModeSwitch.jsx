@@ -35,7 +35,8 @@ export default function ModeSwitch({ mode, running, onSwitch, demo = false }) {
           ? "回合進行中,結束後才能切換模式"
           : [
               show("sketch") && "草模=快速機構運動示意",
-              "設計=真幾何 CAD",
+              "機構設計=真幾何 CAD(零件/組合件/標準件/鈑金)",
+              show("product") && "產品設計=曲面造型(放樣/補面/鏡射/加厚 + 連續性分析)",
               show("cable") && "無塵電纜=電纜組長寬高參數化重建",
               show("library") && "零件庫=收 STP 進庫/查庫",
             ]
@@ -45,6 +46,7 @@ export default function ModeSwitch({ mode, running, onSwitch, demo = false }) {
     >
       {show("sketch") && seg("sketch", MODE_LABELS.sketch, "SKETCH", "✎")}
       {seg("design", MODE_LABELS.design, "DESIGN", "⬡")}
+      {show("product") && seg("product", MODE_LABELS.product, "PRODUCT", "◐")}
       {show("cable") && seg("cable", MODE_LABELS.cable, "CABLE", "⌒")}
       {show("library") && <span className="mode-divider" />}
       {show("library") && seg("library", MODE_LABELS.library, "LIBRARY", "⬢")}

@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-import { buildModel, centerAndRadiusFromBounds, renderModel } from "cadjs";
+import { buildModel, centerAndRadiusFromBounds, renderModel, setSurfaceAnalysis } from "cadjs";
 import { loadRenderGlb, loadRenderSelectorBundle } from "cadjs/lib/renderAssetClient";
 import { buildSelectorRuntime } from "cadjs/lib/selectors/runtime";
 import { applyPartVisualState } from "cadjs/lib/viewer/partVisualState";
@@ -19,6 +19,12 @@ import {
 } from "cadjs/lib/viewer/referenceGeometry";
 
 import { buildSweepSegments } from "../lib/sweepOverlay.js";
+import { COMB_COLOR } from "../lib/surfaceOverlay.js";
+import { dragPoint, handlePlaneFor } from "../lib/draft/dragHandles.js";
+
+// 草稿 live 層顏色(產品設計工作窗):曲線紫(--product)、選取/拖曳中橘
+const DRAFT_CURVE_COLOR = 0x7c5cd6;
+const DRAFT_SELECTED_COLOR = 0xff8c1a;
 import {
   buildNormalToFaceView,
   DEFAULT_VIEW_ORIENTATION_PRESET,
@@ -27,7 +33,7 @@ import {
 export function useCadViewport(
   mountRef,
   glbUrl,
-  { name, onStatus, onReady, onFrame, onPickPart, bendLines, sweepPaths, measureModeRef, onMeasurePick } = {},
+  { name, onStatus, onReady, onFrame, onPickPart, bendLines, sweepPaths, surfaceOverlay, measureModeRef, onMeasurePick, draftDragRef } = {},
 ) {
   const liveRef = useRef({});
 
@@ -371,6 +377,123 @@ export function useCadViewport(
           viewport.scene.add(sweepGroup);
         }
       }
+      // 曲面分析 overlay(產品設計;資料 = present 的 surfaceUrl sidecar 經 buildSurfaceOverlay):
+      // 連續性著色(G0 紅/G1 黃/G2 綠/平面鄰邊灰)、開放邊(洋紅虛線)、控制點籠(淡藍網+極點球)、
+      // 曲率梳(青)。仿 sweepGroup:depthTest:false(接縫常在內側/被遮)。各群組獨立 visible。
+      const mkSegLine = (segments, color, { dashed = false, opacity = 1, order = 31 } = {}) => {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(segments), 3));
+        const mat = dashed
+          ? new THREE.LineDashedMaterial({
+              color,
+              dashSize: Math.max(radius * 0.02, 1.2),
+              gapSize: Math.max(radius * 0.012, 0.8),
+              transparent: true,
+              opacity,
+              depthTest: false,
+              depthWrite: false,
+              toneMapped: false,
+            })
+          : new THREE.LineBasicMaterial({ color, transparent: opacity < 1, opacity, depthTest: false, depthWrite: false, toneMapped: false });
+        const line = new THREE.LineSegments(geo, mat);
+        if (dashed) line.computeLineDistances();
+        line.frustumCulled = false;
+        line.renderOrder = order;
+        return line;
+      };
+      const continuityGroup = new THREE.Group();
+      const freeEdgeGroup = new THREE.Group();
+      const cageGroup = new THREE.Group();
+      const combGroup = new THREE.Group();
+      continuityGroup.renderOrder = 31;
+      freeEdgeGroup.renderOrder = 32;
+      cageGroup.renderOrder = 33;
+      combGroup.renderOrder = 34;
+      if (surfaceOverlay) {
+        for (const row of surfaceOverlay.continuity || []) {
+          continuityGroup.add(mkSegLine(row.segments, row.color, { opacity: row.flat ? 0.55 : 1, order: 31 }));
+        }
+        for (const row of surfaceOverlay.freeEdges || []) {
+          freeEdgeGroup.add(mkSegLine(row.segments, row.color, { dashed: true, order: 32 }));
+        }
+        const poleGeo = new THREE.SphereGeometry(Math.max(radius * 0.008, 0.3), 10, 8);
+        for (const cage of surfaceOverlay.cages || []) {
+          cageGroup.add(mkSegLine(cage.segments, cage.color, { opacity: 0.85, order: 33 }));
+          const poleMat = new THREE.MeshBasicMaterial({ color: cage.color, depthTest: false, toneMapped: false });
+          for (const p of cage.poles || []) {
+            const dot = new THREE.Mesh(poleGeo, poleMat);
+            dot.position.set(p[0], p[1], p[2]);
+            dot.renderOrder = 33;
+            cageGroup.add(dot);
+          }
+        }
+        for (const comb of surfaceOverlay.combs || []) {
+          combGroup.add(mkSegLine(comb.segments, comb.color, { order: 34 }));
+          if (comb.tipSegments?.length) combGroup.add(mkSegLine(comb.tipSegments, COMB_COLOR, { opacity: 0.6, order: 34 }));
+        }
+        if (continuityGroup.children.length) viewport.scene.add(continuityGroup);
+        if (freeEdgeGroup.children.length) viewport.scene.add(freeEdgeGroup);
+        if (cageGroup.children.length) {
+          cageGroup.visible = false; // 預設關(籠線很密,使用者按 chip 才開)
+          viewport.scene.add(cageGroup);
+        }
+        if (combGroup.children.length) {
+          combGroup.visible = false; // 預設關
+          viewport.scene.add(combGroup);
+        }
+      }
+      // 草稿 live 層(產品設計工作窗;資料=lib/draft/draftView.buildDraftView):曲線折線
+      //(精確實線/近似虛線;對稱鏡射淡顯)+ 可拖把手球。群組恆建(空)掛場景,
+      // setDraftHandles(view) 整組重建、view=null 清空;depthTest:false 同其他 overlay。
+      const draftGroup = new THREE.Group();
+      draftGroup.renderOrder = 35;
+      viewport.scene.add(draftGroup);
+      let handleMeshes = [];
+      const clearDraftChildren = () => {
+        for (const child of [...draftGroup.children]) {
+          child.geometry?.dispose?.(); // 把手球共用 handleGeo,重複 dispose 無害
+          child.material?.dispose?.();
+        }
+        draftGroup.clear();
+        handleMeshes = [];
+      };
+      const setDraftHandles = (view) => {
+        clearDraftChildren();
+        if (!view) return;
+        const handleGeo = new THREE.SphereGeometry(Math.max(view.radius || 1, 0.3), 12, 10);
+        for (const c of view.curves || []) {
+          if (!Array.isArray(c.pts) || c.pts.length < 2) continue;
+          const flat = [];
+          for (let i = 1; i < c.pts.length; i += 1) flat.push(...c.pts[i - 1], ...c.pts[i]);
+          const color = c.selected ? DRAFT_SELECTED_COLOR : DRAFT_CURVE_COLOR;
+          const opacity = c.mirror ? 0.3 : c.selected ? 1 : 0.85;
+          draftGroup.add(mkSegLine(flat, color, { dashed: !!c.approx, opacity, order: 35 }));
+        }
+        for (const h of view.handles || []) {
+          const mat = new THREE.MeshBasicMaterial({
+            color: h.selected ? DRAFT_SELECTED_COLOR : DRAFT_CURVE_COLOR,
+            transparent: true,
+            opacity: h.selected ? 1 : 0.8,
+            depthTest: false,
+            toneMapped: false,
+          });
+          const dot = new THREE.Mesh(handleGeo, mat);
+          dot.position.set(h.p[0], h.p[1], h.p[2]);
+          dot.renderOrder = 36;
+          dot.frustumCulled = false;
+          dot.userData.handle = h;
+          draftGroup.add(dot);
+          handleMeshes.push(dot);
+        }
+      };
+      const setSurfaceOverlay = (flags = {}) => {
+        if ("continuity" in flags) continuityGroup.visible = !!flags.continuity;
+        if ("freeEdges" in flags) freeEdgeGroup.visible = !!flags.freeEdges;
+        if ("cages" in flags) cageGroup.visible = !!flags.cages;
+        if ("combs" in flags) combGroup.visible = !!flags.combs;
+      };
+      // 斑馬紋等分析著色(cadjs shader uniform;mode "none" = 既有輸出)
+      const setAnalysis = (settings) => setSurfaceAnalysis(THREE, model.displayRecords || [], settings || { mode: "none" });
       const setGrid = (on) => {
         if (gridMesh) gridMesh.visible = !!on;
       };
@@ -428,6 +551,62 @@ export function useCadViewport(
       const onPointerDown = (ev) => {
         if (ev.button === 0) downPos = { x: ev.clientX, y: ev.clientY };
       };
+      // 草稿把手拖曳(工作窗開著 draftDragRef.current.enabled 時):capture 階段先於
+      // OrbitControls 收 pointerdown,命中把手球就 stopImmediatePropagation(環繞不啟動、
+      // 圈選的 downPos 也不設)→ setPointerCapture → pointermove 以相機射線交「過把手原位的
+      // 工作平面」(草稿 plane 優先,否則最正對視線的主平面)算新點 → onDrag;pointerup → onEnd。
+      let drag = null;
+      const rayFromEvent = (ev) => {
+        const rect = canvasEl.getBoundingClientRect();
+        if (!rect.width || !rect.height) return false;
+        pointerV.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+        pointerV.y = -(((ev.clientY - rect.top) / rect.height) * 2 - 1);
+        raycaster.setFromCamera(pointerV, camera);
+        return true;
+      };
+      const onDraftPointerDown = (ev) => {
+        if (ev.button !== 0 || drag) return;
+        const dd = draftDragRef?.current;
+        if (!dd?.enabled || !handleMeshes.length || !rayFromEvent(ev)) return;
+        const hit = raycaster.intersectObjects(handleMeshes, false)[0];
+        if (!hit) return;
+        const handle = hit.object.userData.handle;
+        const viewDir = camera.getWorldDirection(new THREE.Vector3()).toArray();
+        drag = { handle, plane: handlePlaneFor({ plane: handle.plane }, viewDir), pointerId: ev.pointerId };
+        ev.stopImmediatePropagation();
+        ev.preventDefault();
+        downPos = null;
+        try {
+          canvasEl.setPointerCapture(ev.pointerId);
+        } catch {
+          /* ignore */
+        }
+        canvasEl.style.cursor = "grabbing";
+        dd.onStart?.(handle);
+      };
+      const onDraftPointerMove = (ev) => {
+        if (!drag || !rayFromEvent(ev)) return;
+        const p = dragPoint({
+          original: drag.handle.p,
+          rayOrigin: raycaster.ray.origin.toArray(),
+          rayDir: raycaster.ray.direction.toArray(),
+          plane: drag.plane,
+          snap: draftDragRef?.current?.snap || 0,
+        });
+        if (p) draftDragRef?.current?.onDrag?.(drag.handle, p);
+      };
+      const onDraftPointerUp = (ev) => {
+        if (!drag) return;
+        const h = drag.handle;
+        drag = null;
+        try {
+          canvasEl.releasePointerCapture(ev.pointerId);
+        } catch {
+          /* ignore */
+        }
+        canvasEl.style.cursor = "";
+        draftDragRef?.current?.onEnd?.(h);
+      };
       const onClick = (ev) => {
         if (!downPos) return;
         const moved = Math.hypot(ev.clientX - downPos.x, ev.clientY - downPos.y);
@@ -454,6 +633,10 @@ export function useCadViewport(
         const partId = raycastPartId(ev);
         onPickPart?.(partId ? { partId, mode: "focus" } : null);
       };
+      canvasEl.addEventListener("pointerdown", onDraftPointerDown, { capture: true });
+      canvasEl.addEventListener("pointermove", onDraftPointerMove);
+      canvasEl.addEventListener("pointerup", onDraftPointerUp);
+      canvasEl.addEventListener("pointercancel", onDraftPointerUp);
       canvasEl.addEventListener("pointerdown", onPointerDown);
       canvasEl.addEventListener("click", onClick);
       canvasEl.addEventListener("dblclick", onDblClick);
@@ -681,11 +864,19 @@ export function useCadViewport(
         axes,
         bendGroup,
         sweepGroup,
+        continuityGroup,
+        freeEdgeGroup,
+        cageGroup,
+        combGroup,
         measureGroup,
+        draftGroup,
         faceFill,
         onPointerDown,
         onClick,
         onDblClick,
+        onDraftPointerDown,
+        onDraftPointerMove,
+        onDraftPointerUp,
         cancelCameraTransition,
         restoreWorldUpOnInteract,
         clearClickTimer: () => {
@@ -714,12 +905,19 @@ export function useCadViewport(
           setAxes,
           setBendLines,
           setSweepPaths,
+          setSurfaceOverlay,
+          setAnalysis,
+          setDraftHandles,
           setFaceHighlights,
           setMeasure,
           clearMeasure,
           faceFillCount,
           faceFillDebug,
-          chrome: { grid: gridMesh, axes, bendLines: bendGroup, sweepPaths: sweepGroup, measure: measureGroup }, // dev/測試檢視用(visible/children 斷言)
+          chrome: {
+            grid: gridMesh, axes, bendLines: bendGroup, sweepPaths: sweepGroup, measure: measureGroup,
+            continuity: continuityGroup, freeEdges: freeEdgeGroup, cages: cageGroup, combs: combGroup, // 曲面分析 overlay
+            draft: draftGroup, // 草稿 live 層(曲線線段 + 把手球)
+          }, // dev/測試檢視用(visible/children 斷言)
         });
       }
     }
@@ -734,6 +932,12 @@ export function useCadViewport(
           if (s.onPointerDown) s.canvasEl.removeEventListener("pointerdown", s.onPointerDown);
           if (s.onClick) s.canvasEl.removeEventListener("click", s.onClick);
           if (s.onDblClick) s.canvasEl.removeEventListener("dblclick", s.onDblClick);
+          if (s.onDraftPointerDown) s.canvasEl.removeEventListener("pointerdown", s.onDraftPointerDown, { capture: true });
+          if (s.onDraftPointerMove) s.canvasEl.removeEventListener("pointermove", s.onDraftPointerMove);
+          if (s.onDraftPointerUp) {
+            s.canvasEl.removeEventListener("pointerup", s.onDraftPointerUp);
+            s.canvasEl.removeEventListener("pointercancel", s.onDraftPointerUp);
+          }
         }
         s.ro?.disconnect();
         s.cancelCameraTransition?.();
@@ -771,6 +975,14 @@ export function useCadViewport(
           }
           s.sweepGroup.parent?.remove(s.sweepGroup);
         }
+        for (const g of [s.continuityGroup, s.freeEdgeGroup, s.cageGroup, s.combGroup, s.draftGroup]) {
+          if (!g) continue;
+          for (const child of [...g.children]) {
+            child.geometry?.dispose?.(); // 極點球共用 poleGeo/poleMat,重複 dispose 無害
+            child.material?.dispose?.();
+          }
+          g.parent?.remove(g);
+        }
         if (s.measureGroup) {
           for (const child of [...s.measureGroup.children]) {
             child.geometry?.dispose?.();
@@ -787,5 +999,5 @@ export function useCadViewport(
       liveRef.current = {};
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [glbUrl, bendLines, sweepPaths]);
+  }, [glbUrl, bendLines, sweepPaths, surfaceOverlay]);
 }

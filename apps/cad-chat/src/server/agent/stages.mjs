@@ -12,6 +12,14 @@ export const STAGE_BY_TOOL = Object.freeze({
   mcp__cadchat__cad_present: 4, // 呈現
 });
 
+// 產品設計模式(5 段:理解/規劃/草稿/生成/呈現):草稿=surface_present_draft、生成=surface_build
+// (其內部呈現時由 surfaceBuild.mjs 直接 emit stage 4)。
+export const STAGE_BY_TOOL_PRODUCT = Object.freeze({
+  mcp__cadchat__emit_plan: 1,
+  mcp__cadchat__surface_present_draft: 2,
+  mcp__cadchat__surface_build: 3,
+});
+
 export const STAGE_UNDERSTAND = 0; // 回合開始即「理解」
 
 // 哪些模式由 runner 自動推階段(設計 + 電纜;草模/零件庫有自己的階段語意與 prompt)。
@@ -19,13 +27,14 @@ export function autoStageMode(mode) {
   return mode !== "sketch" && mode !== "library";
 }
 
-export function stageForTool(name) {
-  return Object.hasOwn(STAGE_BY_TOOL, name) ? STAGE_BY_TOOL[name] : null;
+export function stageForTool(name, mode = "design") {
+  const table = mode === "product" ? STAGE_BY_TOOL_PRODUCT : STAGE_BY_TOOL;
+  return Object.hasOwn(table, name) ? table[name] : null;
 }
 
 // 回傳該發出的 stage index(嚴格大於目前才發),否則 null。cur 為 null/undefined 視為 -1。
-export function nextStage(cur, toolName) {
-  const s = stageForTool(toolName);
+export function nextStage(cur, toolName, mode = "design") {
+  const s = stageForTool(toolName, mode);
   const c = typeof cur === "number" ? cur : -1;
   return s != null && s > c ? s : null;
 }

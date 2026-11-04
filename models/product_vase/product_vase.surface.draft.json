@@ -1,0 +1,202 @@
+{
+ "schemaVersion": 1,
+ "revision": 1,
+ "source": "user",
+ "updatedAt": 1791568450772,
+ "draft": {
+  "schemaVersion": 1,
+  "unit": "mm",
+  "revision": 1,
+  "result": "solid",
+  "symmetry": "YZ",
+  "fuse": true,
+  "curves": [
+   {
+    "id": "profile",
+    "kind": "spline",
+    "plane": "XZ",
+    "points": [
+     [
+      20,
+      0,
+      0
+     ],
+     [
+      31,
+      0,
+      28
+     ],
+     [
+      18,
+      0,
+      62
+     ],
+     [
+      16,
+      0,
+      86
+     ],
+     [
+      27,
+      0,
+      120
+     ]
+    ],
+    "closed": false
+   },
+   {
+    "id": "foot_ring",
+    "kind": "circle",
+    "center": [
+     19.5,
+     0,
+     3
+    ],
+    "normal": [
+     0,
+     1,
+     0
+    ],
+    "r": 3
+   },
+   {
+    "id": "neck_ring",
+    "kind": "circle",
+    "center": [
+     16.4,
+     0,
+     88
+    ],
+    "normal": [
+     0,
+     1,
+     0
+    ],
+    "r": 2
+   },
+   {
+    "id": "handle_rail",
+    "kind": "arc3",
+    "points": [
+     [
+      20,
+      0,
+      48
+     ],
+     [
+      41,
+      0,
+      76
+     ],
+     [
+      19.5,
+      0,
+      102
+     ]
+    ]
+   },
+   {
+    "id": "handle_prof",
+    "kind": "circle",
+    "center": [
+     20,
+     0,
+     48
+    ],
+    "normal": [
+     0.6,
+     0,
+     0.8
+    ],
+    "r": 3
+   }
+  ],
+  "surfaces": [
+   {
+    "id": "body",
+    "op": "revolve",
+    "role": "body",
+    "capped": false,
+    "curve": "profile",
+    "axis": {
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "dir": [
+      0,
+      0,
+      1
+     ]
+    },
+    "angle": 360
+   },
+   {
+    "id": "foot",
+    "op": "revolve",
+    "role": "body",
+    "capped": false,
+    "curve": "foot_ring",
+    "axis": {
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "dir": [
+      0,
+      0,
+      1
+     ]
+    },
+    "angle": 360
+   },
+   {
+    "id": "neck",
+    "op": "revolve",
+    "role": "body",
+    "capped": false,
+    "curve": "neck_ring",
+    "axis": {
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "dir": [
+      0,
+      0,
+      1
+     ]
+    },
+    "angle": 360
+   },
+   {
+    "id": "handle",
+    "op": "sweep",
+    "role": "body",
+    "capped": true,
+    "profile": "handle_prof",
+    "rail": "handle_rail",
+    "guide": null
+   }
+  ],
+  "ops": [
+   {
+    "op": "sew",
+    "tol": 0.01
+   },
+   {
+    "op": "thicken",
+    "t": 2.5,
+    "dir": "inward"
+   }
+  ],
+  "analysis": {
+   "minContinuity": "G1",
+   "creases": 0,
+   "zebra": true
+  }
+ }
+}

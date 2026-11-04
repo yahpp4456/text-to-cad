@@ -1248,7 +1248,24 @@ def _harvest_build_meta(module: object, raw_payload: object) -> dict[str, object
         "motionErrs": errs,
         "sweepPaths": _harvest_sweep_paths(module),
         "sweepView": _harvest_sweep_view(module),
+        "surface": _harvest_surface(module),
     }
+
+
+def _harvest_surface(module: object) -> dict[str, object] | None:
+    """產品設計模式(cadpy.surface)的分析收割:模組無 ``SURFACE_SPEC`` → None(零成本)。
+
+    幾何已在 gen_step 內由 SurfaceBuilder 建好並登記 registry,這裡只讀不重算;
+    任何失敗回 ``{"error": …}`` 而不是 raise(sidecar 是 best-effort)。
+    """
+    if not isinstance(getattr(module, "SURFACE_SPEC", None), dict):
+        return None
+    try:
+        from cadpy.surface import harvest_meta
+
+        return harvest_meta(module)
+    except Exception as exc:  # noqa: BLE001
+        return {"schemaVersion": 1, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def _write_build_meta_sidecar(

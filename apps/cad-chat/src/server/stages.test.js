@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { STAGE_BY_TOOL, STAGE_UNDERSTAND, autoStageMode, nextStage, stageForTool } from "./agent/stages.mjs";
+import { STAGE_BY_TOOL, STAGE_BY_TOOL_PRODUCT, STAGE_UNDERSTAND, autoStageMode, nextStage, stageForTool } from "./agent/stages.mjs";
 
 test("工具名 → 階段:plan=1 build=2 validate=3 present=4,其他 null", () => {
   assert.equal(stageForTool("mcp__cadchat__emit_plan"), 1);
@@ -30,9 +30,22 @@ test("單調遞增:只在嚴格大於目前階段時發;重試回頭 cad_build �
   assert.equal(nextStage(null, "Read"), null);
 });
 
-test("模式開關:design/cable 自動推進,sketch/library 不", () => {
+test("產品設計:emit_plan=1 surface_present_draft=2 surface_build=3;design 表不認 surface 工具", () => {
+  assert.equal(stageForTool("mcp__cadchat__emit_plan", "product"), 1);
+  assert.equal(stageForTool("mcp__cadchat__surface_present_draft", "product"), 2);
+  assert.equal(stageForTool("mcp__cadchat__surface_build", "product"), 3);
+  assert.equal(stageForTool("mcp__cadchat__cad_build", "product"), null);
+  assert.equal(stageForTool("mcp__cadchat__surface_build", "design"), null);
+  assert.equal(Object.keys(STAGE_BY_TOOL_PRODUCT).length, 3);
+  assert.equal(nextStage(0, "mcp__cadchat__surface_present_draft", "product"), 2);
+  assert.equal(nextStage(2, "mcp__cadchat__surface_present_draft", "product"), null, "迭代 patch 不倒退");
+  assert.equal(nextStage(2, "mcp__cadchat__surface_build", "product"), 3);
+});
+
+test("模式開關:design/cable/product 自動推進,sketch/library 不", () => {
   assert.equal(autoStageMode("design"), true);
   assert.equal(autoStageMode("cable"), true);
+  assert.equal(autoStageMode("product"), true);
   assert.equal(autoStageMode("sketch"), false);
   assert.equal(autoStageMode("library"), false);
 });

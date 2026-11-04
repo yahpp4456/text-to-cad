@@ -36,6 +36,7 @@ import {
   paramValuesFromGenerator,
   pickGenerator,
   readCableSpec,
+  readFlatJsonDecl,
   readTemplateMeta,
   resolveImportSource,
   rewriteParams,
@@ -46,6 +47,18 @@ import {
   validateSnapshotFull,
 } from "../cad/pipeline.mjs";
 import { emitSketchPresent, sketchFileName } from "../sketch/present.mjs";
+import { readDraft, resetDraftFromGenerator } from "../cad/surfaceDraft.mjs";
+import { readEmbeddedSpec } from "../cad/surfaceGen.mjs";
+
+// 產品設計產生器偵測:SURFACE_SPEC 是 Python 字面值(None/True/False),readFlatJsonDecl 的
+// JSON.parse 讀不了 → 用編譯器自己的 readEmbeddedSpec(會先把字面值轉回 JSON)。
+function generatorSurfaceSpec(session, name) {
+  try {
+    return readEmbeddedSpec(fs.readFileSync(path.join(session.workdir, `${sanitizeName(name)}.py`), "utf8"));
+  } catch {
+    return null;
+  }
+}
 
 const REBUILD_TIMEOUT_MS = 300_000; // 開專案同步重建上限(大組合件 tessellation 較久)
 const FACTS_TIMEOUT_MS = 30_000;
@@ -232,6 +245,12 @@ async function handleOpenProject(body, res, ctx = {}) {
   }
   session.lastName = name;
   session.rehydratedFrom = clean;
+  // 產品設計專案(產生器嵌 SURFACE_SPEC):session 剛 mint、尚無回合,mode 直接採 product;
+  // 工作草稿不在(存出去的專案沒帶 .surface.draft.json)就從嵌入的 spec 重建。
+  if (generatorSurfaceSpec(session, name)) {
+    session.mode = "product";
+    if (!readDraft(session, name)) resetDraftFromGenerator(session, name);
+  }
   persistSession(session);
   // 參數覆寫(規格表單「直接生成」):在 runStep 之前決定性改寫 PARAMS,一次 build
   // 就得到使用者要的配置(免「先建範本預設值、再重生一次」雙倍等待)。值已於 mint
@@ -410,11 +429,16 @@ async function handleRevertVersion(body, res, ctx = {}) {
     // 快照複回頂層;單件版要清掉頂層殘留的 asm.json,type 才不會誤判成組合件。
     // .flat.step.glb + .flat.lines.json:攤平預覽 GLB 與折彎線也複回(回退版要能用)。
     // .sweep.json:掃出路徑 overlay 同理——快照沒有就刪頂層殘留(防 stale overlay)。
-    for (const f of [`${name}.py`, `${name}.step`, `.${name}.step.glb`, `.${name}.flat.step.glb`, `.${name}.flat.lines.json`, `.${name}.sweep.json`, `${name}.asm.json`, `.${name}.step.js`]) {
+    // .surface.json / .surface.draft.json:曲面分析 overlay 與工作草稿同理跟版(產品設計)。
+    for (const f of [`${name}.py`, `${name}.step`, `.${name}.step.glb`, `.${name}.flat.step.glb`, `.${name}.flat.lines.json`, `.${name}.sweep.json`, `.${name}.surface.json`, `${name}.surface.draft.json`, `${name}.asm.json`, `.${name}.step.js`]) {
       const src = path.join(snapDir, f);
       const dst = path.join(session.workdir, f);
       if (fs.existsSync(src)) fs.copyFileSync(src, dst);
-      else if ((f === `${name}.asm.json` || f === `.${name}.flat.step.glb` || f === `.${name}.flat.lines.json` || f === `.${name}.sweep.json`) && fs.existsSync(dst)) fs.rmSync(dst);
+      else if ((f === `${name}.asm.json` || f === `.${name}.flat.step.glb` || f === `.${name}.flat.lines.json` || f === `.${name}.sweep.json` || f === `.${name}.surface.json`) && fs.existsSync(dst)) fs.rmSync(dst);
+    }
+    // 回退的快照沒凍草稿(舊版本)→ 以該版產生器嵌的 spec 重設工作草稿,工作窗跟著回到該版
+    if (session.mode === "product" && !fs.existsSync(path.join(snapDir, `${name}.surface.draft.json`))) {
+      resetDraftFromGenerator(session, name);
     }
     session.lastName = name;
     if (Number(meta.partCount) > 0) session.lastPartCount = Number(meta.partCount);

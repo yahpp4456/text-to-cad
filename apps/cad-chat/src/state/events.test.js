@@ -166,3 +166,21 @@ test("session 事件:library mode dispatch SET_MODE", () => {
   const actions = collect("session", { sessionId: "s_library", mode: "library" });
   assert.deepEqual(actions[1], { type: "SET_MODE", mode: "library" });
 });
+
+test("version/present 事件:surfaceUrl 透傳(產品設計分析 overlay;缺 → null)", () => {
+  const v = collect("version", { id: "v1", name: "x", glbUrl: "u", surfaceUrl: "sf" });
+  assert.equal(v[0].version.surfaceUrl, "sf");
+  assert.equal(collect("version", { id: "v2", name: "x", glbUrl: "u" })[0].version.surfaceUrl, null);
+  const p = collect("present", { glbUrl: "u", name: "x", code: "x", ver: "o1", surfaceUrl: "sf" });
+  assert.equal(p[0].surfaceUrl, "sf");
+  assert.equal(collect("present", { glbUrl: "u", name: "x", code: "x", ver: "o2" })[0].surfaceUrl, null);
+});
+
+test("surface_draft 事件 → SET_SURFACE_DRAFT(帶 name/revision/draft/source;壞 payload → null)", () => {
+  const d = collect("surface_draft", { name: "mouse", revision: 3, draft: { schemaVersion: 1, curves: [] }, source: "ai" });
+  assert.equal(d.length, 1);
+  assert.equal(d[0].type, "SET_SURFACE_DRAFT");
+  assert.deepEqual(d[0].surfaceDraft, { name: "mouse", revision: 3, draft: { schemaVersion: 1, curves: [] }, source: "ai" });
+  assert.equal(collect("surface_draft", { name: "mouse" })[0].surfaceDraft, null);
+  assert.equal(collect("surface_draft", { name: "m", revision: "x", draft: {}, source: "user" })[0].surfaceDraft.source, "user");
+});

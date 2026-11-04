@@ -1,0 +1,199 @@
+{
+ "schemaVersion": 1,
+ "revision": 1,
+ "source": "user",
+ "updatedAt": 1791568469858,
+ "draft": {
+  "schemaVersion": 1,
+  "unit": "mm",
+  "revision": 1,
+  "result": "solid",
+  "symmetry": "YZ",
+  "fuse": true,
+  "curves": [
+   {
+    "id": "head_arc",
+    "kind": "arc3",
+    "plane": "XZ",
+    "points": [
+     [
+      0,
+      0,
+      -20
+     ],
+     [
+      20,
+      0,
+      0
+     ],
+     [
+      0,
+      0,
+      20
+     ]
+    ]
+   },
+   {
+    "id": "ear_arc",
+    "kind": "arc3",
+    "plane": "XZ",
+    "points": [
+     [
+      16,
+      0,
+      9
+     ],
+     [
+      27,
+      0,
+      20
+     ],
+     [
+      16,
+      0,
+      31
+     ]
+    ]
+   },
+   {
+    "id": "eye_arc",
+    "kind": "arc3",
+    "points": [
+     [
+      7,
+      -17.5,
+      2.5
+     ],
+     [
+      7,
+      -14.5,
+      5.5
+     ],
+     [
+      7,
+      -17.5,
+      8.5
+     ]
+    ]
+   },
+   {
+    "id": "nose_arc",
+    "kind": "arc3",
+    "points": [
+     [
+      0,
+      -19,
+      -5.5
+     ],
+     [
+      0,
+      -14.5,
+      -1
+     ],
+     [
+      0,
+      -19,
+      3.5
+     ]
+    ]
+   }
+  ],
+  "surfaces": [
+   {
+    "id": "head",
+    "op": "revolve",
+    "role": "body",
+    "capped": false,
+    "curve": "head_arc",
+    "axis": {
+     "origin": [
+      0,
+      0,
+      0
+     ],
+     "dir": [
+      0,
+      0,
+      1
+     ]
+    },
+    "angle": 360
+   },
+   {
+    "id": "ear",
+    "op": "revolve",
+    "role": "body",
+    "capped": false,
+    "curve": "ear_arc",
+    "axis": {
+     "origin": [
+      16,
+      0,
+      20
+     ],
+     "dir": [
+      0,
+      0,
+      1
+     ]
+    },
+    "angle": 360
+   },
+   {
+    "id": "eye",
+    "op": "revolve",
+    "role": "body",
+    "capped": false,
+    "curve": "eye_arc",
+    "axis": {
+     "origin": [
+      7,
+      -17.5,
+      5.5
+     ],
+     "dir": [
+      0,
+      0,
+      1
+     ]
+    },
+    "angle": 360
+   },
+   {
+    "id": "nose",
+    "op": "revolve",
+    "role": "body",
+    "capped": false,
+    "curve": "nose_arc",
+    "axis": {
+     "origin": [
+      0,
+      -19,
+      -1
+     ],
+     "dir": [
+      0,
+      0,
+      1
+     ]
+    },
+    "angle": 360
+   }
+  ],
+  "ops": [
+   {
+    "op": "sew",
+    "tol": 0.01
+   },
+   {
+    "op": "fillet",
+    "r": 1.5
+   }
+  ],
+  "analysis": {
+   "minContinuity": "G1",
+   "creases": 0,
+   "zebra": true
+  }
+ }
+}

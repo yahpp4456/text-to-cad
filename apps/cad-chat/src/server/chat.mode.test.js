@@ -96,3 +96,11 @@ test("cable:有歷史的 cable session 拒絕 design;相符通過;缺席沿用",
   assert.deepEqual(resolveTurnMode({ mode: "cable" }, session), { ok: true, mode: "cable" });
   assert.deepEqual(resolveTurnMode({}, session), { ok: true, mode: "cable" });
 });
+
+test("product 模式:處女 session 採納;已有歷史的 design session 要 product → mode_mismatch", () => {
+  const r = resolveTurnMode({ mode: "product" }, virgin());
+  assert.deepEqual(r, { ok: true, mode: "product", adopt: true });
+  const r2 = resolveTurnMode({ mode: "product" }, built());
+  assert.equal(r2.ok, false);
+  assert.equal(r2.error, "mode_mismatch");
+});

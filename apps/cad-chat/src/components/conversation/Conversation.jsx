@@ -80,6 +80,14 @@ const EXAMPLES_SKETCH = [
   { text: "兩軸取放:水平滑台 + 升降夾爪的動作流程", accent: "var(--ink)" },
 ];
 
+// 產品設計模式的閒置範例:造型題(殼/實體、對稱、尺寸級別、殼厚都講清楚 → 不觸發澄清直接成形)
+const EXAMPLES_PRODUCT = [
+  { text: "對稱的滑鼠上蓋:三條截面線放樣,前後端 G2,殼厚 2 mm,約 120×65×38", accent: "var(--product)" },
+  { text: "花瓶:旋轉樣條成殼,壁厚 2.5 mm,高 120、最寬 60,加一對把手", accent: "var(--emit)" },
+  { text: "米老鼠頭玩偶:三顆球融合成實體,直徑 50 mm,加眼睛、鼻子與圓角", accent: "var(--part)" },
+  { text: "法拉利風格流線跑車實體,長 400 mm,半模對稱,要座艙、輪拱、四輪、尾翼與車燈", accent: "var(--ink)" },
+];
+
 // (零件庫模式無閒置範例:硬閘=先上傳 STP 才會開始,空狀態是 LibraryDropzone)
 
 export default function Conversation({
@@ -147,6 +155,12 @@ export default function Conversation({
                     <br />
                     當場生成整組無塵電纜。
                   </>
+                ) : mode === "product" ? (
+                  <>
+                    描述造型,
+                    <br />
+                    看 AI 鋪出曲面。
+                  </>
                 ) : (
                   <>
                     描述零件,
@@ -162,7 +176,9 @@ export default function Conversation({
                     ? "把原廠 STP 交給 AI:先呈現 3D 外形並量測尺寸,訪談名稱/型號/分類後收進零件庫;之後在「設計」模式一句話就能引用。"
                     : mode === "cable"
                       ? "主線在右側「無塵電纜工作台」:選範本 → 填規格 → 直接生成(不經 AI,幾何當場算)。這裡的對話留給表單涵蓋不到的事——上傳客戶 STEP+工程圖做量測擬合、型錄選型、改帶型或層數。"
-                      : "用自然語言描述你要的機構或零件。AI 會解析規格 → 規劃 → 參數化生成 → 自我檢查與修正 → 把 3D 模型載入右側畫布。"}
+                      : mode === "product"
+                        ? "用自然語言描述外觀造型:殼或實體、對不對稱、尺寸級別、殼厚。AI 以曲線鋪曲面 → 縫合成殼或實體 → 用斑馬紋與連續性檢視品質;草稿會出現在左側工作窗,可直接拖曳控制點、改數值,再按「確認生成」。"
+                        : "用自然語言描述你要的機構或零件。AI 會解析規格 → 規劃 → 參數化生成 → 自我檢查與修正 → 把 3D 模型載入右側畫布。"}
               </span>
             </div>
             {mode === "library" ? (
@@ -178,7 +194,14 @@ export default function Conversation({
                 <span className="empty-examples-eyebrow">
                   {mode === "cable" ? "表單以外 · 用對話" : "範例 · 點擊開始"}
                 </span>
-                {(mode === "sketch" ? EXAMPLES_SKETCH : mode === "cable" ? EXAMPLES_CABLE : EXAMPLES).map((ex, i) => (
+                {(mode === "sketch"
+                  ? EXAMPLES_SKETCH
+                  : mode === "cable"
+                    ? EXAMPLES_CABLE
+                    : mode === "product"
+                      ? EXAMPLES_PRODUCT
+                      : EXAMPLES
+                ).map((ex, i) => (
                   <a className="example" key={i} onClick={() => onSubmitText(ex.text)}>
                     <span className="example-bar" style={{ background: ex.accent }} />
                     <span className="example-text">{ex.text}</span>

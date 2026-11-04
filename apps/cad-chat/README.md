@@ -377,6 +377,87 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
   查庫回答 → **庫件匯入新設計 session 配安裝底板組裝**——產生器引用 imported/
   的磁碟證據)。
 
+## 產品設計模式(2026-10-10,第五聊天模式;Alias 式曲面)
+
+Header 切換器第二段「◐ 產品設計」(`mode: "product"`;原「設計」更名為「機構設計」,內部 id
+仍是 `design`)。定位:**以曲線建曲面**(放樣/掃掠/旋轉/補面/Gordon)→ 半模鏡射 → 縫合 →
+加厚或閉殼成實體 → 切除/附加細節 → 圓角,並用連續性(G0/G1/G2)、斑馬紋、控制點籠、曲率梳
+檢視品質。屬設計鏈(`isDesignLike`):版本時間軸/匯出/就地儲存/精算全開;DEMO 先隱藏。
+
+- **產物路線**:agent **不手寫 build123d**,只產 `surface-draft-v1` 草稿 JSON
+  (`surface_present_draft`,可 patch 局部合併;單一真相 `src/lib/surface/surfaceSchema.js`,
+  Python 鏡射 `cadpy.surface.spec`,共用範例 `src/lib/surface/examples/*.json` 互鎖)。
+  `surfaceGen.mjs` 把草稿編成固定格式產生器(嵌 `SURFACE_SPEC` Python 字面值;讀回用
+  `readEmbeddedSpec`,**不是** `readFlatJsonDecl`——後者 JSON.parse 吃不了 None/True),
+  `gen_step()` = `cadpy.surface.SurfaceBuilder(SURFACE_SPEC, PARAMS).build()`;幾何語意與
+  kernel 陷阱全部收在 `cadpy.surface`(ValueError 閘;事實表見
+  `skills/cad/references/surface-modeling.md`)。純量 `thick/fillet_r/revolve_deg` 自動升格成
+  PARAMS 滑桿(決定性重生照舊走 `rewriteParams`;`/api/surface-build` 會先把磁碟 PARAMS 套回草稿)。
+- **草稿契約要點**:`symmetry`(半模;對稱面上的截面端點切線必須垂直該平面,否則成形閘擋)、
+  `surfaces[].role` = body(先融合)/cut(融合後減掉:輪拱、滾輪槽)/add(**切除後**才融合:輪子、
+  把手)、`capped`(loft/extrude/revolve/sweep 的自由邊迴圈補平面端蓋成閉殼)、`analysis.minContinuity`
+  + `creases`(設計殼內邊的最低連續性;平面端蓋鄰邊不計)。
+- **端點**(`middleware/surface.mjs`,product session 專用,其他 mode 400 `mode_mismatch`):
+  `GET/POST /api/surface-draft`(無 sessionId 的 POST 會 mint product session;`baseRevision`
+  不符 409 `revision_conflict`;壞草稿 400 `invalid_draft` 帶 `errors[{path,message}]`;`discard`)、
+  `POST /api/surface-build`(零 LLM:完整驗證 → 編譯 → `buildOrRollback` → 快路徑驗證 →
+  `emitPresent`,JSON 帶回 version/present/params/validate/summary)。
+- **工具**(`agent/tools.product.mjs`;無 cad_build):`surface_get_draft`/`surface_present_draft`
+  (SSE `surface_draft` 事件 → store `surfaceDraft`)/`surface_build`/`surface_report`(每邊 G 等級與
+  法向夾角、曲率偏差)。prompt `agent/prompt.product.mjs`:內嵌範例=`examples/mouse_shell.json`
+  (測試以真 validator 鎖)、Alias 方法(主/次/三級面、對稱面切線、厚度 ≤ 0.5×最小曲率半徑)、
+  **澄清硬規則**:殼/實體、對稱、尺寸級別、殼厚任一假設 → 必 emit_clarify(使用者明說免問才跳過)。
+  `prompt.mjs`(機構設計)加一句:明顯造型題建議切到產品設計。階段列 5 段 理解/規劃/草稿/生成/呈現
+  (`stages.mjs STAGE_BY_TOOL_PRODUCT`)。
+- **驗證剖面**:validate.py 讀 `SURFACE_SPEC` → `valid_shape`「有效幾何 (BRepCheck)」(full 才跑)、
+  `free_edges`「開放邊 free-edges」(solid 必 0)、`continuity`「邊連續性 continuity」(設計殼內邊
+  ≥ minContinuity;加厚/圓角後的側壁不算)+ 其餘 skipped;快路徑 `surfaceChecksFromMeta` 由 build
+  收割(`generation._harvest_build_meta` 的 `surface` 欄,來自 `SurfaceBuilder` 程序內 registry,零重算)
+  出**真值**,文案兩邊逐字鎖(`pipeline.design.test.js` + `tests/test_validate_surface.py`)。
+- **分析 overlay**:`.{name}.surface.json` sidecar(edges/finalEdges/freeEdges/faces/cages/curves/combs/
+  summary)→ `surfaceUrl` **完全鏡射 sweepPathsUrl 全鏈**(快照凍結、revert 複回、`OWNED_HIDDEN_SUFFIXES`、
+  emitPresent、events/chatStore/App.jsx 兩處手組 PRESENT)→ `src/lib/surfaceOverlay.js`(純轉換)→
+  `useCadViewport` 四群組(連續性 G0 紅/G1 黃/G2 綠/端蓋灰、開放邊洋紅虛線、控制點籠、曲率梳,
+  `depthTest:false`)+ 斑馬紋走 cadjs `cadScene.js` 的 surface-edge shader 鉤新 uniform
+  (`setSurfaceAnalysis`,預設 mode none = 既有輸出零變;**改正本後手動同步 viewer/packages/cadjs**)。
+  chips「◧ 斑馬 / ⌇ 連續性 / ◌ 開放邊 / ⊡ 控制點 / ⫞ 曲率梳」(`.tool-chip.surface-toggle[data-key]`),
+  dev 鉤 `window.__cadSurface`。工作草稿 `<name>.surface.draft.json` 與 `.surface.json` 跟版凍結;
+  開舊專案/回退時由產生器嵌的 spec 重設草稿(`resetDraftFromGenerator`)。
+- **空狀態**(`Conversation.jsx`):產品設計有自己的 hero(「描述造型,看 AI 鋪出曲面」)與
+  `EXAMPLES_PRODUCT` 四條造型範例(滑鼠上蓋/花瓶/米老鼠/跑車;殼或實體、對稱、尺寸、殼厚都講明,
+  點了不觸發澄清直接成形)——別再沿用機構設計的法蘭/軸承座範例。
+- **曲面草稿工作窗**(`SurfaceWindow.jsx`;左上「✎ 草稿」開關,不綁 GLB):對話送來新草稿
+  (SSE `surface_draft`,source ai)就自動開窗;停靠視圖**左側**,右側留給 3D。狀態核心在
+  `hooks/useDraftEditor.js`(Canvas3D 持有;窗只是視圖):復原/重做(`lib/draft/revision.js`,
+  上限 50)、選取曲線(3D 同步高亮)、本地即時驗證(`validateDraft` 全驗 → 錯誤列 + 確認鈕停用)、
+  **自動保存**(600 ms 去抖 `POST /api/surface-draft` 帶 `baseRevision`;409 = 對話/回退改了草稿
+  → 以伺服端草稿重建歷史並出 `.surfwin-notice`;對話回合中延後重試;無 session 時首存自動 mint)、
+  重設為對話最後草稿、兩段式捨棄、「確認生成」= flush 後 `POST /api/surface-build`(App
+  `onSurfaceBuilt` 分發 version/present/params,零 LLM)。**3D live 層**(`lib/draft/draftView.js`
+  → `useCadViewport.setDraftHandles`):每條曲線折線(bezier/nurbs/arc3/circle/line 以
+  `lib/surface/nurbsEval.js` 精確求值,golden 對 kernel 逐點;**spline 為 Catmull-Rom 近似虛線**,
+  生成後以實際為準)+ 對稱鏡射淡線 + 把手球;**拖曳**在 canvas 的 capture 階段先於
+  OrbitControls 攔 pointerdown(命中把手才接管,環繞不啟動),pointermove 以相機射線交「過把手
+  原位的工作平面」(`lib/draft/dragHandles.js`:草稿 `plane` 優先,否則最正對視線的主平面;
+  第三軸不變),放手才進歷史與保存。換版(生成/回退/開專案)時 Canvas3D 會 `GET /api/surface-draft`
+  對齊 revision(JSON 路徑不帶草稿、回退會 bump)。無 GLB 時(草稿先於第一次生成)只有特徵樹/
+  數值編輯,沒有 3D 把手。dev 鉤 `window.__cadSurfaceWin`(open/draft/revision/selected/errors/
+  dirty/history/handles/screenPos/drag/undo/redo/flush/build)。
+- **範本**(`models/product_{vase,mouse_shell,mickey,roadster}`,prompt 只列真的存在的):花瓶
+  (雙把手/足環/頸環)、滑鼠上蓋(滾輪槽/拇指凹槽/底板)、米老鼠頭(眼鼻+圓角)、法拉利風格跑車
+  (座艙/輪拱/四輪/尾翼/車燈)。重建:`tmp` 的草稿經 `/api/surface-draft` → `/api/surface-build` →
+  `/api/save-project`。
+- **驗證**:py `tests/python/packages/cadpy/test_surface_{spec,geometry}.py`(閉式、連續性 golden、
+  must-FAIL 閘;先 sync-vendored)、`apps/cad-chat/tests/test_validate_surface.py`;L1
+  `src/lib/surface/*.test.js` + `src/lib/draft/*.test.js`(**node --test 要明列子目錄**;nurbsEval
+  golden 由 `geom_adaptor().Value(u)` 現算——build123d `position_at(t, PARAMETER)` 是弧長正規化,
+  對 bezier/nurbs 不是曲線參數)、`surfaceDraft/surfaceGen/surfaceOverlay/
+  prompt.product/stages/chatModes/events/chatStore` 案例、cadjs `cadScene.test.js`;L2/L3
+  `smoke_product_mode.py`(API 鏈+負案)、`smoke_product_overlay.py`(chips/探針/斑馬)、
+  `smoke_product_window.py`(工作窗:特徵樹/數值/模擬拖曳/復原重做/自動保存 409/生成/回灌/捨棄);L4
+  `smoke_product_live.py`(滑鼠上蓋:草稿→成形→迭代,零 cad_*)、`smoke_product_clarify_live.py`
+  (未指明殼/實體/對稱/尺寸 → 必問)。目視:`tmp/product_batch/*.png`(三視圖渲染腳本)。
+
 ## 無塵電纜模式(CABLE,2026-08-24)
 
 第四聊天模式 `cable`:**設計模式的特化,不是受限模式**——完整設計鏈

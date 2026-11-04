@@ -9,7 +9,9 @@ import {
   applyPartVisualState,
   buildModel,
   CAD_DISPLAY_MODE,
-  normalizeDisplayMode
+  normalizeDisplayMode,
+  setSurfaceAnalysis,
+  SURFACE_ANALYSIS_MODES
 } from "./cadScene.js";
 import {
   DEFAULT_DISPLAY_EDGE_SETTINGS
@@ -681,5 +683,46 @@ test("buildModel can apply STEP parameter effects while deferring setup lifecycl
   assert.equal(left.mesh.matrix.elements[12], 5);
   assert.equal(scene.bounds.min[0], 2);
   assert.equal(scene.bounds.max[0], 6);
+  scene.dispose();
+});
+
+test("setSurfaceAnalysis toggles zebra uniforms on surface-edge materials without recompiling (default off)", () => {
+  const meshData = sampleMeshData();
+  meshData.surfaceEdgeBarycentric = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1]);
+  meshData.surfaceEdgeClass = new Uint8Array([1, 1, 0, 1, 1, 0, 1, 1, 0, 2, 3, 0, 2, 3, 0, 2, 3, 0]);
+  const scene = buildModel(THREE, meshData, {
+    theme: cloneThemeSettings("workbench"),
+    displayMode: CAD_DISPLAY_MODE.SOLID,
+    renderPartsIndividually: true
+  });
+  const material = scene.displayRecords[0].material;
+  assert.deepEqual([...SURFACE_ANALYSIS_MODES], ["none", "zebra"]);
+  // compile the shader through the hook the way three would
+  const shader = {
+    uniforms: {},
+    vertexShader: "#include <common>\n#include <begin_vertex>",
+    fragmentShader: "#include <common>\n#include <opaque_fragment>"
+  };
+  material.onBeforeCompile(shader);
+  assert.equal(shader.uniforms.cadAnalysisMode.value, 0, "預設關:輸出與既有完全相同");
+  assert.ok(shader.fragmentShader.includes("cadZebraBand"));
+  assert.ok(shader.fragmentShader.includes("if (cadAnalysisMode > 0.5)"));
+  assert.equal(material.customProgramCacheKey(), "cad-surface-edges-v3");
+  const applied = setSurfaceAnalysis(THREE, scene.displayRecords, { mode: "zebra", freq: 14, dir: [1, 0, 0] });
+  assert.deepEqual(applied, { mode: "zebra", freq: 14, dir: [1, 0, 0] });
+  assert.equal(shader.uniforms.cadAnalysisMode.value, 1);
+  assert.equal(shader.uniforms.cadZebraFreq.value, 14);
+  assert.deepEqual(shader.uniforms.cadZebraDir.value.toArray(), [1, 0, 0]);
+  assert.equal(material.userData.cadAnalysis.mode, "zebra");
+  // garbage → none;未編譯的材質也記住設定(編譯時帶入)
+  assert.equal(setSurfaceAnalysis(THREE, scene.displayRecords, { mode: "bogus" }).mode, "none");
+  assert.equal(shader.uniforms.cadAnalysisMode.value, 0);
+  const fresh = scene.displayRecords[1].material;
+  fresh.userData.cadAnalysis = { mode: "zebra" };
+  const shader2 = { uniforms: {}, vertexShader: "#include <common>\n#include <begin_vertex>", fragmentShader: "#include <common>\n#include <opaque_fragment>" };
+  fresh.onBeforeCompile(shader2);
+  assert.equal(shader2.uniforms.cadAnalysisMode.value, 1);
+  // 沒有 surface-edge 鉤的材質靜默略過
+  assert.equal(setSurfaceAnalysis(THREE, [{ mesh: { material: new THREE.MeshBasicMaterial() } }], { mode: "zebra" }).mode, "zebra");
   scene.dispose();
 });

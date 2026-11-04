@@ -383,6 +383,47 @@ function surfaceEdgeClassSetting(edgeSettings = {}, classId, fallbackColor = "#1
   };
 }
 
+// 曲面分析著色(cad-chat 產品設計模式;2026-10-10):斑馬紋 = 反射向量在固定視空間方向上的
+// 週期條紋(Alias/Rhino Zebra 同原理:條紋折=G0、有角=G1、順滑=G2)。走同一個 onBeforeCompile 鉤,
+// uniform 驅動、不重編譯;預設 mode 0 = 完全不改既有輸出(其他模式/viewer 零回歸)。
+export const SURFACE_ANALYSIS_MODES = Object.freeze(["none", "zebra"]);
+const DEFAULT_SURFACE_ANALYSIS = Object.freeze({ mode: "none", freq: 10, dir: [0, 1, 0] });
+
+function normalizeSurfaceAnalysis(settings = {}) {
+  const mode = SURFACE_ANALYSIS_MODES.includes(settings?.mode) ? settings.mode : "none";
+  const freq = Number.isFinite(Number(settings?.freq)) && Number(settings.freq) > 0 ? Number(settings.freq) : DEFAULT_SURFACE_ANALYSIS.freq;
+  const dir = Array.isArray(settings?.dir) && settings.dir.length === 3 && settings.dir.every((v) => Number.isFinite(Number(v)))
+    ? settings.dir.map(Number)
+    : [...DEFAULT_SURFACE_ANALYSIS.dir];
+  return { mode, freq, dir };
+}
+
+function applySurfaceAnalysisUniforms(THREE, material) {
+  const a = normalizeSurfaceAnalysis(material.userData.cadAnalysis);
+  const uniforms = material.userData.cadSurfaceEdgeShader?.uniforms;
+  if (!uniforms) return;
+  if (uniforms.cadAnalysisMode) uniforms.cadAnalysisMode.value = a.mode === "zebra" ? 1 : 0;
+  if (uniforms.cadZebraFreq) uniforms.cadZebraFreq.value = a.freq;
+  if (uniforms.cadZebraDir) uniforms.cadZebraDir.value.set(a.dir[0], a.dir[1], a.dir[2]);
+}
+
+/**
+ * 對一組 display records(buildModel 的 displayRecords)切換曲面分析著色。
+ * 回傳實際套用的設定;沒有 surface-edge shader 鉤的材質(邊線關閉)靜默略過。
+ */
+export function setSurfaceAnalysis(THREE, records, settings = {}) {
+  const a = normalizeSurfaceAnalysis(settings);
+  for (const record of Array.isArray(records) ? records : []) {
+    const materials = Array.isArray(record?.mesh?.material) ? record.mesh.material : [record?.mesh?.material || record?.material];
+    for (const material of materials) {
+      if (!material?.userData?.cadSurfaceEdges) continue;
+      material.userData.cadAnalysis = { ...a };
+      applySurfaceAnalysisUniforms(THREE, material);
+    }
+  }
+  return a;
+}
+
 function addCadSurfaceEdgeShader(THREE, material, edgeSettings = {}, baseTheme = DEFAULT_THEME) {
   const baseEdgeColor = edgeSettings?.color || baseTheme?.edge || DEFAULT_THEME.edge;
   const classSettings = Object.fromEntries(
@@ -423,6 +464,12 @@ function addCadSurfaceEdgeShader(THREE, material, edgeSettings = {}, baseTheme =
     shader.uniforms.cadSurfaceTangentOpacity = { value: classSettings.tangent.opacity };
     shader.uniforms.cadSurfaceSeamOpacity = { value: classSettings.seam.opacity };
     shader.uniforms.cadSurfaceDegenerateOpacity = { value: classSettings.degenerate.opacity };
+    {
+      const a = normalizeSurfaceAnalysis(material.userData.cadAnalysis);
+      shader.uniforms.cadAnalysisMode = { value: a.mode === "zebra" ? 1 : 0 };
+      shader.uniforms.cadZebraFreq = { value: a.freq };
+      shader.uniforms.cadZebraDir = { value: new THREE.Vector3(a.dir[0], a.dir[1], a.dir[2]) };
+    }
     shader.vertexShader = shader.vertexShader
       .replace(
         "#include <common>",
@@ -455,8 +502,21 @@ uniform float cadSurfaceFeatureOpacity;
 uniform float cadSurfaceTangentOpacity;
 uniform float cadSurfaceSeamOpacity;
 uniform float cadSurfaceDegenerateOpacity;
+uniform float cadAnalysisMode;
+uniform float cadZebraFreq;
+uniform vec3 cadZebraDir;
 varying vec3 vCadSurfaceEdgeBarycentric;
 varying vec3 vCadSurfaceEdgeClass;
+
+// 斑馬紋:反射向量 r = reflect(-viewDir, n)(視空間)投到固定方向 cadZebraDir 的週期條紋,
+// smoothstep 以 fwidth 抗鋸齒;回 0..1 的明暗(黑白條)。
+float cadZebraBand(vec3 n, vec3 viewDir) {
+  vec3 r = reflect(-viewDir, n);
+  float s = dot(r, normalize(cadZebraDir)) * cadZebraFreq;
+  float t = abs(fract(s) - 0.5) * 2.0;
+  float aa = max(fwidth(t), 0.002);
+  return smoothstep(0.5 - aa, 0.5 + aa, t);
+}
 
 float cadSurfaceEdgeThicknessFor(float classCode) {
   if (classCode < 0.5) {
@@ -539,14 +599,20 @@ vec4 cadSurfaceEdgeLayer() {
       )
       .replace(
         "#include <opaque_fragment>",
-        `vec4 cadSurfaceEdgeMix = cadSurfaceEdgeLayer();
+        `if (cadAnalysisMode > 0.5) {
+  vec3 cadZebraN = normalize(normal);
+  vec3 cadZebraV = normalize(vViewPosition);
+  float cadZebra = cadZebraBand(cadZebraN, cadZebraV);
+  outgoingLight = mix(vec3(0.06, 0.07, 0.09), vec3(0.96, 0.97, 0.98), cadZebra);
+}
+vec4 cadSurfaceEdgeMix = cadSurfaceEdgeLayer();
 if (cadSurfaceEdgeMix.a > 0.0) {
   outgoingLight = mix(outgoingLight, cadSurfaceEdgeMix.rgb, cadSurfaceEdgeMix.a);
 }
 #include <opaque_fragment>`
       );
   };
-  material.customProgramCacheKey = () => "cad-surface-edges-v2";
+  material.customProgramCacheKey = () => "cad-surface-edges-v3";
 }
 
 function createSurfaceMaterial(THREE, baseTheme, { color, useVertexColors = false, edgeSettings = null } = {}) {
