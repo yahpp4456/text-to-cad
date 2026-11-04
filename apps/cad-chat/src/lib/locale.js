@@ -9,7 +9,8 @@ export const LOCALE_KEY = "cadchat.locale"; // localStorage 鍵(照 cadchat.mode
 export const isLocale = (v) => LOCALES.includes(v);
 export const normalizeLocale = (v) => (isLocale(v) ? v : DEFAULT_LOCALE);
 
-// 從瀏覽器語言清單(navigator.language / navigator.languages)推文字系統:
+// 從瀏覽器語言清單(navigator.language / navigator.languages)推文字系統(保留純函式,
+// 但 2026-10-27 起前端 localeStore 不再呼叫——Sam 決定一律預設繁體,簡體由使用者手動切):
 // 取第一個 zh 開頭的 tag;帶 Hans/CN/SG/MY 子標 → 簡體,其餘(TW/HK/MO/Hant/裸 zh)→ 繁體;
 // 沒有 zh → 繁體(產品預設)。
 export function detectLocale(languages = []) {

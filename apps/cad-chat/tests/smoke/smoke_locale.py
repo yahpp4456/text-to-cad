@@ -2,8 +2,8 @@
 """介面文字系統(繁/簡)煙測(免 LLM)。
 
 契約(2026-10-13):UI 字串仍是繁中硬編,zh-Hans 靠執行期 OpenCC 在 DOM 層轉換
-(lib/domConvert)。語言決定:localStorage cadchat.locale 優先,否則 navigator.language
-(zh-CN/Hans/SG/MY → 簡體,其餘 → 繁體);Header 右端 .hdr-locale 切換 = 寫偏好 + reload。
+(lib/domConvert)。語言決定:只看 localStorage cadchat.locale,沒有一律繁體(2026-10-27 起不再
+依 navigator.language 自動切簡體);Header 右端 .hdr-locale 切換 = 寫偏好 + reload。
   · 排除:使用者輸入(textarea 值)、使用者原話氣泡(.user-bubble)不轉;
   · AI 氣泡與伺服端送來的文案會轉(Phase 1 刻意;Phase 2 AI 改簡中後是冪等);
   · 繁中使用者零改變(轉換器 chunk 不載入)。
@@ -53,14 +53,17 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch()
 
-        # ── A. zh-CN 瀏覽器:自動簡體 ──
+        # ── A. zh-CN 瀏覽器:無偏好仍繁體;寫入偏好 zh-Hans 後才簡體 ──
         ctx = browser.new_context(viewport={"width": 1480, "height": 920}, locale="zh-CN")
         page = ctx.new_page()
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.goto(BASE)
         page.wait_for_selector(".hdr", timeout=30000)
+        C.check("A0: zh-CN 瀏覽器無偏好 → 仍繁體(不自動切簡)", page.evaluate("() => document.documentElement.lang") == "zh-Hant")
+        C.check("A0: 切換鈕顯示目標「简」", page.locator(".hdr-locale").inner_text().strip() == "简")
         _seed(page)
+        page.evaluate("() => localStorage.setItem('cadchat.locale', 'zh-Hans')")
         page.reload()
         _wait_app(page)
         page.wait_for_function("() => /产图/.test(document.title)", timeout=10000)
@@ -114,7 +117,7 @@ def main():
         C.check("B: 切換鈕顯示目標「简」", page.locator(".hdr-locale").inner_text().strip() == "简")
         page.reload()
         _wait_app(page)
-        C.check("B: 再 reload 仍繁體(偏好勝過 zh-CN 偵測)", page.evaluate("() => document.documentElement.lang") == "zh-Hant")
+        C.check("B: 再 reload 仍繁體(偏好持久)", page.evaluate("() => document.documentElement.lang") == "zh-Hant")
 
         # ── C. 再切成簡體(偏好=zh-Hans)──
         page.click(".hdr-locale")

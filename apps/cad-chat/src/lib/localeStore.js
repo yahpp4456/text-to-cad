@@ -1,7 +1,8 @@
-// 瀏覽器端的 locale 偏好:localStorage(cadchat.locale)優先,沒有就看 navigator.language。
+// 瀏覽器端的 locale 偏好:只看 localStorage(cadchat.locale),沒有就一律繁體(產品預設)。
+// 2026-10-27 Sam 決定:不再依 navigator.language 自動切簡體,簡體要使用者自己按 Header「简」。
 // 讀寫照 App.jsx MODE_KEY 的慣例(try/catch,壞掉就當沒設)。切換後由呼叫端 reload——
 // DOM 轉換不做還原,重整續聊是現有能力(cadchat.session.v1 快照)。
-import { DEFAULT_LOCALE, LOCALE_KEY, detectLocale, isLocale } from "./locale.js";
+import { DEFAULT_LOCALE, LOCALE_KEY, isLocale } from "./locale.js";
 import { convertText } from "./zhConvert.js";
 
 const EVENT = "cadchat:locale";
@@ -14,12 +15,7 @@ export function getLocale() {
   } catch {
     /* 私密視窗/停用儲存 */
   }
-  try {
-    const langs = [navigator.language, ...(navigator.languages || [])];
-    return detectLocale(langs);
-  } catch {
-    return DEFAULT_LOCALE;
-  }
+  return DEFAULT_LOCALE;
 }
 
 export function setLocale(next) {
@@ -27,7 +23,7 @@ export function setLocale(next) {
   try {
     window.localStorage.setItem(LOCALE_KEY, next);
   } catch {
-    /* 無法持久化:本次仍生效(呼叫端會 reload,之後再回到偵測值) */
+    /* 無法持久化:本次仍生效(呼叫端會 reload,之後再回到繁體預設) */
   }
   applyLocale(next);
   try {
