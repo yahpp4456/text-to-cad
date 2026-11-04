@@ -37,6 +37,8 @@ const DEMO_PW2_FILE = process.env.CADCHAT_DEMO_PASSWORD2_FILE || "/etc/cadchat/d
 const DEMO_PW3_FILE = process.env.CADCHAT_DEMO_PASSWORD3_FILE || "/etc/cadchat/demo-password3";
 const DEMO_PW4_FILE = process.env.CADCHAT_DEMO_PASSWORD4_FILE || "/etc/cadchat/demo-password4";
 const DEMO_PW5_FILE = process.env.CADCHAT_DEMO_PASSWORD5_FILE || "/etc/cadchat/demo-password5";
+const DEMO_PW6_FILE = process.env.CADCHAT_DEMO_PASSWORD6_FILE || "/etc/cadchat/demo-password6";
+const DEMO_PW7_FILE = process.env.CADCHAT_DEMO_PASSWORD7_FILE || "/etc/cadchat/demo-password7";
 const DEMO_SECRET_FILE = process.env.CADCHAT_DEMO_SECRET_FILE || "/etc/cadchat/demo-secret";
 const DEMO_TTL = Number.parseInt(process.env.CADCHAT_DEMO_TTL_SECONDS || "7200", 10);
 // demo 同時在線人數上限(CADCHAT_DEMO_MAX_USERS,預設 50,0=不限)。閒置超過
@@ -166,7 +168,23 @@ function readDemoPasswordHash5() {
     return null;
   }
 }
-// 回傳命中的密碼槽名(pw1=輪換主密碼 / pw2=永久 / pw3~pw5=臨時),未命中回 null;
+// 第六組臨時密碼(選配):同第三~五組。
+function readDemoPasswordHash6() {
+  try {
+    return fs.readFileSync(DEMO_PW6_FILE, "utf8").trim().toLowerCase();
+  } catch {
+    return null;
+  }
+}
+// 第七組臨時密碼(選配):同第三~六組。
+function readDemoPasswordHash7() {
+  try {
+    return fs.readFileSync(DEMO_PW7_FILE, "utf8").trim().toLowerCase();
+  } catch {
+    return null;
+  }
+}
+// 回傳命中的密碼槽名(pw1=輪換主密碼 / pw2=永久 / pw3~pw7=臨時),未命中回 null;
 // 登入 log 帶槽名,方便日後查「某組臨時密碼有沒有人用過」。
 function matchDemoPassword(input) {
   const stored = readDemoPasswordHash();
@@ -181,6 +199,10 @@ function matchDemoPassword(input) {
   if (!!stored4 && safeEqual(got, stored4)) return "pw4";
   const stored5 = readDemoPasswordHash5();
   if (!!stored5 && safeEqual(got, stored5)) return "pw5";
+  const stored6 = readDemoPasswordHash6();
+  if (!!stored6 && safeEqual(got, stored6)) return "pw6";
+  const stored7 = readDemoPasswordHash7();
+  if (!!stored7 && safeEqual(got, stored7)) return "pw7";
   return null;
 }
 function checkDemoPassword(input) {
