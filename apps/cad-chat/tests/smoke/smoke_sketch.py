@@ -332,24 +332,26 @@ try:
             and page.locator(".version-dl", has_text="精算").count() == 0
             and page.locator(".version-dl", has_text="STEP").count() == 0,
         )
-        # ⇪ 轉為正式設計:確認後切 design 開新對話,prefill 必帶原始場景檔路徑
-        # (審查 F6:只帶 label/驅動範圍會丟掉連桿桿長/鉸點;design agent 要 Read 原檔)
+        # ⇪ 轉為正式設計:確認後切 design 開新對話,prefill 直接帶機構定義(關節/樞軸/
+        # 行程數字)。不再帶場景檔路徑——新對話讀不到草模對話的資料夾(readScope 硬閘),
+        # 叫 design agent 去 Read 等於把連桿桿長/鉸點全丟(審查 F6 回歸)。
         page.locator(".version-promote").click()
         page.wait_for_selector(".confirm-dialog", timeout=5000)
         page.locator(".confirm-dialog .save-btn:not(.save-cancel)").click()
         page.wait_for_function(
-            "() => (document.querySelector('textarea.composer-input') || {}).value?.includes('.sketch.json')",
+            "() => (document.querySelector('textarea.composer-input') || {}).value?.includes('機構定義')",
             timeout=5000,
         )
         prefill = page.evaluate("() => document.querySelector('textarea.composer-input').value")
         c.check(
-            "⇪ 轉為正式設計:切 design + prefill 帶「原始場景檔=models/.cadchat/…/*.sketch.json」+ 機構件/驅動",
+            "⇪ 轉為正式設計:切 design + prefill 帶機構定義(驅動/關節樞軸)且不含對話資料夾路徑",
             page.get_attribute(".mode-seg[data-mode=design]", "data-on") == "true"
-            and "原始場景檔=models/.cadchat/" in prefill
-            and ".sketch.json" in prefill
-            and "先 Read 它" in prefill
-            and "驅動=" in prefill,
-            prefill[:160],
+            and "- 驅動:" in prefill
+            and "關節:" in prefill
+            and "樞軸 (" in prefill
+            and ".cadchat" not in prefill
+            and ".sketch.json" not in prefill,
+            prefill[:200],
         )
 
         # 混排(防禦):design 模式注入 sketch 版 → type 守衛仍不亮匯出鈕

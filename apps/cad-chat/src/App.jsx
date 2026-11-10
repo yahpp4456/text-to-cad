@@ -1133,30 +1133,27 @@ export default function App() {
     dispatch({ type: "SET_MODE", mode: "design" });
   }, [demo, state.mode, state.running, resetChat]);
 
-  // 草模 → 正式設計(升級路徑):切設計模式開新對話,把場景規格摘要 prefill 進
+  // 草模 → 正式設計(升級路徑):切設計模式開新對話,把場景的機構定義 prefill 進
   // composer(不自動送出——AI 動手前,人先過目;匯入元件流程的同一哲學)。
   const promoteSketch = useCallback(
     (v) => {
       if (state.running) return;
       setConfirmBox({
         eyebrow: "PROMOTE · 轉為正式設計",
-        body: `切到「設計」模式開新對話,並把草模「${v.title || v.name}」的規格摘要(機構件、驅動範圍)帶入輸入框——可先修改再送出。`,
+        body: `切到「設計」模式開新對話,並把草模「${v.title || v.name}」的機構定義(關節、鉸點座標、桿長、行程)帶入輸入框——可先修改再送出。`,
         actionLabel: "切換並帶入規格",
         accent: "var(--sketch)",
         onConfirm: async () => {
-          // 摘要 + 原始場景檔路徑(design agent 先 Read 取回鉸點/桿長/行程,不憑摘要猜)
+          // 機構定義直接算進文字(關節/鉸點/桿長/行程);不叫 design agent 去 Read 草模
+          // 對話的場景檔——新對話讀不到別的對話的資料夾(readScope 硬閘)。
           let doc = null;
           try {
             const r = await fetch(v.sceneUrl);
             if (r.ok) doc = await r.json();
           } catch {
-            /* fetch 失敗用降級摘要(仍帶路徑) */
+            /* fetch 失敗 → 降級句明講沒帶到、請 agent 先確認 */
           }
-          const specText = buildPromoteText({
-            doc,
-            sceneUrl: v.sceneUrl,
-            fallbackName: v.title || v.name,
-          });
+          const specText = buildPromoteText({ doc, fallbackName: v.title || v.name });
           resetChat();
           dispatch({ type: "SET_MODE", mode: "design" });
           dispatch({ type: "SET_PREFILL", text: specText });

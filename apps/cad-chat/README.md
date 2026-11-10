@@ -243,11 +243,22 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
   切點附近浮點抖動不算)→ 走同一失敗契約回 `errors[{path:"derived.<id>", message}]`
   (訊息帶驅動值/桿長/銷到導線最短距離),不寫檔不 bump。播放端仍鉗到切點畫圖
   (永不 NaN),但「桿長已被違反」不能再當成功呈現。
-- **⇪ 轉為正式設計的 prefill 帶原始場景檔路徑(2026-09-26)**:`lib/promoteText.js`
-  從 `sceneUrl` 的 `file=` 取相對路徑(`models/.cadchat/<id>/versions/vN/<name>.sketch.json`,
-  相對 DATA_ROOT;dev 下 = repo 根 = design agent 的 cwd,`Read` 直接可讀)寫進
-  prefill,叫 design agent 先讀原檔取鉸點/桿長/行程,不憑 label+驅動範圍摘要猜。
-  已知限制:per-user 部署(VM)的路徑相對 DATA_ROOT 而非 agent cwd,可能讀不到。
+- **剛性桿定長預檢(2026-11-10)**:可達性預檢之後再跑 `findStretchedCouplers`
+  (同一組取樣)。`coupler` 的畫法是自動落在兩錨點之間,兩點距離若隨 drive 改變,
+  畫面上桿會跟著伸縮,把不閉合的機構畫成連得上(審查 F4)。行程內 (max−min) 超過
+  `max(0.5 mm, 0.5%×桿長)` → 同一失敗契約(不寫檔、不 bump、errors 回 agent 自修),
+  訊息帶 min/max/變化量與修法(一端落 pin_on_line 定長,或本來就是伸縮件改用 actuator)。
+  閉式定長鏈的實際變化是 1e-13 級,四個 fixture 與 prompt 內嵌範例都遠在容差內。
+  prompt 同步改寫:actuator=會伸縮、coupler=剛性桿(原句「自動對準+伸縮,永不懸空」
+  把兩者混為一談)。
+- **⇪ 轉為正式設計的 prefill 直接帶機構定義(2026-11-10 改;原為 2026-09-26 的「帶原始
+  場景檔路徑」)**:`lib/promoteText.js` 用 `compileSketch`/`evalPose` 從場景算出驅動範圍、
+  各關節的軸與樞軸世界座標、滑銷導線與定長、剛性連桿桿長、致動器安裝長度與行程、主要
+  外形,條列進輸入框。**為什麼不再帶路徑叫 design agent 去 Read**:轉正式設計會開新對話,
+  而 2026-10-01 加的讀取範圍硬閘(`agent/readScope.mjs`)拒絕讀其他對話的資料夾——那個
+  Read 必被擋,agent 只剩 label+驅動範圍(等於退回審查 F6)。數字直接進文字則與讀取範圍
+  無關,使用者送出前也看得到、改得了。場景抓不到/編不動 → 降級句明講沒帶到、請 agent
+  先確認,不假裝有規格。L1 `promoteText.test.js`(含「文字不得含 .cadchat 路徑」鎖)。
 - **驅動/傳動先問(2026-07-14)**:需求含運動軸而**未指明「驅動方式(汽缸/馬達)」
   或「傳動呈現(皮帶/齒輪齒條/直接耦合的加工幾何)」→ 必 emit_clarify**(拓撲級
   選擇,猜錯整台重搭;紀律搬自設計模式 prompt 的「未指明驅動必列澄清」)。一次整合
@@ -594,7 +605,7 @@ cable 模式原本只有對話一條路(範例/打字/上傳 STEP 全要 LLM)。
   在場即為證。
 - 測試:`smoke_versions.py` §6 匯出段加 pdf 正案(`%PDF-` magic bytes)。
 
-## MOTION 運動宣告(linear + revolute + couple)
+## MOTION 運動宣告(linear + revolute + couple + profile)
 
 產生器模組層宣告(與 `INTENDED_CONTACT` 同慣例),**一份真相三個消費者**:
 (a) validate.py 據此建 poses 跑真運動掃掠(per-「群」獨立掃、baseline=seated、
@@ -616,6 +627,26 @@ cable 模式原本只有對話一條路(範例/打字/上傳 STEP 全要 LLM)。
 比率不符純滾動 travel = R×θ(rad) 會被抓到穿透),前端播放從動借主動的 period+相位
 index(嚙合不打滑;獨立 dof 仍相位錯開以便辨識)。規則:主/從都必須明給 pairs、
 禁止鏈式耦合。`schemaVersion` 維持 `1`(加法式擴充)。
+
+**閉鏈連桿加 `"profile"`(2026-11-10)**:`couple` 是「同一進度 u、位移成正比」,只對定比
+傳動精確。缸/曲柄經剛性連桿推擺臂(滑塊-曲柄)這類閉鏈,從動件對主動件是非線性關係——
+線性同步只在兩端點閉合,行程中段鉸點脫開(審查 F7 的實際產物:連桿只跟推桿平移 → 30°
+時銷心與連桿孔差 4.69 mm;連桿補一個線性擺角 dof → 中段仍差約 1.2 mm;兩種寫法把
+「連桿×銷」列入 pairs 都會被掃掠判穿透,所以當時只能不列、精算照過)。從動 dof 加
+`"profile": [f0…fN]` = u 等分節點上的位移比(首 0 尾 1、3–129 點,節點間線性內插;
+實際位移 = 位移比 × travel/angle_deg,travel/angle_deg 仍是終值),由產生器的閉式解函式
+取樣產生。規則:只給帶 `couple` 的從動 dof;無 profile = 線性(舊語意逐位不變)。
+單一真相 `cadpy.motion_decl.motion_fraction`(掃掠 `_dof_frame_shape` 用)與前端
+`cadMotionMath.profileFraction`(播放用)**逐式鏡射**,兩邊有同一組 golden 對拍——
+改一邊必改另一邊,否則畫面閉合而驗證脫開(或反過來)。位移精確之後,**鉸點的
+「連桿×銷」與連桿×叉槽要列進 pairs**:這時掃掠才真的在驗「鉸點全程閉合、連桿擺動
+不撞槽」。參考模型 `models/cylinder_tilt_platform`(缸推平台前傾;design prompt 指名
+先 Read):3 dof(擺角主動 + 連桿擺角/缸桿行程兩個 profile 從動)、7 對配對全程無穿透;
+它同時修掉原產物被隱藏的真干涉(連桿在滿擺角撞平台叉槽頂——以前沒列 pairs 所以沒人
+知道)。測試:`test_motion_decl.ProfileTests`、`cadMotionMath.test.js` 三案、
+`tests/test_validate_motion.py` 的 `ClosedChainProfileIntegration`(profile 過 / 線性擋 /
+只平移擋)與 `CylinderTiltReferenceIntegration`(參考模型端到端)、L3
+`smoke_verify_gate.py` H 段(真 GLB + `__cadMotion`:行程中點連桿孔心與擺臂銷同心)。
 
 ```python
 MOTION = {
@@ -669,6 +700,36 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
 正交來源合流在同一次 `applyPartVisualState`(hidden 走原生 `hiddenPartIds`、ghost 走
 `record.effectStyle.opacity`,與運動示意的 `effectMatrix` 正交可同時作用);dev 鉤
 `__cadVisual.display()/stateFor(label)`。
+
+## 機構相關提示詞修訂(2026-11-10)
+
+對 design / sketch 兩份系統提示與教訓蒸餾摘要做的一輪機構面修訂(細節與證據見
+[審查報告 §9](CHATCAD_MECHANISM_CODE_REVIEW_2026-09-25.md)):
+
+- **閉鏈連桿**:工作區「先 Read」清單加入 `models/cylinder_tilt_platform`;運動宣告段把
+  `couple` 改寫成三種用途(定比傳動 / 同一件的連貫複合運動 / 閉鏈連桿+`profile`),
+  並要求鉸點「連桿×銷」與連桿×叉槽列入 pairs。順帶讓教訓 LS-10(連貫運動要 couple)、
+  LS-11(行星運動拆兩 revolute)與 prompt 一致——原句只講嚙合傳動,digest 又註明
+  「衝突以上方規則為準」,等於把這兩條教訓作廢。
+- **標準件擺放**:明寫「變換整顆 Compound 不帶動 `.children`」,二擇一(逐子件各套變換 /
+  整顆當一件 add)。原句「整顆 rotate 再平移」+「children 可解包」正是教訓 LS-13 的成因。
+- **結構件不得互穿**:規則直接寫進 prompt(銷/螺栓媒介或面貼合),不再只寫「見 lessons L-5」
+  ——agent 看不到那份帳本,而且容易和教訓 digest 的 `[LS-5]` 編號混淆。
+- **先定運動鏈再想外形**:流程 0 階段要求先定機架/輸出件/驅動→傳動→輸出;2 階段的計畫
+  多列一條「運動鏈與驗收」;可推導量(傳動比、中心距、行程換算)自己算不拿去問。
+- **減速構型未定必問**:旋轉減速需求未指名構型時,澄清選項要給真實構型(行星/諧波/
+  擺線/蝸輪/正齒輪/同步帶)與一句取捨,並講明正齒輪以外只能做簡化示意。
+  (`DRIVETRAIN_KB_PLAN.md` 的 KB 本體仍未實作。)
+- **紀律**:建置成功/會動不代表機構正確;沒列入 pairs 的鉸點一律說「未驗」。
+- **草模**:actuator=會伸縮、coupler=剛性桿;升級引導改指向「⇪ 轉為正式設計」按鈕,
+  並提醒 agent 另外條列沒畫進草模的確認事項(驅動/傳動、被省略的軸)。
+- **教訓蒸餾**:`lessons.distill.mjs` 的 `STATIC_RULES_SUMMARY` 更新為現行能力(原本仍寫
+  「MOTION v1 宣告(linear…)」)。
+
+驗證範圍:L0 build、L1 全套(492)、Python 運動測試(契約/掃掠整合/參考模型端到端,
+build123d 0.11)、L3 `smoke_sketch.py`(44)與 `smoke_verify_gate.py`(65,含新增 H 段)皆綠。
+**尚未驗證**:L3 其餘 26 支煙測沒跑(Linux 雲端環境、LFS fixture 拉不到);**prompt 改動
+沒有免 LLM 的等價驗證**,L4 真回合(閉鏈連桿題、減速構型澄清題、草模伸縮桿自修)未跑。
 
 ## 單一快路徑 + 匯出閘(2026-07-10 收斂;前身為 2026-07-09 的產圖雙模式)
 

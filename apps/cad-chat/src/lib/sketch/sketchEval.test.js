@@ -7,7 +7,14 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { anchorWorld, compileSketch, evalPose, evalProgram, findUnreachable } from "./sketchEval.js";
+import {
+  anchorWorld,
+  compileSketch,
+  evalPose,
+  evalProgram,
+  findStretchedCouplers,
+  findUnreachable,
+} from "./sketchEval.js";
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const load = (name) => JSON.parse(readFileSync(join(FIX, name), "utf8"));
@@ -252,4 +259,43 @@ test("evalPose:degenerate 帶相對容差(切點附近 1e-9 級抖動不算無�
   dTangent.derived.find((e) => e.id === "pinC").link.len = minLen30 * 0.99;
   const cs = compileSketch(dTangent);
   assert.equal(evalPose(cs, { theta: 30 }, cs.attachInitials).derivedPose.pinC.degenerate, true);
+});
+
+// ---------------------------------------------------------------------------
+// H. findStretchedCouplers:剛性桿定長預檢(審查 F4——coupler 自動伸縮掩蓋不閉合)
+// ---------------------------------------------------------------------------
+
+test("findStretchedCouplers:四個既有 fixture 的剛性桿全程定長 → 空陣列", () => {
+  for (const f of ["cylinder_tilt.json", "gripper_pickplace.json", "belt_drive.json", "steering_rack.json"]) {
+    const c = compileSketch(load(f));
+    assert.deepEqual(findStretchedCouplers(c), [], f);
+  }
+});
+
+test("findStretchedCouplers:coupler 一端改釘世界固定點 → 行程內伸縮,報 derived.link1(帶 min/max/變化量)", () => {
+  const doc = load("cylinder_tilt.json");
+  // 原本 to=平台銷(與 pin_on_line 同錨點 → 恆 35);改成 home 時銷的世界座標(不跟著轉)
+  doc.derived.find((e) => e.id === "link1").to = { body: "world", at: [110, 25, 54] };
+  const errs = findStretchedCouplers(compileSketch(doc));
+  assert.equal(errs.length, 1);
+  assert.equal(errs[0].path, "derived.link1");
+  // θ=0:pinC.x=75 → 35;θ=30:pinC.x=131−√(35²−5.627²)≈96.46 → 13.54(獨立閉式重推)
+  const dz = 42 * (1 - Math.cos(Math.PI / 6));
+  const short = 110 - (110 + 42 * Math.sin(Math.PI / 6) - Math.sqrt(35 * 35 - dz * dz));
+  assert.match(errs[0].message, new RegExp(`由 ${short.toFixed(2)} 變到 35 mm`));
+  assert.match(errs[0].message, /theta=0° 時最長/);
+  assert.match(errs[0].message, /改用 actuator/);
+});
+
+test("findStretchedCouplers:容差——變化 ≤ max(0.5mm, 0.5%) 不報;actuator 伸縮不在檢查範圍", () => {
+  // 錨點偏 0.3 mm(沿轉軸 Y 方向偏,長度變化遠小於 0.5)→ 不報
+  const near = load("cylinder_tilt.json");
+  near.derived.find((e) => e.id === "link1").to = { body: "platform", at: [0, 0.3, 42] };
+  assert.deepEqual(findStretchedCouplers(compileSketch(near)), []);
+  // 同 fixture 的 actuator 行程 21 mm,但它本來就該伸縮
+  const c = compileSketch(load("cylinder_tilt.json"));
+  const f0 = evalPose(c, { theta: 0 }, c.attachInitials);
+  const f30 = evalPose(c, { theta: 30 }, c.attachInitials);
+  assert.ok(f30.derivedPose.cyl1.len - f0.derivedPose.cyl1.len > 20);
+  assert.deepEqual(findStretchedCouplers(c), []);
 });

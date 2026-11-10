@@ -92,6 +92,26 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   齒比錯了 `test_validate_motion.CoupledSweepIntegration` 會抓)、cadMotion.js 播放從動
   借主動 period+相位 index(`smoke_verify_gate` F 段斷純滾動 y=-R·θ)。動任一端 →
   三處測試都跑;L4 `smoke_gear_rackpinion_live.py` 驗 agent 真的會宣告。
+- **MOTION `profile`(閉鏈連桿的非線性從動,2026-11-10)**:`couple` 只做線性同步,閉鏈
+  (缸→剛性連桿→擺臂)要靠從動 dof 的 `profile`(u 等分節點位移比,首 0 尾 1)才全程閉合。
+  **`cadpy.motion_decl.motion_fraction`(掃掠)與 `cadMotionMath.profileFraction`(播放)
+  逐式鏡射**,golden 在 `test_motion_decl.ProfileTests` 與 `cadMotionMath.test.js` 兩邊對拍
+  ——動任一端兩邊一起改。參考模型 `models/cylinder_tilt_platform`(design prompt 指名先
+  Read):動它或動 profile 語意 → `tests/test_validate_motion.py`(`ClosedChainProfileIntegration`
+  三案 + `CylinderTiltReferenceIntegration`,~30s,需 build123d)+ 先 sync-vendored
+  + L3 `smoke_verify_gate.py` H 段(真 GLB 播放:u=0.5 連桿孔心與擺臂銷同心;fixture GLB
+  是 LFS pointer 時該段會直接紅並提示重生,不假綠)。
+  判讀:把鉸點「連桿×銷」列進 pairs 後掃掠紅,多半是真的(閉式解算錯桿長、漏了連桿自己的
+  擺角 dof、或連桿擺動撞叉槽),不要靠拿掉 pairs 變綠。動 prompt 的閉鏈段 → L4 一回合
+  (缸推擺臂題)看 agent 是否 Read 參考模型並宣告 profile。
+- **草模剛性桿定長預檢(2026-11-10)**:`sketch_present` 在可達性預檢後跑
+  `findStretchedCouplers`——coupler 兩端距離在行程內變化 > max(0.5mm, 0.5%) 即擋
+  (actuator 不檢查,它本來就伸縮)。煙測/手測注入的場景若把 coupler 當伸縮件用會被拒絕,
+  改用 actuator。動它 → `sketchEval.test.js` H 段 + `sketch.present.test.js` + `smoke_sketch.py`。
+- **⇪ 轉為正式設計的 prefill 不可帶其他對話的檔案路徑(2026-11-10)**:新對話讀不到草模
+  對話的資料夾(readScope 硬閘),機構定義一律由 `lib/promoteText.js` 算進文字;
+  `promoteText.test.js` 鎖「不含 .cadchat / .sketch.json」,`smoke_sketch.py` 斷 prefill
+  含「- 驅動:」「樞軸 (」。
 - **齒輪幾何只能用 `cadpy.parts.gear` family,不要手刻**:單弦梯形齒 vs 直邊齒條滾動
   必互咬(需隨 module 放大的減薄 ≈(0.05+2/z)·m,齒會瘦到難看);family 齒腹是
   「過真漸開線點的折線」(內接弦只減料不加料),0.05 背隙即全 z 零穿透——嚙合面

@@ -18,6 +18,25 @@ import math
 from collections.abc import Mapping, Sequence
 
 MOTION_MAX_DOFS = 8  # xyz 三軸 + 4 支獨立末端缸(e0..e3)= 7,留一格餘裕
+MOTION_PROFILE_MAX_POINTS = 129  # profile 節點數上限(u 等分;128 段對連桿機構綽綽有餘)
+
+
+def motion_fraction(dof: Mapping, u: float) -> float:
+    """dof 在群參數 ``u``∈[0,1] 的位移比(乘上 travel / angle_deg 即實際位移)。
+
+    無 ``profile`` = 線性(回 ``u``,舊語意逐位不變)。帶 ``profile``(u 等分節點上的
+    位移比,首 0 尾 1)= 節點間分段線性內插——閉鏈連桿(滑塊-曲柄、缸推擺臂)的從動件
+    對主動件是非線性關係,線性同步只在兩端點閉合、行程中段鉸點會脫開。
+    掃掠(validate.py ``_dof_frame_shape``)與前端播放(``cadMotionMath.profileFraction``)
+    必須與本函式逐式一致。
+    """
+    prof = dof.get("profile")
+    if not prof:
+        return u
+    n = len(prof) - 1
+    x = min(1.0, max(0.0, float(u))) * n
+    i = min(n - 1, int(x))
+    return prof[i] + (prof[i + 1] - prof[i]) * (x - i)
 
 
 def normalize_motion(
@@ -160,6 +179,34 @@ def normalize_motion(
         couple = d.get("couple")
         if couple is not None:
             dof_out["couple"] = str(couple).strip()
+        # profile(非線性從動位移表):u 等分節點上的位移比,首 0(u=0 = seated 基準姿態)
+        # 尾 1(travel / angle_deg 仍是 u=1 的終值)。只給耦合從動 dof 用——獨立 dof 的
+        # 行程中段姿態沒有「相對誰」的問題,線性即可。
+        profile = d.get("profile")
+        if profile is not None:
+            p_err = None
+            if couple is None:
+                p_err = "profile 只能用在帶 couple 的從動 dof"
+            elif (
+                not isinstance(profile, (list, tuple))
+                or not 3 <= len(profile) <= MOTION_PROFILE_MAX_POINTS
+            ):
+                p_err = f"profile 須為 3–{MOTION_PROFILE_MAX_POINTS} 個數的清單(u 等分節點的位移比)"
+            else:
+                try:
+                    prof = [float(x) for x in profile]
+                except Exception:
+                    prof = None
+                if prof is None or not all(math.isfinite(x) and abs(x) <= 8.0 for x in prof):
+                    p_err = "profile 每項須為有限數且 |值| ≤ 8"
+                elif abs(prof[0]) > 1e-6 or abs(prof[-1] - 1.0) > 1e-6:
+                    p_err = "profile 首項須為 0、末項須為 1(位移比;終值由 travel / angle_deg 給)"
+                else:
+                    prof[0], prof[-1] = 0.0, 1.0
+                    dof_out["profile"] = prof
+            if p_err:
+                errs.append(f"{did}: {p_err}")
+                continue
         dofs.append(dof_out)
 
     # couple(嚙合耦合:齒輪齒條/齒輪對等)第二趟驗證——引用要看得到全部 id。
@@ -190,9 +237,9 @@ def normalize_motion(
 def playback_motion(motion: Mapping | None) -> dict | None:
     """把 :func:`normalize_motion` 的完整 dofs 降維成前端播放子集。
 
-    只留 id/label/type/axis/moving/period_s/couple + (travel | pivot/angle_deg);
+    只留 id/label/type/axis/moving/period_s/couple/profile + (travel | pivot/angle_deg);
     掃掠專用欄位(pairs/samples/baseline/origin)不外洩給前端。couple 要透傳:
-    前端播放器據此讓從動 dof 跟主動 dof 同相位(嚙合不打滑)。
+    前端播放器據此讓從動 dof 跟主動 dof 同相位(嚙合不打滑);profile 同理透傳。
     """
     if motion is None:
         return None
@@ -213,5 +260,7 @@ def playback_motion(motion: Mapping | None) -> dict | None:
             pd["travel"] = d["travel"]
         if d.get("couple"):
             pd["couple"] = d["couple"]
+        if d.get("profile"):
+            pd["profile"] = d["profile"]  # 播放與掃掠同一張位移表(否則畫面閉合、驗證脫開)
         play_dofs.append(pd)
     return {"schemaVersion": 1, "dofs": play_dofs}

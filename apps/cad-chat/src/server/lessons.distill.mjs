@@ -25,9 +25,12 @@ const clamp = (v, n) => {
 
 // 系統提示已靜態涵蓋的規則摘要(prompt.mjs 鐵則 + skills/cad/references/lessons.md L-1..L-5)。
 // 蒸餾出的教訓必須是這些「之外」的新增細節;prompt.mjs 大改時同步這份摘要。
-export const STATIC_RULES_SUMMARY = `- PARAMS 單層 dict 契約、gen_step() 無參數、check_geometry 寫檔前 gate
+export const STATIC_RULES_SUMMARY = `- PARAMS 單層 dict 契約、gen_step() 無參數、check_geometry 寫檔前 gate、_check_params 跨參數防呆
 - INTENDED_CONTACT 白名單語意;結構件不得互穿(接合須銷媒介/面貼合,L-5)
-- MOTION v1 宣告(linear、moving/pairs label 唯一、travel 引用 PARAMS);獨立末端缸各自成 DOF
+- MOTION 宣告:linear + revolute(revolute 必明給 pairs)、moving/pairs label 唯一、travel/angle_deg 引用 PARAMS;獨立末端缸各自成 DOF
+- couple 同步耦合三用途:定比傳動(幅度須符合傳動比)/ 同一件的連貫複合運動(內層先宣告)/ 閉鏈連桿(從動加 profile 閉式位移表、鉸點「連桿×銷」必列入 pairs)
+- 標準件(cadpy.parts)簽章與座標慣例;變換整顆 Compound 不帶動 children(逐子件各套變換,或整顆當一件 add)
+- 齒輪/鈑金/掃出/線性滑台/龍門/閉鏈連桿各有指定參考模型,改編不重推
 - 修復一律 cad_build(edits) 最小段精修,不重送整份 code;retry 上限 3 次後誠實回報
 - 大型組合件(≥8 件):每子系統一個 builder、定位常數集中頂部一張表、IC 按介面分組
 - 靜態教訓 L-1..L-5:無效實體必擋 / 全對干涉列舉 / 允收白名單 / 運動掃掠含 baseline / 禁黏方塊`;

@@ -10,7 +10,11 @@ import { BASE_PATH, resolveMaxSnapshots } from "../config.mjs";
 import { persistSession } from "../sessions.mjs";
 import { pruneSnapshots, sanitizeName, snapshotDir } from "../cad/pipeline.mjs";
 import { scrubPaths } from "../cad/python.mjs";
-import { compileSketch, findUnreachable } from "../../lib/sketch/sketchEval.js";
+import {
+  compileSketch,
+  findStretchedCouplers,
+  findUnreachable,
+} from "../../lib/sketch/sketchEval.js";
 import { validateSketch } from "../../lib/sketch/sketchSchema.js";
 
 export function sketchFileName(name) {
@@ -38,6 +42,10 @@ export function presentSketch(session, { name, scene }, emit) {
   // 違反)→ 同一失敗契約回 agent 自修,不能當成功呈現。
   const unreachable = findUnreachable(compiled);
   if (unreachable.length) return { ok: false, errors: unreachable, warnings: res.warnings };
+  // 剛性桿定長預檢:coupler 兩端距離在行程內改變 = 畫面用伸縮把不閉合的機構畫成
+  // 連得上。無解已在上一步擋掉(那種情況桿長必然跟著變,不重複報)。
+  const stretched = findStretchedCouplers(compiled);
+  if (stretched.length) return { ok: false, errors: stretched, warnings: res.warnings };
   const part = sanitizeName(name || res.doc.name || "sketch");
   writeSketchScene(session, part, res.doc);
   const out = emitSketchPresent(session, part, emit);

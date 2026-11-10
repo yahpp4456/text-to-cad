@@ -103,14 +103,21 @@ def _auto_pairs(base_map, dof):
 
 
 def _dof_frame_shape(base_shape, dof, u):
-    """base_shape 依 dof 在參數 u 的變換(linear=平移;revolute=繞 pivot 軸轉)。"""
+    """base_shape 依 dof 在參數 u 的變換(linear=平移;revolute=繞 pivot 軸轉)。
+
+    位移比 f 由 cadpy.motion_decl.motion_fraction 給:無 profile = u(線性);
+    帶 profile(閉鏈連桿的非線性從動)= 節點分段線性內插。與前端播放同一張表。
+    """
+    from cadpy.motion_decl import motion_fraction
+
+    f = motion_fraction(dof, u)
     if dof.get("type") == "revolute":
         from build123d import Axis
 
         return base_shape.rotate(
-            Axis(tuple(dof["pivot"]), tuple(dof["axis"])), u * dof["angle_deg"]
+            Axis(tuple(dof["pivot"]), tuple(dof["axis"])), f * dof["angle_deg"]
         )
-    dv = tuple(a * u * dof["travel"] for a in dof["axis"])
+    dv = tuple(a * f * dof["travel"] for a in dof["axis"])
     return base_shape.translate(dv)
 
 
@@ -260,11 +267,13 @@ def _run_motion_sweep(named, motion):
         dof0, h0 = all_hits[0]
         pos = ""
         try:
-            u0 = float(str(h0.where).rsplit("u=", 1)[1])
+            from cadpy.motion_decl import motion_fraction
+
+            f0 = motion_fraction(dof0, float(str(h0.where).rsplit("u=", 1)[1]))
             if dof0.get("type") == "revolute":
-                pos = f"(轉角 {u0 * dof0['angle_deg']:.1f}°)"
+                pos = f"(轉角 {f0 * dof0['angle_deg']:.1f}°)"
             else:
-                pos = f"(位移 {u0 * dof0['travel']:.1f}mm)"
+                pos = f"(位移 {f0 * dof0['travel']:.1f}mm)"
         except Exception:  # noqa: BLE001
             pass
         return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": False,

@@ -156,6 +156,87 @@ class CoupledSweepIntegration(unittest.TestCase):
         self.assertIn("穿透", check["note"])
 
 
+class ClosedChainProfileIntegration(unittest.TestCase):
+    """profile 掃掠語意(需 build123d/OCP):滑塊-曲柄(缸推擺臂)閉鏈——擺臂銷
+    繞支點轉、連桿一端跟滑塊平移一端套在擺臂銷上。從動件對擺角是非線性關係:
+
+    - 帶 profile(閉式解取樣)→ 連桿孔全程套住擺臂銷,把 link×crank_pin 列入
+      pairs 掃掠全程無穿透(= 鉸點閉合被真的驗到);
+    - 線性 couple(無 profile)→ 兩端點閉合但行程中段銷心偏出孔隙,掃掠必抓;
+    - 連桿只跟滑塊平移(審查 F7 的實際產物寫法)→ 行程末端銷脫開,掃掠必抓。
+    """
+
+    R, L, TH, N = 35.0, 120.0, 30.0, 32  # 擺臂半徑 / 桿長 / 擺角(度) / profile 段數
+
+    @classmethod
+    def setUpClass(cls):
+        from build123d import Axis, Box, Cylinder, Pos
+
+        from cadpy.assembly import label_shape
+
+        R, L = cls.R, cls.L
+
+        def ycyl(x, z, r, length):
+            return Pos(x, 0, z) * Cylinder(r, length).rotate(Axis.X, 90)
+
+        # 擺臂銷:home 在支點正下方 R;連桿:中心線 z=-R,兩端孔比銷大 0.4(單邊 0.2)
+        pin = ycyl(0.0, -R, 4.0, 20.0)
+        slider_pin = ycyl(-L, -R, 4.0, 20.0)
+        bar = Pos(-L / 2, 0, -R) * Box(L + 16.0, 6.0, 16.0)
+        bar -= ycyl(0.0, -R, 4.2, 10.0)
+        bar -= ycyl(-L, -R, 4.2, 10.0)
+        for shape, name in ((pin, "crank_pin"), (slider_pin, "slider_pin"), (bar, "link")):
+            label_shape(shape, name)
+        cls.named = [("crank_pin", pin), ("slider_pin", slider_pin), ("link", bar)]
+
+    def _closed_form(self):
+        import math
+
+        R, L = self.R, self.L
+
+        def at(deg):
+            t = math.radians(deg)
+            dz = R * (1.0 - math.cos(t))
+            return R * math.sin(t) + L - math.sqrt(L * L - dz * dz), math.degrees(math.asin(dz / L))
+
+        s_end, phi_end = at(self.TH)
+        knots = [at(self.TH * i / self.N) for i in range(self.N + 1)]
+        return s_end, phi_end, [k[0] / s_end for k in knots], [k[1] / phi_end for k in knots]
+
+    def _motion(self, *, profile=True, swing=True):
+        s_end, phi_end, s_prof, phi_prof = self._closed_form()
+        pairs = [["link", "crank_pin"]]
+        dofs = [{"id": "theta", "type": "revolute", "axis": [0, -1, 0], "pivot": [0, 0, 0],
+                 "angle_deg": self.TH, "moving": ["crank_pin"], "pairs": pairs, "samples": 16}]
+        if swing:  # 內層:連桿繞滑塊銷(home 位置)擺;宣告在承載它的 linear 之前
+            dofs.append({"id": "link_swing", "type": "revolute", "axis": [0, -1, 0],
+                         "pivot": [-self.L, 0, -self.R], "angle_deg": phi_end,
+                         "moving": ["link"], "pairs": pairs, "couple": "theta", "samples": 16,
+                         **({"profile": phi_prof} if profile else {})})
+        dofs.append({"id": "slide", "axis": [1, 0, 0], "travel": s_end,
+                     "moving": ["slider_pin", "link"], "pairs": pairs, "couple": "theta",
+                     "samples": 16, **({"profile": s_prof} if profile else {})})
+        m, errs = validate._read_motion(SimpleNamespace(MOTION={"dofs": dofs}), self.named)
+        self.assertEqual(errs, [])
+        return m
+
+    def test_profile_keeps_joint_closed(self):
+        check = validate._run_motion_sweep(self.named, self._motion())
+        self.assertTrue(check["ok"], check)
+        self.assertFalse(check.get("skipped"))
+        self.assertIn("耦合群 theta+link_swing+slide", check["note"])
+
+    def test_linear_couple_opens_joint_mid_stroke(self):
+        check = validate._run_motion_sweep(self.named, self._motion(profile=False))
+        self.assertFalse(check["ok"], check)
+        self.assertIn("link~crank_pin", check["note"])
+
+    def test_translate_only_link_opens_joint(self):
+        check = validate._run_motion_sweep(self.named, self._motion(profile=False, swing=False))
+        self.assertFalse(check["ok"], check)
+        self.assertIn("link~crank_pin", check["note"])
+
+
 FLIP = REPO / "models" / "flip_gripper" / "flip_gripper.py"
 
 
@@ -203,6 +284,43 @@ class FlipGripperIntegration(unittest.TestCase):
             [d["id"] for d in self.mo["motion"]["dofs"]],
         )
         self.assertEqual(self.full["partCount"], self.mo["partCount"])
+
+
+TILT = REPO / "models" / "cylinder_tilt_platform" / "cylinder_tilt_platform.py"
+
+
+@unittest.skipUnless(TILT.exists(), "cylinder_tilt_platform fixture 不存在")
+class CylinderTiltReferenceIntegration(unittest.TestCase):
+    """閉鏈連桿參考模型(design prompt 指名「先 Read」的那份)端到端:profile 宣告
+    經 validate.py 全掃掠——鉸點(連桿×兩支銷)與兩個叉槽都列在 pairs 裡仍全程無穿透。
+    這顆紅了 = 參考模型教 agent 的寫法本身驗不過,prompt 指引同步失效。"""
+
+    @classmethod
+    def setUpClass(cls):
+        env = {**os.environ, "PYTHONUTF8": "1"}
+        r = subprocess.run(
+            [sys.executable, str(CAD_DIR / "validate.py"), str(TILT)],
+            capture_output=True, text=True, timeout=180, env=env,
+        )
+        cls.out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_full_validation_clean_with_joint_pairs(self):
+        self.assertTrue(self.out["ok"], self.out)
+        sweep = next(c for c in self.out["checks"] if c["id"] == "motion_sweep")
+        self.assertTrue(sweep["ok"], sweep)
+        self.assertFalse(sweep.get("skipped"))
+        self.assertIn("耦合群 theta+link_swing+rod", sweep["note"])
+        self.assertIn("7 對", sweep["note"])
+
+    def test_playback_carries_profiles_on_coupled_dofs(self):
+        dofs = {d["id"]: d for d in self.out["motion"]["dofs"]}
+        self.assertNotIn("profile", dofs["theta"])
+        for did in ("link_swing", "rod"):
+            prof = dofs[did]["profile"]
+            self.assertEqual(len(prof), 33)
+            self.assertEqual((prof[0], prof[-1]), (0.0, 1.0))
+        # 非線性的證據:中點位移比偏離 0.5(連桿擺角 ∝ 1−cosθ,中點約 0.25)
+        self.assertLess(dofs["link_swing"]["profile"][16], 0.3)
 
 
 if __name__ == "__main__":

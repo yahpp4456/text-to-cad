@@ -76,6 +76,26 @@ test("無解連桿(桿長 1)→ {ok:false, errors[derived.pinC]};不寫檔、不
   }
 });
 
+test("剛性桿伸縮(coupler 一端釘世界固定點)→ {ok:false, errors[derived.link1]};不寫檔、不 bump、零事件", () => {
+  const s = makeSession("stretch");
+  const { events, emit } = collector();
+  try {
+    const scene = JSON.parse(JSON.stringify(FIXTURE));
+    scene.derived.find((e) => e.id === "link1").to = { body: "world", at: [110, 25, 54] };
+    const r = presentSketch(s, { name: "bad3", scene }, emit);
+    assert.equal(r.ok, false);
+    assert.equal(r.errors.length, 1);
+    assert.equal(r.errors[0].path, "derived.link1");
+    assert.match(r.errors[0].message, /剛性桿不能伸縮/);
+    assert.equal(fs.existsSync(path.join(s.workdir, "bad3.sketch.json")), false);
+    assert.equal(s.version, 0);
+    assert.equal(s.lastName, null);
+    assert.deepEqual(events, []);
+  } finally {
+    fs.rmSync(s.workdir, { recursive: true, force: true });
+  }
+});
+
 test("合法 scene → 寫檔+快照+三事件(type:sketch、sceneUrl、無 glbUrl/verified/mode)", () => {
   const s = makeSession("ok");
   const { events, emit } = collector();

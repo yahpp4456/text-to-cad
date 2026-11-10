@@ -16,7 +16,13 @@ from tests.python.support.paths import add_repo_path
 
 add_repo_path("packages/cadpy/src")
 
-from cadpy.motion_decl import MOTION_MAX_DOFS, normalize_motion, playback_motion  # noqa: E402
+from cadpy.motion_decl import (  # noqa: E402
+    MOTION_MAX_DOFS,
+    MOTION_PROFILE_MAX_POINTS,
+    motion_fraction,
+    normalize_motion,
+    playback_motion,
+)
 
 LABELS = ["a", "b", "body", "arm", "hub"]
 
@@ -177,6 +183,63 @@ class CoupleTests(unittest.TestCase):
         # 主動缺 pairs → 自動配對語意在耦合群內不成立,一樣擋
         _, errs = normalize_motion(self._decl(master_extra={"pairs": None}), LABELS)
         self.assertTrue(any("主動 dof stroke 必須明給 pairs" in e for e in errs))
+
+
+class ProfileTests(unittest.TestCase):
+    """profile(非線性從動位移表)——閉鏈連桿(滑塊-曲柄、缸推擺臂)的從動件對
+    主動件不是線性關係;線性 couple 只在兩端點閉合。profile 給 u 等分節點上的
+    位移比(首 0 尾 1),掃掠與播放共用 motion_fraction 的分段線性內插。"""
+
+    def _decl(self, profile, *, couple="stroke"):
+        master = {"id": "stroke", "axis": [0, 1, 0], "travel": -7.7,
+                  "moving": ["a"], "pairs": [["a", "body"]]}
+        slave = {"id": "swing", "type": "revolute", "axis": [0, 0, 1],
+                 "pivot": [0, 0, 0], "angle_deg": 90, "moving": ["hub"],
+                 "pairs": [["hub", "a"]], "profile": profile}
+        if couple:
+            slave["couple"] = couple
+        return {"dofs": [master, slave]}
+
+    def test_accepts_profile_and_projects_to_playback(self) -> None:
+        motion, errs = normalize_motion(self._decl([0, 0.1, 0.5, 1]), LABELS)
+        self.assertEqual(errs, [])
+        self.assertNotIn("profile", motion["dofs"][0])
+        self.assertEqual(motion["dofs"][1]["profile"], [0.0, 0.1, 0.5, 1.0])
+        play = playback_motion(motion)
+        self.assertNotIn("profile", play["dofs"][0])
+        self.assertEqual(play["dofs"][1]["profile"], [0.0, 0.1, 0.5, 1.0])
+
+    def test_absent_profile_keeps_legacy_shape(self) -> None:
+        decl = self._decl([0, 0.5, 1])
+        del decl["dofs"][1]["profile"]
+        motion, errs = normalize_motion(decl, LABELS)
+        self.assertEqual(errs, [])
+        self.assertNotIn("profile", motion["dofs"][1])
+        self.assertNotIn("profile", playback_motion(motion)["dofs"][1])
+
+    def test_rejects_profile_on_uncoupled_dof(self) -> None:
+        _, errs = normalize_motion(self._decl([0, 0.5, 1], couple=None), LABELS)
+        self.assertTrue(any("profile 只能用在帶 couple 的從動 dof" in e for e in errs), errs)
+
+    def test_rejects_bad_shape_and_endpoints(self) -> None:
+        for bad in ("abc", [0, 1], [0.0] * (MOTION_PROFILE_MAX_POINTS + 1)):
+            _, errs = normalize_motion(self._decl(bad), LABELS)
+            self.assertTrue(any("profile 須為" in e for e in errs), (bad, errs))
+        for bad in ([0, "x", 1], [0, float("nan"), 1], [0, 9.0, 1]):
+            _, errs = normalize_motion(self._decl(bad), LABELS)
+            self.assertTrue(any("profile 每項須為有限數" in e for e in errs), (bad, errs))
+        for bad in ([0.1, 0.5, 1], [0, 0.5, 0.9]):
+            _, errs = normalize_motion(self._decl(bad), LABELS)
+            self.assertTrue(any("首項須為 0、末項須為 1" in e for e in errs), (bad, errs))
+
+    def test_motion_fraction_piecewise_linear(self) -> None:
+        # golden 與 apps/cad-chat/src/lib/cadMotionMath.test.js 的 profileFraction 對拍
+        dof = {"profile": [0.0, 0.1, 0.5, 1.0]}
+        for u, want in ((0.0, 0.0), (0.25, 0.075), (1 / 3, 0.1), (0.5, 0.3),
+                        (2 / 3, 0.5), (1.0, 1.0), (-1.0, 0.0), (2.0, 1.0)):
+            self.assertAlmostEqual(motion_fraction(dof, u), want, places=12, msg=str(u))
+        # 無 profile = 線性(舊語意);不夾值(呼叫端 u 本來就在 [0,1])
+        self.assertEqual(motion_fraction({}, 0.37), 0.37)
 
 
 if __name__ == "__main__":

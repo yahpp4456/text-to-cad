@@ -329,14 +329,42 @@ export function evalPose(compiled, driveValues, attachStates) {
 //   (與 validateSketch 同形 {path,message}),每個派生點只報第一筆。
 // ---------------------------------------------------------------------------
 
+// 行程取樣(findUnreachable / findStretchedCouplers 共用):每個 drive 在 [min,max]
+// 等距取樣、其餘 drive 停 home;兩 drive 再補四個角落。回 [{driveValues, where}]。
+function sweepDriveSamples(compiled, samples) {
+  const out = [];
+  const drives = compiled.doc.drives;
+  const fmt = (x) => (Math.round(x * 100) / 100).toString();
+  for (const d of drives) {
+    for (let i = 0; i <= samples; i++) {
+      const v = d.min + ((d.max - d.min) * i) / samples;
+      out.push({
+        driveValues: { ...compiled.homeDrives, [d.id]: v },
+        where: `${d.id}=${fmt(v)}${d.unit || ""}`,
+      });
+    }
+  }
+  if (drives.length === 2) {
+    const [a, b] = drives;
+    for (const va of [a.min, a.max]) {
+      for (const vb of [b.min, b.max]) {
+        out.push({
+          driveValues: { [a.id]: va, [b.id]: vb },
+          where: `${a.id}=${fmt(va)}${a.unit || ""}、${b.id}=${fmt(vb)}${b.unit || ""}`,
+        });
+      }
+    }
+  }
+  return out;
+}
+
 export function findUnreachable(compiled, { samples = 61 } = {}) {
   const errors = [];
   const seen = new Set();
   const pins = compiled.doc.derived.filter((e) => e.type === "pin_on_line");
   if (!pins.length) return errors;
-  const drives = compiled.doc.drives;
   const fmt = (x) => (Math.round(x * 100) / 100).toString();
-  const probe = (driveValues, where) => {
+  for (const { driveValues, where } of sweepDriveSamples(compiled, samples)) {
     const frame = evalPose(compiled, driveValues, compiled.attachInitials);
     for (const e of pins) {
       if (seen.has(e.id)) continue;
@@ -350,23 +378,52 @@ export function findUnreachable(compiled, { samples = 61 } = {}) {
           `${fmt(pose.minLen)} mm,請加長桿、移鉸點或縮小行程`,
       });
     }
-  };
-  for (const d of drives) {
-    for (let i = 0; i <= samples; i++) {
-      const v = d.min + ((d.max - d.min) * i) / samples;
-      probe({ ...compiled.homeDrives, [d.id]: v }, `${d.id}=${fmt(v)}${d.unit || ""}`);
-    }
   }
-  if (drives.length === 2) {
-    const [a, b] = drives;
-    for (const va of [a.min, a.max]) {
-      for (const vb of [b.min, b.max]) {
-        probe(
-          { [a.id]: va, [b.id]: vb },
-          `${a.id}=${fmt(va)}${a.unit || ""}、${b.id}=${fmt(vb)}${b.unit || ""}`,
-        );
+  return errors;
+}
+
+// ---------------------------------------------------------------------------
+// findStretchedCouplers:剛性桿定長預檢(呈現前的閘;純函數、零 LLM)
+//   coupler 的畫法是「自動落在兩錨點之間」——兩錨點距離若隨 drive 改變,畫面上
+//   桿會跟著伸縮,把不閉合的機構畫成連得上(審查 F4)。coupler 語意=剛性連桿,
+//   行程內兩端距離必須恆定;會伸縮的是 actuator。同 findUnreachable 的取樣,
+//   (max−min) 超過容差即回 errors[]({path,message}),每支桿一筆。
+//   容差 max(0.5 mm, 0.5%×桿長):閉式定長鏈的實際變化是 1e-13 級,手算座標
+//   湊出來的「差一點」是毫米級,中間留足浮點與示意精度的餘裕。
+// ---------------------------------------------------------------------------
+
+export function findStretchedCouplers(compiled, { samples = 61 } = {}) {
+  const couplers = compiled.doc.derived.filter((e) => e.type === "coupler");
+  if (!couplers.length) return [];
+  const range = new Map(couplers.map((e) => [e.id, { min: Infinity, max: -Infinity, at: "" }]));
+  for (const { driveValues, where } of sweepDriveSamples(compiled, samples)) {
+    const frame = evalPose(compiled, driveValues, compiled.attachInitials);
+    for (const e of couplers) {
+      const len = frame.derivedPose[e.id]?.len;
+      if (!Number.isFinite(len)) continue;
+      const r = range.get(e.id);
+      if (len < r.min) r.min = len;
+      if (len > r.max) {
+        r.max = len;
+        r.at = where;
       }
     }
+  }
+  const fmt = (x) => (Math.round(x * 100) / 100).toString();
+  const errors = [];
+  for (const e of couplers) {
+    const r = range.get(e.id);
+    if (!Number.isFinite(r.min)) continue;
+    const delta = r.max - r.min;
+    if (delta <= Math.max(0.5, 0.005 * r.max)) continue;
+    errors.push({
+      path: `derived.${e.id}`,
+      message:
+        `連桿 ${e.id} 是剛性桿,但兩端距離在行程內由 ${fmt(r.min)} 變到 ${fmt(r.max)} mm` +
+        `(${r.at} 時最長,變化 ${fmt(delta)} mm)——剛性桿不能伸縮:讓一端落在 pin_on_line ` +
+        `派生點(link.to=另一端錨點、len=桿長)使兩端定長,或把兩端放在同一剛體上;` +
+        `若這支本來就是伸縮件(缸/電缸/彈簧)請改用 actuator`,
+    });
   }
   return errors;
 }
