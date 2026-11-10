@@ -39,7 +39,7 @@ export const STATIC_RULES_SUMMARY = `- PARAMS 單層 dict 契約、gen_step() �
 - INTENDED_CONTACT 白名單語意;結構件不得互穿(接合須銷媒介/面貼合,L-5)
 - MOTION 宣告:linear + revolute(revolute 必明給 pairs)、moving/pairs label 唯一、travel/angle_deg 引用 PARAMS;獨立末端缸各自成 DOF
 - couple 同步耦合三用途:定比傳動(幅度須符合傳動比)/ 同一件的連貫複合運動(內層先宣告)/ 閉鏈連桿(從動加 profile 閉式位移表、鉸點「連桿×銷」必列入 pairs)
-- 標準件(cadpy.parts)簽章與座標慣例;變換整顆 Compound 不帶動 children(逐子件各套變換,或整顆當一件 add)
+- 標準件(cadpy.parts)簽章與座標慣例;變換整顆 Compound 不帶動 children(逐子件各套變換,或整顆當一件 add);鏡射要明給平面(mirror() 預設 XY)
 - 齒輪/鈑金/掃出/線性滑台/龍門/閉鏈連桿各有指定參考模型,改編不重推
 - 修復一律 cad_build(edits) 最小段精修,不重送整份 code;retry 上限 3 次後誠實回報
 - 大型組合件(≥8 件):每子系統一個 builder、定位常數集中頂部一張表、IC 按介面分組

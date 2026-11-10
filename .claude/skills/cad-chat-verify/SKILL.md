@@ -104,6 +104,15 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   判讀:把鉸點「連桿×銷」列進 pairs 後掃掠紅,多半是真的(閉式解算錯桿長、漏了連桿自己的
   擺角 dof、或連桿擺動撞叉槽),不要靠拿掉 pairs 變綠。動 prompt 的閉鏈段 → L4 一回合
   (缸推擺臂題)看 agent 是否 Read 參考模型並宣告 profile。
+- **掃掠的同動剔除 + dof 上限(2026-11-10 案例演練)**:`validate.py` 剔除配對的條件是「兩端在
+  耦合群內吃到的 dof 清單完全相同」(舊版只看單一 dof 的 moving,會把同被主動帶著走、各自又有
+  不同從動 dof 的一對誤剔——note 出現「N 對同動剔除」時核對那幾對是不是真的相對靜止)。
+  `MOTION_MAX_DOFS` 是 16(平行機構每腿兩個從動 dof)。動這兩處 → `tests/test_validate_motion.py`
+  (`CoMovingPairEliminationTests`、`StewartPlatformReferenceIntegration`、
+  `LinkageGripperReferenceIntegration`)+ sync-vendored + `smoke_verify_gate.py`。
+  參考模型共三個閉鏈/平行類:`cylinder_tilt_platform`(主動=輸出)、`linkage_gripper`(主動=輸入、
+  鏡射)、`stewart_platform`(逆運動學)。**鏡射陷阱**:build123d `mirror()` 預設 XY 平面,
+  靜態檢查抓不到鏡錯的件——新參考模型有對稱件時,用運動配對或 bbox 斷言鎖左右。
 - **草模剛性桿定長預檢(2026-11-10)**:`sketch_present` 在可達性預檢後跑
   `findStretchedCouplers`——coupler 兩端距離在行程內變化 > max(0.5mm, 0.5%) 即擋
   (actuator 不檢查,它本來就伸縮)。煙測/手測注入的場景若把 coupler 當伸縮件用會被拒絕,

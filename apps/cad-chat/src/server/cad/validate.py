@@ -127,7 +127,7 @@ def _run_motion_sweep(named, motion):
     每個「群」獨立掃(其他群保持 seated)。無耦合時一群=一個 DOF(舊語意不變);
     帶 ``couple`` 的從動 dof 併入主動 dof 的群,同一個 u 同步變換——齒輪齒條等
     嚙合傳動因此被「真的滾動」掃掠:跨成員的 pair(如 rack~pinion)保留,
-    只有同一 dof 內兩端同動的 pair 才剔除(相對位姿不變)。
+    只有兩端在群內吃到的 dof 完全相同的 pair 才剔除(相對位姿不變)。
     """
     from cadpy.geometry_checks import sweep_interference
 
@@ -152,13 +152,19 @@ def _run_motion_sweep(named, motion):
         members.sort(key=lambda d: dofs.index(d))  # 疊加照宣告序(外層=後宣告)
         gid = "+".join(m["id"] for m in members)
         pairs, owner, auto = [], {}, False
+        # 一個件在這個群裡吃到哪些成員 dof(依宣告序)。兩件的清單完全相同才是「同動」:
+        # 只看單一 dof 會把「同被主動帶著走、但各自還有不同從動 dof」的一對誤剔——
+        # 例:兩支連桿都隨推桿平移,卻各繞自己的銷反向擺動,彼此是有相對運動的。
+        def _applied(name, members=members):
+            return tuple(mm["id"] for mm in members if name in mm["moving"])
+
         for m in members:
             moving = set(m["moving"])
             if m["pairs"] is not None:
                 kept, dropped = [], 0
                 for a, b in m["pairs"]:
-                    if a in moving and b in moving:
-                        dropped += 1  # 同 dof 兩端同動 -> 相對位姿不變,掃了也恆 0
+                    if a in moving and b in moving and _applied(a) == _applied(b):
+                        dropped += 1  # 兩端吃到的 dof 完全相同 -> 相對位姿不變,掃了也恆 0
                         continue
                     kept.append((a, b))
                 if dropped:

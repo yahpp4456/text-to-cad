@@ -62,6 +62,8 @@ repo 內可直接改編的機構範例(先讀再改,不要從零推尺寸鏈):
 | 夾爪+90° 翻轉關節 | `models/flip_gripper/flip_gripper.py` |
 | 夾取後左右傾擺(3 個自由度) | `models/rod_tilt_gripper/rod_tilt_gripper.py` |
 | 缸推連桿帶動平台傾擺(閉鏈) | `models/cylinder_tilt_platform/cylinder_tilt_platform.py` |
+| 推桿經連桿帶動雙指的夾爪(含可換 V 形夾塊) | `models/linkage_gripper/linkage_gripper.py`(細節看 `gripper-design.md`) |
+| 六足平行平台(史都華平台) | `models/stewart_platform/stewart_platform.py`(細節看 `parallel-mechanism.md`) |
 | 齒輪齒條式旋轉(缸推齒條轉小齒輪) | `models/steering_box_rack_pinion/steering_box_rack_pinion.py`、`models/rack_pinion_rotary_actuator` |
 | 三軸複合動作的插入站 | `models/din_rail_clip_inserter/din_rail_clip_inserter.py` |
 | 手臂工作站的鋁擠型底座 | `models/scara_arm_base/scara_arm_base.py` |
@@ -70,7 +72,7 @@ repo 內可直接改編的機構範例(先讀再改,不要從零推尺寸鏈):
   (label 寫「構型——一句取捨」,value 寫選定後可直接開工的完整配置),然後停。
 - 使用者選定後,讀該構型用到的元件主題檔(`linear-axis.md`、`pneumatic.md`、`rotary-drive.md`)
   做選型計算,再取標準件、生成。
-- 運動宣告的 dof 上限是 8 個;每支獨立動作的缸或軸各一個 dof。
+- 運動宣告的 dof 上限是 16 個;每支獨立動作的缸或軸各一個 dof(平行機構每支腿另佔兩個耦合從動 dof)。
 - 同步帶驅動的直線軸:本系統沒有皮帶直線模組的參考模型與標準件——帶輪與帶體只能做示意,
   要在提方案時就講明。
 

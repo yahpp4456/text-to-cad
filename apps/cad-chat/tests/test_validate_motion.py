@@ -323,5 +323,105 @@ class CylinderTiltReferenceIntegration(unittest.TestCase):
         self.assertLess(dofs["link_swing"]["profile"][16], 0.3)
 
 
+def _validate_model(name):
+    path = REPO / "models" / name / f"{name}.py"
+    env = {**os.environ, "PYTHONUTF8": "1"}
+    r = subprocess.run(
+        [sys.executable, str(CAD_DIR / "validate.py"), str(path)],
+        capture_output=True, text=True, timeout=240, env=env,
+    )
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+@unittest.skipUnless((REPO / "models" / "stewart_platform" / "stewart_platform.py").exists(), "fixture 不存在")
+class StewartPlatformReferenceIntegration(unittest.TestCase):
+    """平行機構參考模型(六足平台):一條升降軌跡 = 1 主動 + 每腿 2 個 profile 從動 = 13 dof。
+    這顆同時鎖住「dof 上限要容得下平行機構」(曾是 8,13 個直接被宣告驗證拒收)。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.out = _validate_model("stewart_platform")
+
+    def test_thirteen_coupled_dofs_sweep_clean(self):
+        self.assertTrue(self.out["ok"], self.out)
+        sweep = next(c for c in self.out["checks"] if c["id"] == "motion_sweep")
+        self.assertTrue(sweep["ok"], sweep)
+        self.assertFalse(sweep.get("skipped"))
+        self.assertIn("13 DOF", sweep["note"])
+        self.assertIn("18 對", sweep["note"])  # 6×(桿×筒 + 筒×基座球窩 + 桿×平台球窩)
+
+    def test_every_leg_dof_is_coupled_with_profile(self):
+        dofs = self.out["motion"]["dofs"]
+        self.assertEqual(len(dofs), 13)
+        self.assertNotIn("couple", dofs[0])
+        for d in dofs[1:]:
+            self.assertEqual(d["couple"], "heave")
+            self.assertEqual(len(d["profile"]), 17)
+
+
+@unittest.skipUnless((REPO / "models" / "linkage_gripper" / "linkage_gripper.py").exists(), "fixture 不存在")
+class LinkageGripperReferenceIntegration(unittest.TestCase):
+    """連桿夾爪參考模型:主動是輸入(推桿行程),雙指與兩支連桿是 profile 從動,左右鏡射。
+    18 對配對含 link_r×link_l——兩支連桿都隨推桿平移(同在主動的 moving 裡)但各自反向擺動,
+    舊的「同 dof 兩端同動就剔除」會把這對誤剔成 17 對。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.out = _validate_model("linkage_gripper")
+
+    def test_sweep_clean_and_keeps_counter_swinging_pair(self):
+        self.assertTrue(self.out["ok"], self.out)
+        sweep = next(c for c in self.out["checks"] if c["id"] == "motion_sweep")
+        self.assertTrue(sweep["ok"], sweep)
+        self.assertIn("5 DOF", sweep["note"])
+        self.assertIn("18 對", sweep["note"])
+        self.assertNotIn("同動剔除", sweep["note"])
+
+    def test_left_side_is_mirrored_across_yz(self):
+        # mirror() 預設鏡射平面是 XY(z→−z):左側件會掉到模型下方而靜態檢查照過。
+        dofs = {d["id"]: d for d in self.out["motion"]["dofs"]}
+        self.assertEqual(dofs["finger_l"]["pivot"][0], -dofs["finger_r"]["pivot"][0])
+        self.assertEqual(dofs["finger_l"]["pivot"][2], dofs["finger_r"]["pivot"][2])
+        self.assertEqual(dofs["finger_l"]["axis"][1], -dofs["finger_r"]["axis"][1])
+
+
+class CoMovingPairEliminationTests(unittest.TestCase):
+    """掃掠的同動剔除:兩端在群內吃到的 dof 完全相同才剔。"""
+
+    @classmethod
+    def setUpClass(cls):
+        from build123d import Box, Pos
+
+        from cadpy.assembly import label_shape
+
+        a = Pos(-12, 0, 0) * Box(10, 10, 10)
+        b = Pos(12, 0, 0) * Box(10, 10, 10)
+        wall = Pos(0, 0, -20) * Box(60, 20, 10)
+        for shape, name in ((a, "a"), (b, "b"), (wall, "wall")):
+            label_shape(shape, name)
+        cls.named = [("a", a), ("b", b), ("wall", wall)]
+
+    def _motion(self, *, extra_swing):
+        dofs = [{"id": "lift", "axis": [0, 0, 1], "travel": 20.0, "moving": ["a", "b"],
+                 "pairs": [["a", "b"], ["a", "wall"]], "samples": 6}]
+        if extra_swing:  # a 另外朝 b 靠過去 → 與 b 有相對運動(會撞)
+            dofs.insert(0, {"id": "close", "axis": [1, 0, 0], "travel": 20.0, "moving": ["a"],
+                            "pairs": [["a", "b"]], "couple": "lift", "samples": 6})
+        m, errs = validate._read_motion(SimpleNamespace(MOTION={"dofs": dofs}), self.named)
+        self.assertEqual(errs, [])
+        return m
+
+    def test_truly_co_moving_pair_is_dropped(self):
+        check = validate._run_motion_sweep(self.named, self._motion(extra_swing=False))
+        self.assertTrue(check["ok"], check)
+        self.assertIn("1 對同動剔除", check["note"])
+
+    def test_pair_with_different_extra_dof_is_swept_and_caught(self):
+        check = validate._run_motion_sweep(self.named, self._motion(extra_swing=True))
+        self.assertFalse(check["ok"], check)
+        self.assertIn("a~b", check["note"])
+        self.assertNotIn("同動剔除", check["note"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

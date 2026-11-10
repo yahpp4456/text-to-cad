@@ -17,7 +17,10 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 
-MOTION_MAX_DOFS = 8  # xyz 三軸 + 4 支獨立末端缸(e0..e3)= 7,留一格餘裕
+# 上限 16:串聯機構很少超過 8(xyz 三軸 + 4 支獨立末端缸 = 7),但平行機構每支腿要兩個
+# 耦合從動 dof(伸長 + 擺角)——六足平台一條軌跡就是 1 + 6×2 = 13。耦合群是整組一起掃,
+# 掃掠成本由「配對數 × 取樣數」的預算管(validate.py),不隨 dof 數線性增加。
+MOTION_MAX_DOFS = 16
 MOTION_PROFILE_MAX_POINTS = 129  # profile 節點數上限(u 等分;128 段對連桿機構綽綽有餘)
 
 
