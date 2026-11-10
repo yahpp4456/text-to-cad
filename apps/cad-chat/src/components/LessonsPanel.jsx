@@ -120,7 +120,13 @@ export default function LessonsPanel({ open, onClose }) {
               <div className="lessons-row-head">
                 <span className="lessons-id">{l.id}</span>
                 <span className="lessons-pill" data-status={l.status}>
-                  {l.status === "active" ? "生效中" : "已停用"}
+                  {l.status === "active"
+                    ? "生效中"
+                    : l.statusReason === "graduated"
+                      ? "已畢業"
+                      : l.statusReason === "retired"
+                        ? "已退役"
+                        : "已停用"}
                 </span>
                 <span className="lessons-title">
                   {l.title}
@@ -146,6 +152,12 @@ export default function LessonsPanel({ open, onClose }) {
                   {l.signature}
                 </span>
               </div>
+              {l.status !== "active" && l.statusNote && (
+                <div className="lessons-cause" data-status-note>
+                  {l.statusReason === "graduated" ? "已寫進:" : "停用原因:"}
+                  {l.statusNote}
+                </div>
+              )}
               <div className="lessons-actions">
                 <a
                   className="fb-action"

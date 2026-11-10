@@ -15,12 +15,17 @@
 //   node scripts/merge-lessons.mjs --dry-run      # 只印報告,不寫檔
 //   node scripts/merge-lessons.mjs --machine sam-pc
 //   node scripts/merge-lessons.mjs --inputs a.json,b.json --snapshot out.json --no-live
+//   node scripts/merge-lessons.mjs --no-curation  # 只合併,不套 data/curation.lessons.json
 //
-// 已知限制:合併為 **union-only**,跨機的刪除不會傳播(在 A 機刪掉的 lesson,若
+// 合併後一律套「人為裁決」(src/server/lessons.curate.mjs):濾掉雜訊案例(煙測暫存件/
+// 回合層基礎設施錯誤/參數防呆照設計丟的 ValueError),並依 data/curation.lessons.json
+// (版控、以 signature 為鍵)套狀態與措辭。停用因此跟著 git 走,不必每台機器手動再停一次。
+//
+// 已知限制:case/lesson 的合併仍是 **union**,跨機的刪除不會傳播(在 A 機刪掉的 lesson,若
 // B 機快照仍留著它的 cases,下次合併會把那些 case 當 pending 帶回)。報告會標示
-// 「來自快照、本機活檔沒有」的 lesson signature 供人工判斷。status 同理:disable
-// 不傳播(union 取 active,disable 無時間戳可比新舊),來源不一致時列入報告
-// (statusConflicts)由人重新 disable。措辭權威 = 最新 distilledAt(非 caseCount)。
+// 「來自快照、本機活檔沒有」的 lesson signature 供人工判斷。status:帶 statusAt 的
+// (面板切換或裁決檔蓋章)取最新決定,停用會傳播;全無 statusAt 的舊資料沿用 union 取
+// active。來源不一致時列入報告(statusConflicts)。措辭權威 = 最新 distilledAt(非 caseCount)。
 
 import fs from "node:fs";
 import os from "node:os";
@@ -29,6 +34,7 @@ import { pathToFileURL } from "node:url";
 
 import { APP_ROOT } from "../src/server/config.mjs";
 import { lessonsFile, readStore, writeStore } from "../src/server/lessons.mjs";
+import { applyCuration, validateCuration } from "../src/server/lessons.curate.mjs";
 
 // ── 純函數:合併 N 個 store ──────────────────────────────────────────────
 
@@ -87,6 +93,24 @@ function lessonSignatures(l) {
   if (l.signature) set.add(l.signature);
   if (Array.isArray(l.altSignatures)) for (const a of l.altSignatures) if (a) set.add(a);
   return set;
+}
+
+// 狀態裁決:有 statusAt(面板切換或裁決檔蓋的章)→ 取最新那筆的決定,停用因此能跨機傳播;
+// 全都沒有 statusAt(舊資料)→ 沿用舊的 union 規則(任一 active 即 active)。
+function resolveStatus(lessons) {
+  const stamped = lessons.filter((l) => l.statusAt).sort((a, b) => String(b.statusAt).localeCompare(String(a.statusAt)));
+  if (!stamped.length) {
+    return { status: lessons.every((l) => l.status === "disabled") ? "disabled" : "active" };
+  }
+  const w = stamped[0];
+  const out = { status: w.status === "disabled" ? "disabled" : "active", statusAt: w.statusAt };
+  if (out.status === "disabled") {
+    out.statusReason = w.statusReason || "manual";
+    out.statusNote = w.statusNote || "";
+  } else if (w.statusNote) {
+    out.statusNote = w.statusNote;
+  }
+  return out;
 }
 
 const minStr = (arr) => arr.filter(Boolean).sort()[0] || null;
@@ -157,7 +181,8 @@ export function mergeStores(stores, { labels = [] } = {}) {
     if (statuses.size > 1) {
       statusConflicts.push({
         signature: primary,
-        resolved: lessons.every((l) => l.status === "disabled") ? "disabled" : "active",
+        resolved: resolveStatus(lessons).status,
+        by: lessons.some((l) => l.statusAt) ? "statusAt" : "union",
         sources: group.map((g) => ({ label: g.label, status: g.lesson.status || "active" })),
       });
     }
@@ -165,7 +190,7 @@ export function mergeStores(stores, { labels = [] } = {}) {
       id: null, // 排序後指派
       signature: primary,
       ...(alt.length ? { altSignatures: alt } : {}),
-      status: lessons.every((l) => l.status === "disabled") ? "disabled" : "active",
+      ...resolveStatus(lessons),
       title: winner.title,
       rootCause: winner.rootCause,
       rule: winner.rule,
@@ -289,7 +314,7 @@ function printReport(report, { liveLabel } = {}) {
     log(`  ${l.id} [${l.signature}] ${l.caseCount} cases (${l.status}) 來源:${l.sources.join(",")}${flag}`);
   }
   if (report.statusConflicts.length) {
-    log("── ⚠ status 不一致（union 規則取 active；若你是刻意 disable，合併後請重新 disable）──");
+    log("── ⚠ status 不一致(有 statusAt 者取最新決定;全無 statusAt 的舊資料沿用 union 取 active)──");
     for (const s of report.statusConflicts) {
       const srcs = s.sources.map((x) => `${x.label}=${x.status}`).join(", ");
       log(`  [${s.signature}] → ${s.resolved}（${srcs}）`);
@@ -310,7 +335,7 @@ function printReport(report, { liveLabel } = {}) {
 // ── CLI ───────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
-  const opts = { dryRun: false, machine: null, inputs: null, live: null, snapshot: null, noLive: false, noSnapshot: false };
+  const opts = { dryRun: false, machine: null, inputs: null, live: null, snapshot: null, noLive: false, noSnapshot: false, curation: null, noCuration: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dry-run") opts.dryRun = true;
@@ -320,6 +345,8 @@ function parseArgs(argv) {
     else if (a === "--inputs") opts.inputs = String(argv[++i] || "").split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--live") opts.live = argv[++i];
     else if (a === "--snapshot") opts.snapshot = argv[++i];
+    else if (a === "--curation") opts.curation = argv[++i];
+    else if (a === "--no-curation") opts.noCuration = true;
     else throw new Error(`未知參數:${a}`);
   }
   return opts;
@@ -381,8 +408,29 @@ function main() {
   const labels = inputPaths.map((p) => (path.resolve(p) === liveAbs ? `${path.basename(p)}(活檔)` : path.basename(p)));
   const liveLabel = labels[inputPaths.findIndex((p) => path.resolve(p) === liveAbs)] || null;
 
-  const { store, report } = mergeStores(stores, { labels });
-  printReport(report, { liveLabel });
+  const merged = mergeStores(stores, { labels });
+  printReport(merged.report, { liveLabel });
+
+  // 人為裁決(版控檔,以 signature 為鍵):濾雜訊案例 + 套狀態/措辭。裁決檔缺席 = 只濾雜訊。
+  const curationFile = opts.curation ? path.resolve(opts.curation) : path.join(dataDir(), "curation.lessons.json");
+  let curation = { lessons: {} };
+  if (!opts.noCuration && fs.existsSync(curationFile)) {
+    curation = JSON.parse(fs.readFileSync(curationFile, "utf8"));
+    const errs = validateCuration(curation);
+    if (errs.length) throw new Error(`裁決檔不合法(${curationFile}):\n  ${errs.join("\n  ")}`);
+  }
+  const curated = opts.noCuration ? { store: merged.store, report: null } : applyCuration(merged.store, curation);
+  const store = curated.store;
+  if (curated.report) {
+    const r = curated.report;
+    const noise = Object.entries(r.noiseRemoved).map(([k, v]) => `${k}=${v}`).join("、") || "無";
+    console.log(`── 裁決(${path.basename(curationFile)})──`);
+    console.log(`  濾掉雜訊案例:${noise}`);
+    for (const x of r.statusApplied) console.log(`  狀態 [${x.signature}] ${x.from} → ${x.to}`);
+    if (r.wordingApplied.length) console.log(`  措辭改寫:${r.wordingApplied.join("、")}`);
+    if (r.unmatched.length) console.log(`  (裁決檔有、庫裡沒有的 signature:${r.unmatched.join("、")})`);
+    console.log(`  結果:${store.lessons.filter((l) => l.status === "active").length} 條生效 / ${store.lessons.length} 條、${store.cases.length} 筆案例`);
+  }
 
   if (opts.dryRun) {
     console.log("\n[dry-run] 未寫入任何檔案。");

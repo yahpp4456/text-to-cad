@@ -112,6 +112,26 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   對話的資料夾(readScope 硬閘),機構定義一律由 `lib/promoteText.js` 算進文字;
   `promoteText.test.js` 鎖「不含 .cadchat / .sketch.json」,`smoke_sketch.py` 斷 prefill
   含「- 驅動:」「樞軸 (」。
+- **機構設計知識庫 `apps/cad-chat/kb/`(2026-11-10)**:系統提示只帶 `INDEX.md` 的清單(`agent/kb.mjs`,
+  每程序讀一次——**改 INDEX 要重啟**),主題檔由代理執行期 Read;readScope 只多放行這個目錄。
+  動 kb/ 任何檔、`kb.mjs`、readScope 的 allow → L1 `prompt.kb.test.js`(索引↔檔案雙向、必要章節、
+  提示帶得到索引、`apps/` 其他路徑照拒、主題檔引用的 `models/` 路徑存在)。主題檔裡寫的選型工具
+  行為(如 `ball_screw` 接受 `rated_rpm`、`linear_guide` 不含安全係數)改 `cadpy.parts.select` 時要
+  回頭對——沒有自動測試釘這層,手打 `select_part.py <family> '<json>'` 核對。新增打包資產要同步
+  `electron-builder.yml` extraResources(kb 已列)。代理會不會在對的時機讀、讀了有沒有照算 → 只有
+  L4 能驗(題目例:「水平搬 5 kg、行程 300、速度 100 mm/s 的滑台,其餘你決定」看是否讀
+  linear-axis 並把質量/加速時間標 assumed)。
+- **教訓機制(2026-11-10 重構)**:雜訊判準 `lessons.curate.mjs` `isNoiseCase` 是錄製/合併/整理
+  共用的單一真相——**煙測暫存件必須以 `tmp_smoke` 開頭命名**才會被濾掉(新煙測造暫存專案照這個
+  前綴,否則故意餵的壞參數會進教訓庫)。人的決定寫在版控的 `data/curation.lessons.json`
+  (signature 為鍵;檔名不可以 `lessons` 開頭,合併輸入 glob 是 `lessons*.json`),`merge-lessons`
+  合併後套用。動教訓資料或裁決 → `lessons.curate.test.js`(鎖「repo 快照已是套用後狀態、digest
+  不超預算、沒有『…』半句規則」——改了裁決檔要重跑
+  `node scripts/merge-lessons.mjs --inputs data/lessons.sam.json,data/lessons.vm.json --snapshot data/lessons.<m>.json --no-live`
+  兩次(sam、vm)讓快照跟上,否則這條紅)+ `lessons.lifecycle.test.js`;動面板/API →
+  `smoke_lessons.py` + `smoke_lesson_offer.py`。`/api/lessons` 的教訓列是白名單映射
+  (`middleware/lessons.mjs` `lessonView`)——教訓加欄位要在那裡透出,否則面板拿不到(2026-11-10
+  實測踩過:L1 全綠、面板卻不顯示停用理由,開真頁面才發現)。
 - **齒輪幾何只能用 `cadpy.parts.gear` family,不要手刻**:單弦梯形齒 vs 直邊齒條滾動
   必互咬(需隨 module 放大的減薄 ≈(0.05+2/z)·m,齒會瘦到難看);family 齒腹是
   「過真漸開線點的折線」(內接弦只減料不加料),0.05 背隙即全 z 零穿透——嚙合面

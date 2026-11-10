@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { SESSIONS_ROOT, lessonsEnabled, resolveLessonThreshold } from "./config.mjs";
 import { scrubPaths } from "./cad/python.mjs";
+import { STATUS_REASONS, isNoiseCase } from "./lessons.curate.mjs";
 
 // ── 檔案位置 ──
 // models/.cadchat/ 頂層平面檔:gcSessions 只刪目錄(sessions.mjs),平面檔天然存活 GC;
@@ -346,6 +347,9 @@ export function flushTurnRecorder(session, { file = lessonsFile(), rec } = {}) {
     const threshold = resolveLessonThreshold();
     const eligible = new Set();
     for (const c of target.cases) {
+      // 雜訊不落盤(煙測暫存件 / 回合層基礎設施錯誤 / 滑桿撞到參數防呆的 ValueError):
+      // 這些不是生成教訓,記了只會灌水案例數、餵出錯的蒸餾結果。判準與合併/整理共用。
+      if (isNoiseCase({ ...c, sessionId: session?.sessionId })) continue;
       store.seq += 1;
       const kase = {
         id: `c_${store.seq}`,
@@ -483,12 +487,27 @@ export function pendingGroups(store) {
 }
 
 // ── 教訓 CRUD(API 用)──
-export function updateLessonStatus(id, status, { file = lessonsFile() } = {}) {
+export function updateLessonStatus(
+  id,
+  status,
+  { file = lessonsFile(), reason = "manual", note = "", now = new Date().toISOString() } = {},
+) {
   if (status !== "active" && status !== "disabled") return { ok: false, error: "bad_status" };
+  if (status === "disabled" && !STATUS_REASONS.has(reason)) return { ok: false, error: "bad_reason" };
   const store = readStore(file);
   const lesson = store.lessons.find((l) => l.id === id);
   if (!lesson) return { ok: false, error: "not_found" };
   lesson.status = status;
+  // statusAt = 這個決定是何時做的:跨機合併據此取「最新的決定」(以前是 union 取 active,
+  // 在 A 機停用的教訓會被 B 機的快照復活)。
+  lesson.statusAt = now;
+  if (status === "disabled") {
+    lesson.statusReason = reason;
+    lesson.statusNote = String(note || "");
+  } else {
+    delete lesson.statusReason;
+    delete lesson.statusNote;
+  }
   writeStore(store, file);
   return { ok: true };
 }

@@ -23,6 +23,16 @@ const clamp = (v, n) => {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 };
 
+// 規則/根因超長時退到上限內最後一個句界(。;;)再截——硬截會把規則切在半句
+// (2026-11 整理時 13 條裡有 5 條以「…」結尾,digest 每回合把半句話注入系統提示)。
+const clampSentence = (v, n) => {
+  const s = String(v ?? "").trim();
+  if (s.length <= n) return s;
+  const head = s.slice(0, n);
+  const cut = Math.max(head.lastIndexOf("。"), head.lastIndexOf(";"), head.lastIndexOf(";"));
+  return cut >= n * 0.5 ? head.slice(0, cut + 1).replace(/[;;]$/, "。") : clamp(s, n);
+};
+
 // 系統提示已靜態涵蓋的規則摘要(prompt.mjs 鐵則 + skills/cad/references/lessons.md L-1..L-5)。
 // 蒸餾出的教訓必須是這些「之外」的新增細節;prompt.mjs 大改時同步這份摘要。
 export const STATIC_RULES_SUMMARY = `- PARAMS 單層 dict 契約、gen_step() 無參數、check_geometry 寫檔前 gate、_check_params 跨參數防呆
@@ -81,8 +91,8 @@ export function parseDistillOutput(text) {
     if (a === -1 || b <= a) return null;
     const obj = JSON.parse(t.slice(a, b + 1));
     const title = clamp(obj.title, 40);
-    const rootCause = clamp(obj.rootCause, 120);
-    const rule = clamp(obj.rule, 160);
+    const rootCause = clampSentence(obj.rootCause, 140);
+    const rule = clampSentence(obj.rule, 220);
     if (!title || !rootCause || !rule) return null;
     return {
       title,
@@ -256,7 +266,12 @@ export async function maybeDistill({
           // 自動蒸餾:排除人工記的 manual: 教訓(定案「留 pending 手動蒸餾」——只由使用者
           // 面板「立即蒸餾」升級),且對連敗 ≥MAX_AUTO_ATTEMPTS 的叢集放棄(退避);
           // 手動 force 兩者皆不受限。
-          (force || (!g.signature.startsWith("manual:") && (g.attempts || 0) < MAX_AUTO_ATTEMPTS)),
+          // turn:* 是基礎設施錯誤(額度/模型/傳輸),沒有建模資訊,永不自動蒸餾——2026-07 曾把
+          // 23 筆這種案例蒸成「MOTION 僅 linear」的錯規則。(新案例已在錄製層濾掉;這裡擋舊資料。)
+          (force ||
+            (!g.signature.startsWith("manual:") &&
+              !g.signature.startsWith("turn:") &&
+              (g.attempts || 0) < MAX_AUTO_ATTEMPTS)),
       );
       const limit = force ? 5 : 3;
       const distilled = [];

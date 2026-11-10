@@ -29,6 +29,10 @@ const lessonView = (l) => ({
   caseCount: l.caseCount || 0,
   resolvedCount: l.resolvedCount || 0,
   graduationCandidate: !!l.graduationCandidate,
+  // 停用的理由與去處(面板 pill「已畢業/已退役」與說明列用;生效中的教訓這三欄為空)
+  statusReason: l.statusReason || "",
+  statusNote: l.statusNote || "",
+  statusAt: l.statusAt || null,
   createdAt: l.createdAt || null,
   lastHitAt: l.lastHitAt || null,
   distilledAt: l.distilledAt || null,

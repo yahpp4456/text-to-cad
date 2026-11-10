@@ -55,6 +55,9 @@ extraResources:
     to: runtime/skills/cad/SKILL.md
   - from: ../../skills/cad/references
     to: runtime/skills/cad/references
+  # agent 執行期 Read 的機構設計知識庫(系統提示帶索引;readScope 只放行這個目錄)
+  - from: kb
+    to: runtime/apps/cad-chat/kb
   # models fixtures 全套(23MB;few-shot 5 專案 + 檔案瀏覽器/匯入來源)
   - from: ../../models
     to: runtime/models
