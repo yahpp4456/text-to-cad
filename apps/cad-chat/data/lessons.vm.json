@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-10T10:54:23.696Z",
-  "seq": 58,
+  "updatedAt": "2026-11-13T03:20:53.111Z",
+  "seq": 124,
   "lessonSeq": 13,
   "cases": [
     {
@@ -197,7 +197,7 @@
       "lessonId": "LS-1"
     },
     {
-      "id": "c_10",
+      "id": "c_11",
       "at": "2026-07-10T13:13:15.303Z",
       "sessionId": "s_mreyfsiy_eclhrj",
       "turnId": "t_mreyhkso_8k71",
@@ -216,7 +216,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_11",
+      "id": "c_12",
       "at": "2026-07-10T13:13:26.250Z",
       "sessionId": "s_mreyfsiy_eclhrj",
       "turnId": "t_mreyhtqr_0i27",
@@ -235,7 +235,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_12",
+      "id": "c_13",
       "at": "2026-07-10T13:13:35.835Z",
       "sessionId": "s_mreyfsiy_eclhrj",
       "turnId": "t_mreyhzvy_x3g2",
@@ -254,7 +254,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_13",
+      "id": "c_14",
       "at": "2026-07-10T13:13:47.553Z",
       "sessionId": "s_mreyfsiy_eclhrj",
       "turnId": "t_mreyi8yv_w44h",
@@ -273,7 +273,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_14",
+      "id": "c_15",
       "at": "2026-07-10T13:17:43.960Z",
       "sessionId": "s_mreyigcc_hxnhuu",
       "turnId": "t_mreylv4g_cc89",
@@ -292,7 +292,7 @@
       "lessonId": "LS-6"
     },
     {
-      "id": "c_15",
+      "id": "c_16",
       "at": "2026-07-10T16:00:38.698Z",
       "sessionId": "s_mrf3eik0_do36ww",
       "turnId": "t_mrf3v6lm_bgcl",
@@ -316,7 +316,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_16",
+      "id": "c_17",
       "at": "2026-07-10T16:23:28.413Z",
       "sessionId": "s_mrf3eik0_do36ww",
       "turnId": "t_mrf5a6s6_qi3h",
@@ -335,7 +335,7 @@
       "lessonId": "LS-3"
     },
     {
-      "id": "c_17",
+      "id": "c_18",
       "at": "2026-07-10T16:25:44.196Z",
       "sessionId": "s_mrf3eik0_do36ww",
       "turnId": "t_mrf5d3nh_gnh0",
@@ -354,7 +354,7 @@
       "lessonId": "LS-3"
     },
     {
-      "id": "c_18",
+      "id": "c_20",
       "at": "2026-07-10T18:46:21.615Z",
       "sessionId": "s_mrfabi41_oiwc14",
       "turnId": "t_mrfae215_bqrn",
@@ -373,7 +373,7 @@
       "lessonId": "LS-1"
     },
     {
-      "id": "c_19",
+      "id": "c_26",
       "at": "2026-07-12T16:53:41.733Z",
       "sessionId": "s_mri0mkil_l4uu6c",
       "turnId": "t_mri11wo4_vzs4",
@@ -396,7 +396,7 @@
       "lessonId": "LS-4"
     },
     {
-      "id": "c_20",
+      "id": "c_29",
       "at": "2026-07-13T10:09:38.903Z",
       "sessionId": "s_mrj1wf4l_ncl74w",
       "turnId": "t_mrj23m7c_n0qb",
@@ -419,7 +419,7 @@
       "lessonId": "LS-4"
     },
     {
-      "id": "c_21",
+      "id": "c_43",
       "at": "2026-07-15T09:25:41.000Z",
       "sessionId": "s_mrlventz_0r3jjb",
       "turnId": "t_mrlvgoe0_cqcn",
@@ -443,7 +443,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_22",
+      "id": "c_44",
       "at": "2026-07-15T09:25:52.215Z",
       "sessionId": "s_mrlventz_0r3jjb",
       "turnId": "t_mrlvgoe0_cqcn",
@@ -467,7 +467,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_23",
+      "id": "c_45",
       "at": "2026-07-15T09:35:14.501Z",
       "sessionId": "s_mrlventz_0r3jjb",
       "turnId": "t_mrlvvwmr_pvek",
@@ -491,7 +491,7 @@
       "lessonId": "LS-4"
     },
     {
-      "id": "c_24",
+      "id": "c_46",
       "at": "2026-07-15T09:35:49.592Z",
       "sessionId": "s_mrlventz_0r3jjb",
       "turnId": "t_mrlvvwmr_pvek",
@@ -515,7 +515,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_25",
+      "id": "c_47",
       "at": "2026-07-15T09:48:05.788Z",
       "sessionId": "s_mrlventz_0r3jjb",
       "turnId": "t_mrlw9tg4_ftkh",
@@ -537,7 +537,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_26",
+      "id": "c_48",
       "at": "2026-07-15T09:49:47.168Z",
       "sessionId": "s_mrlventz_0r3jjb",
       "turnId": "t_mrlw9tg4_ftkh",
@@ -559,7 +559,7 @@
       "lessonId": "LS-4"
     },
     {
-      "id": "c_27",
+      "id": "c_49",
       "at": "2026-07-15T09:51:07.354Z",
       "sessionId": "s_mrlventz_0r3jjb",
       "turnId": "t_mrlw9tg4_ftkh",
@@ -581,7 +581,7 @@
       "lessonId": "LS-3"
     },
     {
-      "id": "c_28",
+      "id": "c_50",
       "at": "2026-07-15T09:52:37.331Z",
       "sessionId": "s_mrlventz_0r3jjb",
       "turnId": "t_mrlw9tg4_ftkh",
@@ -603,7 +603,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_29",
+      "id": "c_51",
       "at": "2026-07-15T09:54:18.713Z",
       "sessionId": "s_mrlventz_0r3jjb",
       "turnId": "t_mrlw9tg4_ftkh",
@@ -625,7 +625,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_30",
+      "id": "c_52",
       "at": "2026-07-15T09:56:21.206Z",
       "sessionId": "s_mrlventz_0r3jjb",
       "turnId": "t_mrlw9tg4_ftkh",
@@ -647,7 +647,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_31",
+      "id": "c_53",
       "at": "2026-07-15T09:58:21.524Z",
       "sessionId": "s_mrlventz_0r3jjb",
       "turnId": "t_mrlw9tg4_ftkh",
@@ -669,7 +669,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_32",
+      "id": "c_54",
       "at": "2026-07-15T10:01:01.967Z",
       "sessionId": "s_mrlventz_0r3jjb",
       "turnId": "t_mrlw9tg4_ftkh",
@@ -691,7 +691,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_33",
+      "id": "c_56",
       "at": "2026-07-15T10:13:27.998Z",
       "sessionId": "s_mrlw9fvk_vyebn5",
       "turnId": null,
@@ -715,7 +715,7 @@
       "lessonId": "LS-8"
     },
     {
-      "id": "c_34",
+      "id": "c_60",
       "at": "2026-07-15T15:16:10.140Z",
       "sessionId": "s_mrm7tylr_cjr16g",
       "turnId": "t_mrm7waxm_whw3",
@@ -737,7 +737,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_35",
+      "id": "c_61",
       "at": "2026-07-15T15:16:50.209Z",
       "sessionId": "s_mrm7tylr_cjr16g",
       "turnId": "t_mrm7waxm_whw3",
@@ -759,7 +759,7 @@
       "lessonId": "LS-9"
     },
     {
-      "id": "c_36",
+      "id": "c_62",
       "at": "2026-07-15T15:17:35.753Z",
       "sessionId": "s_mrm7tylr_cjr16g",
       "turnId": "t_mrm7waxm_whw3",
@@ -781,7 +781,7 @@
       "lessonId": "LS-4"
     },
     {
-      "id": "c_37",
+      "id": "c_63",
       "at": "2026-07-15T15:17:53.412Z",
       "sessionId": "s_mrm7tylr_cjr16g",
       "turnId": "t_mrm7waxm_whw3",
@@ -803,7 +803,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_38",
+      "id": "c_64",
       "at": "2026-07-15T15:21:26.488Z",
       "sessionId": "s_mrm7tylr_cjr16g",
       "turnId": "t_mrm7waxm_whw3",
@@ -825,7 +825,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_39",
+      "id": "c_65",
       "at": "2026-07-15T15:23:11.548Z",
       "sessionId": "s_mrm7tylr_cjr16g",
       "turnId": "t_mrm7waxm_whw3",
@@ -844,7 +844,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_40",
+      "id": "c_69",
       "at": "2026-07-15T17:09:56.022Z",
       "sessionId": "s_mrmbze77_lx8dnb",
       "turnId": "t_mrmc2m62_yxy4",
@@ -866,7 +866,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_41",
+      "id": "c_70",
       "at": "2026-07-15T17:11:20.939Z",
       "sessionId": "s_mrmbze77_lx8dnb",
       "turnId": "t_mrmc2m62_yxy4",
@@ -888,7 +888,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_42",
+      "id": "c_71",
       "at": "2026-07-15T17:13:55.673Z",
       "sessionId": "s_mrmbze77_lx8dnb",
       "turnId": "t_mrmc2m62_yxy4",
@@ -907,7 +907,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_43",
+      "id": "c_72",
       "at": "2026-07-15T17:14:57.519Z",
       "sessionId": "s_mrmbze77_lx8dnb",
       "turnId": "t_mrmc2m62_yxy4",
@@ -926,7 +926,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_44",
+      "id": "c_74",
       "at": "2026-07-16T07:13:04.865Z",
       "sessionId": "s_mrn5fwdo_4n81m7",
       "turnId": "t_mrn67uw8_05rq",
@@ -949,7 +949,7 @@
       "lessonId": "LS-4"
     },
     {
-      "id": "c_45",
+      "id": "c_75",
       "at": "2026-07-16T07:13:28.779Z",
       "sessionId": "s_mrn5fwdo_4n81m7",
       "turnId": "t_mrn67uw8_05rq",
@@ -972,7 +972,7 @@
       "lessonId": "LS-1"
     },
     {
-      "id": "c_46",
+      "id": "c_76",
       "at": "2026-07-16T07:32:16.847Z",
       "sessionId": "s_mrn5fwdo_4n81m7",
       "turnId": null,
@@ -996,7 +996,7 @@
       "lessonId": "LS-10"
     },
     {
-      "id": "c_47",
+      "id": "c_82",
       "at": "2026-07-16T09:29:41.051Z",
       "sessionId": "s_mrnal6go_46c9jr",
       "turnId": null,
@@ -1020,7 +1020,7 @@
       "lessonId": "LS-11"
     },
     {
-      "id": "c_48",
+      "id": "c_85",
       "at": "2026-07-16T15:40:20.092Z",
       "sessionId": "s_mrnnh3ow_y5mjw5",
       "turnId": "t_mrnoajby_20lh",
@@ -1041,7 +1041,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_49",
+      "id": "c_88",
       "at": "2026-07-20T04:35:42.413Z",
       "sessionId": "s_mrsqcsft_g5ojbs",
       "turnId": "t_mrsqdk5a_r243",
@@ -1062,7 +1062,7 @@
       "lessonId": "LS-12"
     },
     {
-      "id": "c_50",
+      "id": "c_97",
       "at": "2026-07-31T04:18:40.584Z",
       "sessionId": "s_ms8cnzly_fxf8y4",
       "turnId": "t_ms8fipog_d9sy",
@@ -1085,7 +1085,7 @@
       "lessonId": "LS-4"
     },
     {
-      "id": "c_51",
+      "id": "c_109",
       "at": "2026-09-08T06:35:39.486Z",
       "sessionId": "s_mtsa72p2_gst06i",
       "turnId": "t_mtsamwnm_m28w",
@@ -1109,7 +1109,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_52",
+      "id": "c_110",
       "at": "2026-09-09T07:07:00.172Z",
       "sessionId": "s_mtsa72p2_gst06i",
       "turnId": "t_mttr8dig_hye4",
@@ -1132,7 +1132,7 @@
       "lessonId": "LS-4"
     },
     {
-      "id": "c_53",
+      "id": "c_111",
       "at": "2026-09-09T07:12:02.027Z",
       "sessionId": "s_mtsa72p2_gst06i",
       "turnId": "t_mttreh0h_gw3b",
@@ -1156,7 +1156,7 @@
       "lessonId": "LS-2"
     },
     {
-      "id": "c_54",
+      "id": "c_114",
       "at": "2026-09-14T13:31:15.918Z",
       "sessionId": "s_mu19123j_3cw94j",
       "turnId": "t_mu19wnoq_0ka0",
@@ -1179,7 +1179,7 @@
       "lessonId": "LS-4"
     },
     {
-      "id": "c_55",
+      "id": "c_115",
       "at": "2026-09-14T13:39:47.802Z",
       "sessionId": "s_mu19123j_3cw94j",
       "turnId": "t_mu1af7xz_umuy",
@@ -1202,7 +1202,7 @@
       "lessonId": "LS-4"
     },
     {
-      "id": "c_56",
+      "id": "c_116",
       "at": "2026-09-14T14:27:40.625Z",
       "sessionId": "s_mu19123j_3cw94j",
       "turnId": "t_mu1c3vtz_13yn",
@@ -1225,7 +1225,7 @@
       "lessonId": "LS-4"
     },
     {
-      "id": "c_57",
+      "id": "c_118",
       "at": "2026-09-15T08:58:19.534Z",
       "sessionId": "s_mu19123j_3cw94j",
       "turnId": "t_mu2fsj83_jc6h",
@@ -1248,7 +1248,7 @@
       "lessonId": "LS-4"
     },
     {
-      "id": "c_58",
+      "id": "c_124",
       "at": "2026-10-08T16:28:00.000Z",
       "sessionId": "s_muzqyfx5_k8fnfb",
       "turnId": null,
