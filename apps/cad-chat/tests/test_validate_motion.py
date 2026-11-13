@@ -385,6 +385,31 @@ class LinkageGripperReferenceIntegration(unittest.TestCase):
         self.assertEqual(dofs["finger_l"]["axis"][1], -dofs["finger_r"]["axis"][1])
 
 
+@unittest.skipUnless((REPO / "models" / "cartesian_3d_printer" / "cartesian_3d_printer.py").exists(), "fixture 不存在")
+class Cartesian3dPrinterReferenceIntegration(unittest.TestCase):
+    """整機等級參考模型(方框式 3D 印表機,53 件、三個獨立軸):全對靜態干涉 + 三軸掃掠。
+    這顆同時是「大型組合件驗得動」的時間護欄(本機約 25 秒)。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.out = _validate_model("cartesian_3d_printer")
+
+    def test_whole_machine_validates(self):
+        self.assertTrue(self.out["ok"], self.out)
+        self.assertEqual(self.out["partCount"], 53)
+        checks = {c["id"]: c for c in self.out["checks"]}
+        self.assertIn("0 undeclared overlaps", checks["interference"]["note"])
+        self.assertTrue(checks["motion_sweep"]["ok"], checks["motion_sweep"])
+        self.assertIn("3 DOF", checks["motion_sweep"]["note"])
+        self.assertIn("25 對", checks["motion_sweep"]["note"])
+
+    def test_axes_are_independent_and_ride_along(self):
+        dofs = {d["id"]: d for d in self.out["motion"]["dofs"]}
+        self.assertEqual(set(dofs), {"x", "y", "z"})
+        self.assertTrue(all("couple" not in d for d in dofs.values()))
+        self.assertTrue(set(dofs["x"]["moving"]) < set(dofs["y"]["moving"]))  # 工具頭隨 Y 軸一起走
+
+
 class CoMovingPairEliminationTests(unittest.TestCase):
     """掃掠的同動剔除:兩端在群內吃到的 dof 完全相同才剔。"""
 
