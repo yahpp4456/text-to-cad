@@ -17,7 +17,8 @@ import { buildSystemPrompt } from "./agent/prompt.mjs";
 import { KB_DIR_REL, isReadAllowed, readScopeFor } from "./agent/readScope.mjs";
 
 const KB = path.join(RUNTIME_ROOT, KB_DIR_REL);
-const read = (f) => fs.readFileSync(path.join(KB, f), "utf8");
+// Windows 的 autocrlf 會把工作樹換成 CRLF;章節比對用 LF,讀進來先正規化
+const read = (f) => fs.readFileSync(path.join(KB, f), "utf8").replace(/\r\n/g, "\n");
 const entries = loadKbIndex({ fresh: true });
 
 test("parseKbIndex:只收「- 檔名|主題|何時讀」;壞行略過", () => {
