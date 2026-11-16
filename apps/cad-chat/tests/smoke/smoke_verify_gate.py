@@ -30,7 +30,7 @@ import urllib.parse
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, REPO, Checker, out_path, post, sse_events
+from _util import BASE, REPO, Checker, out_path, post, sse_events, capture_review_views
 
 c = Checker()
 
@@ -393,6 +393,25 @@ with sync_playwright() as p:
 
     c.check("F 頁無 JS 錯誤", not errs_f, "; ".join(errs_f[:3]))
     page3.screenshot(path=out_path("smoke_verify_gate_gear.png"))
+    # ── H. L4 看圖固定機位組(等角/前/上/右 + 行程兩端;給人/AI 目視,不是驗證)──
+    # 這裡在免 LLM 的真 GLB + MOTION 頁上證明 helper 能跑;真 L4 回合後用同一支
+    # helper 拍同組機位比對(協定見 cad-chat-verify SKILL.md「L4 看圖固定機位協定」)。
+    # 齒輪齒條藏在 housing 內:行程兩張要先把外殼轉 ghost(拍完還原)才看得到運動件。
+    # 先注入一份 spec 讓「解析規格」面板展開蓋住視圖(真回合後的常態)——helper 要拍前收合、拍完還原。
+    page3.evaluate("""() => window.__cadDispatch({ type: 'ADD_ITEM', item: { type: 'spec',
+      chips: [{ k: '行程(特徵數)', v: '7.7 mm' }, { k: '模數', v: 'm0.7 z14' }] } })""")
+    page3.wait_for_selector('.canvas-spec[data-open="true"]', timeout=5000)
+    review = capture_review_views(page3, "smoke_verify_gate_gear", motion_period_s=4, ghost=("housing",))
+    c.check("H: 拍完規格面板還原為展開", page3.locator('.canvas-spec[data-open="true"]').count() == 1)
+    c.check("H: 固定機位組 6 張(4 機位 + 行程起/終點)", len(review) == 6, f"n={len(review)}")
+    c.check("H: 每張截圖落地且非空",
+            all(os.path.exists(q) and os.path.getsize(q) > 1000 for q in review))
+    disp_after = page3.evaluate("() => window.__cadVisual.display()")
+    c.check("H: ghost 外殼拍完已還原(display map 空)", disp_after == {}, str(disp_after))
+    st_ghost = page3.evaluate("() => { window.__cadVisual.set('housing', 'ghost'); return window.__cadVisual.stateFor('housing'); }")
+    c.check("H: __cadVisual.set(housing, ghost) 真的半透明(opacity<1)",
+            isinstance(st_ghost, dict) and (st_ghost.get("opacity") or 1) < 1, str(st_ghost))
+    page3.evaluate("() => window.__cadVisual.set('housing', null)")
     browser.close()
 
 c.finish()

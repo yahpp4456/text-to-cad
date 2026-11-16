@@ -28,6 +28,24 @@ description: apps/cad-chat 的分層驗證流程與擴充守則。改動 cad-cha
 - cadpy/skills 端(Python):先 `scripts/dev/sync-vendored.sh` 同步 8 份複本,再
   `tests/python/` 對應單元測,最後回到本表。
 
+## L4 看圖固定機位協定(假綠只有看圖抓得到)
+
+驗證全綠不等於幾何對(位置/朝向/對稱/比例/繞向錯都能全綠)。真 LLM 回合產物
+**宣告綠之前,固定機位至少看一輪**,每個機位各有要抓的缺陷類:
+
+| # | 機位 | 看什麼 |
+|---|---|---|
+| 1 | 等角整體(`__cadView.home()`) | 比例、缺件/多件、有沒有基座、整體朝向 |
+| 2 | 前視 / 上視 / 右視(`__cadView.focus("yNeg"/"z"/"x")`) | 對稱、對位(同軸/齊平)、鏡射錯邊、孔位 |
+| 3 | 行程起點 / 終點(`__cadMotion.applyAt(0)` / `applyAt(T/2)`;運動件藏在殼內先 `__cadVisual.set("housing","ghost")`,helper 參數 `ghost=("housing",)`) | 行程兩端穿模或脫開、耦合件沒跟著動 |
+| 4 | 接點特寫(`__cadView.normalToFace(rowIndex)` 或 📏 量測兩面) | INTENDED_CONTACT 宣告的對應面是否真的貼合、間隙數值 |
+
+工具:`tests/smoke/_util.capture_review_views(page, prefix, motion_period_s=T)` 一次拍
+1–3(`.out/<prefix>_review_<n>_<view>.png`,草模頁/空畫布回 `[]`),再用 Read 逐張看圖;
+4 視需要手動。**迴圈**:看圖列出問題清單 → 修(agent `cad_build(edits)` 或自己改)→
+**同組機位重拍比對** → 清單清空才算過;修過的假綠缺陷照既有規矩走 `emit_lesson_offer`
+記教訓。`smoke_verify_gate.py` H 段在免 LLM 的齒輪齒條頁釘住 helper 能跑(6 張落地)。
+
 ## 指令速查
 
 ```bash

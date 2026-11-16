@@ -90,6 +90,59 @@ def sse_events(raw):
     return out
 
 
+REVIEW_VIEWS = (("home", "iso"), ("yNeg", "front"), ("z", "top"), ("x", "right"))
+
+
+def capture_review_views(page, prefix, motion_period_s=None, views=REVIEW_VIEWS, settle_ms=200, ghost=()):
+    """L4 看圖固定機位協定:對已載入模型的頁面拍一組固定機位截圖,回傳檔案路徑清單。
+
+    機位(依序):等角整體(home)→ 前視 → 上視 → 右視;若 motion_period_s 給定且
+    __cadMotion 對得到 record,再補「行程起點 / 行程終點」兩張(home 機位,applyAt(0) 與
+    applyAt(T/2),三角波 u=0/1);ghost=(label,…) 在拍行程兩張前把這些件(外殼)轉半透明、
+    拍完還原——運動件藏在殼內時沒這步兩張一模一樣。檔名 <prefix>_review_<n>_<view>.png,寫 .out/。
+    純截圖、不斷言(截圖給人/AI 最後目視,不是驗證)——呼叫端自行 c.check 檔案落地。
+    視圖上的「解析規格」面板若展開會蓋住模型(真回合後常態),拍前收合、拍完還原。
+    頁面沒有 __cadView(草模頁、空畫布)直接回 []。"""
+    has_view = page.evaluate("() => !!(window.__cadView && window.__cadView.home)")
+    if not has_view:
+        return []
+    paths = []
+    spec_head = page.locator('.canvas-spec[data-open="true"] .canvas-spec-head')
+    spec_was_open = spec_head.count() == 1
+    if spec_was_open:
+        spec_head.click()
+
+    def shot(tag):
+        p = out_path(f"{prefix}_review_{len(paths) + 1}_{tag}.png")
+        page.wait_for_timeout(settle_ms)
+        page.screenshot(path=p)
+        paths.append(p)
+
+    for preset_id, tag in views:
+        if preset_id == "home":
+            page.evaluate("() => window.__cadView.home()")
+        else:
+            page.evaluate("(id) => window.__cadView.focus(id)", preset_id)
+        shot(tag)
+    if motion_period_s:
+        cov = page.evaluate("() => window.__cadMotion ? window.__cadMotion.coverage() : 0") or 0
+        if cov > 0:
+            page.evaluate("() => window.__cadView.home()")
+            for label in ghost:
+                page.evaluate("(l) => window.__cadVisual && window.__cadVisual.set(l, 'ghost')", label)
+            half = max(1, min(20, float(motion_period_s))) / 2  # triangleU 的 T 夾 1..20
+            for t, tag in ((0, "motion_start"), (half, "motion_end")):
+                page.evaluate("(t) => window.__cadMotion.applyAt(t)", t)
+                shot(tag)
+            for label in ghost:
+                page.evaluate("(l) => window.__cadVisual && window.__cadVisual.set(l, null)", label)
+    if spec_was_open:
+        page.locator(".canvas-spec .canvas-spec-head").click()
+    for p in paths:
+        print("  review view:", p)
+    return paths
+
+
 def server_alive():
     try:
         with urllib.request.urlopen(BASE + "/api/health", timeout=3) as r:

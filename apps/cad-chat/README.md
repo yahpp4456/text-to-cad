@@ -1116,6 +1116,9 @@ open-project 再送;`smoke_open_dedupe.py` 已隨開檔 option C 退場,不在 O
 同 glbUrl 保留 status 由 chatStore.test.js 單元測覆蓋)。
 截圖與 handoff 檔寫 `tests/smoke/.out/`(gitignored)。單支可獨立跑
 (versions 先於 restore)。不接 `scripts/test/test.sh`(CI 面不動)。
+L4 看圖用 `_util.capture_review_views(page, prefix, motion_period_s=T)` 拍固定機位組
+(等角/前/上/右 + 行程起終點;`smoke_verify_gate.py` H 段釘住 helper),逐張 Read 對照
+缺陷類清單——協定表見 `.claude/skills/cad-chat-verify/SKILL.md`「L4 看圖固定機位協定」。
 
 給 AI 的完整驗證流程(分層金字塔、新需求擴充決策樹、失敗分流)見
 `.claude/skills/cad-chat-verify/SKILL.md`;通用 Playwright 自我驗證機制

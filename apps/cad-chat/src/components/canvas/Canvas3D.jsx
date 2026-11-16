@@ -541,14 +541,32 @@ export default function Canvas3D({
       window.__cadPreview = { group: () => previewGroupRef.current };
       window.__cadMarkers = { state: () => markerProbeRef.current };
       // 眼睛三態探針:display()=目前 map;stateFor(labelOrOccId)=該件第一筆
-      // record 的 {opacity, visible}(label 經 topo shape 列解析成 occurrenceId)
+      // record 的 {opacity, visible}(label 經 topo shape 列解析成 occurrenceId);
+      // set(labelOrOccId, "ghost"|"hidden"|null)=程式化設定(L4 看圖固定機位組把外殼
+      // 轉 ghost 看內藏運動件用;走與眼睛同一條 setPartDisplay 路)。
+      const resolveOcc = (key) => {
+        const k = String(key || "");
+        const nodes = topoRef.current?.nodes || [];
+        const nd = nodes.find((x) => x.kind === "shape" && (x.label === k || x.row?.occurrenceId === k));
+        return nd?.row?.occurrenceId || k;
+      };
       window.__cadVisual = {
+        set: (key, state) => {
+          const occ = resolveOcc(key);
+          if (!occ) return false;
+          const val = state === "ghost" || state === "hidden" ? state : undefined;
+          // 先同步套到 runtime 再更新 state:Playwright 呼叫後立刻 stateFor() 要讀到新值
+          //(函數式 updater 要等下次 render 才跑,同步讀會是舊 opacity)。
+          const next = { ...(partDisplayRef.current || {}) };
+          if (val) next[occ] = val;
+          else delete next[occ];
+          apiRef.current.setPartDisplay?.(next);
+          setPartDisplayState(next);
+          return true;
+        },
         display: () => ({ ...partDisplayRef.current }),
         stateFor: (key) => {
-          const k = String(key || "");
-          const nodes = topoRef.current?.nodes || [];
-          const nd = nodes.find((x) => x.kind === "shape" && (x.label === k || x.row?.occurrenceId === k));
-          const occ = nd?.row?.occurrenceId || k;
+          const occ = resolveOcc(key);
           const rec = (apiRef.current.model?.displayRecords || []).find(
             (r) => String(r.partId) === occ || String(r.partId).startsWith(`${occ}.`),
           );
