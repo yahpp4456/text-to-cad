@@ -1,0 +1,157 @@
+# 上游 text-to-cad 借鏡評估:cad-chat 重構藍圖
+
+- 日期:2026-11-16
+- 對象:`upstream/main` @ `2738524be`(2026-11-15,版本 0.11.10);本 fork 分叉點 `8548266d7`(0.3.7)
+- 前提:**不考慮工程量**,驗證層可以重做。這份報告只回答「上游哪些做法比我們好、每一項該怎麼取用」。
+- 證據等級:上游部分來自讀原始碼、檔頭設計說明與 skill 文件,**沒有執行上游程式碼**。本機數字(第 2 節)是實測。
+
+## 1. 結論
+
+上游這五個月的核心轉變只有一個:**從「每次起一個 Python 跑腳本、寫檔、再讀檔」改成「常駐行程持有幾何,檔案只是按需匯出」**。其他能力(增量重建、干涉、量測、看圖、DFM)都建立在這個基礎上。
+
+對 cad-chat 的建議:
+
+1. **採用它的執行架構想法,自己實作**(常駐 worker + 記憶體內文件)。這是所有後續項目的地基,而且本機實測收益很大。
+2. **驗證層照它的語意重做**:量不到不算通過、每次 build 回報差異、干涉先粗篩再精算。
+3. **演算法密集的模組直接移植上游原始碼**(MIT):鈑金辨識與展開、CNC DFM、元素歷史命名。這些自己重寫不划算。
+4. **不採用它的產品外殼**:全機共用 daemon、uvx 安裝與自動更新、遙測、`.xbf` 格式、`@model` 無參數契約。
+
+仍然不 merge。上游是取材來源,不是基底。
+
+## 2. 本機實測:為什麼第 1 項是地基
+
+在本機 `.venv`(build123d 0.11.0 / OCP 7.9.3.1 / Python 3.13)連跑三次:
+
+| 項目 | 時間 |
+|---|---|
+| 空的 Python 子程序 | 0.15 s |
+| `import build123d` | 8.5–9.0 s |
+| 只 import OCP 兩個模組 | 1.5–1.7 s |
+
+`-X importtime` 的分佈(self time 合計 7.3 s):build123d 1.3 s、scipy 1.2 s、OCP 1.2 s、sympy 0.6 s、sklearn 0.4 s、ezdxf 0.4 s、IPython 0.3 s、prompt_toolkit 0.2 s,其餘零散。
+
+對照現況:
+
+- cad-chat 伺服器端有 20 處 `spawnPython(` 呼叫。
+- `runValidate` 一次平行起 2 個 Python(inspect + validate)。
+- 所以**凡是會載入 build123d 的工具呼叫、滑桿重生、精算、匯出,每次都先付約 8.5 秒固定成本**,與模型複雜度無關。
+
+上游文件寫的 kernel 載入是 2.5–3 秒,本機是它的三倍。差距的原因沒有查(可能是 build123d 0.11 的相依較重,或 Windows Defender 掃描),但不影響結論:常駐行程把這筆成本從「每次」變成「一次」。
+
+## 3. 借鏡清單與決策
+
+決策欄的三種取法:
+
+- **移植**:把上游原始碼搬進來改寫(MIT 授權,保留出處)。
+- **自寫**:只借設計,照我們的契約重新實作。
+- **不做**:評估後判斷不值得或不適用。
+
+### 3.1 執行架構
+
+| # | 上游做法 | 現況 | 決策 | 理由與要點 |
+|---|---|---|---|---|
+| A1 | **Warm worker**(`engine/worker.py`):每個模型腳本一個常駐行程,stdin/stdout 走「一行 JSON + 可選位元組」的 frame 協定,build 過程持續送 `log`、`progress` frame | 每次 spawn 新行程 | **自寫** | 協定本身很簡單,值得照抄。上游 worker 綁了它的 daemon、supervisor、文件模型,搬不動。我們的版本由 Node 伺服器直接當 supervisor,每個 session 一個 worker |
+| A2 | **Standby worker**:預先起一個已載入 kernel 的備用行程,新腳本來時直接接手 | 無 | **自寫** | 新對話的第一次建模也不用等 8.5 秒。成本是常駐多佔一份記憶體 |
+| A3 | **依記憶體退休**:每次 build 回報 RSS,超過上限就在 build 之間換新行程 | 無(行程跑完即死) | **自寫** | 常駐後 OCCT 記憶體只增不減,這是必要的配套 |
+| A4 | **從外部逾時並 kill**:kernel 呼叫無法從內部中斷,所以上限由 supervisor 在外部執行,超時就殺行程重起 | 有 `signal` 中止 spawn | **自寫** | 現有中止邏輯要改成「殺 worker 後由 standby 補位」 |
+| A5 | **檔案是匯出,不是 build 的一部分**:build 只產生記憶體內文件與網格;STEP/STL/DXF 在使用者要求時才寫 | build 寫 STEP → 轉 GLB → inspect 再讀 STEP | **自寫** | 現行流程每次迭代都付 STEP 寫入與重新解析的成本。改成 worker 持有 shape,GLB 直接由記憶體網格產生,inspect 與 validate 直接讀記憶體 shape。STEP 留給匯出閘 |
+| A6 | **Build closure key**(`engine/previous.py`):以腳本、其引用的模組、讀入的檔案、kernel 版本算一個摘要;摘要沒變就不重跑 | 開專案、回退版本會重建 | **自寫(精簡版)** | 我們的 key = `.py` 內容 + PARAMS 值 + 匯入檔摘要 + kernel 版本。命中就直接取上次產物。直接改善「開專案/回退同步重建」的等待 |
+| A7 | **Kernel memo**(`engine/kernel/memo.py`,4960 行):攔截 build123d 拓樸層的每個建構呼叫,以操作+參數+輸入形狀的 key 做記憶;改一個尺寸只重跑讀到它的操作 | 無 | **自寫粗粒度版,不移植** | 上游做法是深度 monkey-patch build123d,且以「位置參數」讀簽章,自己註明只保證 0.13.x。我們改做**零件層級**快取:組合件裡每個子件以(產生函式 + 參數)為 key,滑桿只動到的子件才重建。對 53 件整機這類模型已經拿到大部分收益 |
+| A8 | **Determinism**(`engine/kernel/determinism.py`,195 行):修正 build123d 以指標位址排序形狀集合造成的「同一模型兩次 build 位元組不同」 | 無 | **移植** | 檔案獨立、遇到版本不符會自動放棄不報錯。A6 的快取與任何「產物比對」測試都需要可重現的輸出。需先驗它在 build123d 0.11 上是否生效 |
+
+### 3.2 驗證層(重做)
+
+| # | 上游做法 | 現況 | 決策 | 理由與要點 |
+|---|---|---|---|---|
+| B1 | **「量不到不算通過」**:干涉檢查中逾時、kernel 拒絕、行程死掉的 pair 一律回報 `unmeasured`,檢查只有在「零干涉且零 unmeasured」時才通過 | 檢查結果是通過/失敗 | **自寫** | 這是整個驗證層最該搬的語意。findings 統一成三態:`ok` / `failed` / `not_checked`,匯出閘只認 `ok` |
+| B2 | **統一的 finding 結構**:每筆有 `rule`、`value`、`limit`、`refs`(指到面/零件),agent 被要求讀結構化欄位而不是訊息文字 | 各檢查各自的格式 | **自寫** | 作為新驗證層的共同 schema。UI 的檢查清單、agent 的重試提示、教訓庫的 signature 都吃同一份 |
+| B3 | **Build delta**(`engine/delta.py`):每次 build 後回報零件數、包絡、關節數,以及與上一版的差異;幾何 key 變了的零件數也算進去 | agent 靠 validate 結果與看圖判斷 | **自寫** | 便宜、每次都跑、直接抓「改 A 卻動到 B」與「參數沒生效」。回給 agent 一行摘要,也能顯示在時間軸 |
+| B4 | **干涉檢查**(`build123d/_interference.py`,857 行):① 以隨零件旋轉的 OBB 取代 AABB 篩候選;② 用網格鄰近度(`BRepExtrema_ShapeProximity`)排除「box 相交但實際有空氣」的 pair,不做 Boolean;③ 以(兩件幾何 key + 相對位置)快取,重複件與沒動的 pair 只量一次;④ 多行程並行,面數少的先量;⑤ 每對逾時 | `geometry_checks` 用 AABB 分離預篩後直接 Boolean | **自寫,照上游設計** | 上游實作綁它的文件與快取層,但五個設計點都可以落在 `cadpy.geometry_checks`。③ 對掃掠驗證幫助最大(同一對在多個姿態只要相對位置沒變就不重量)。`BRepExtrema_ShapeProximity` 在 OCP 7.9 的可用性要先確認 |
+| B5 | **INTENDED_CONTACT 對應物**:上游以「named fits」宣告刻意的接觸 | 模組層 `INTENDED_CONTACT` | **保留現狀** | 現有契約已經運作,教訓庫也建立在它上面 |
+| B6 | **Joint ranges**(`cad model ranges`):每個關節從建成姿態往兩側一度/一毫米地推,直到零件相碰,自動找出行程止點並指出是哪兩件相碰 | MOTION 行程由 agent 宣告,掃掠驗證檢查宣告範圍 | **自寫** | 反過來用:不是驗證 agent 給的範圍,而是由幾何算出實際範圍,再與宣告比對。需要 B4 的 pair 快取才跑得動 |
+| B7 | **模型內 assert**:使用者給的數字,在模型函式內對即將回傳的形狀下 assert,而不是在腳本尾端另寫檢查 | prompt 有 `_check_params` 參數防呆 | **自寫(prompt 規則)** | 與 `_check_params` 互補:一個擋輸入、一個驗輸出。常駐 worker 下 assert 在熱行程內執行,沒有額外成本 |
+| B8 | **BRepCheck 具名診斷**(`engine/kernel/checks.py`,44 行):逐一詢問 shell 是否封閉、wire 是否自交、面的 wire 方向,回報具名的錯誤 | `is_valid_solid` 回布林 | **移植** | 很小、獨立。agent 拿到「哪個面的 wire 自交」比「invalid」好修。注意記憶中已知的雷:掃出件自交 BRepCheck 會判 valid,這項不解決那個問題 |
+| B9 | **Check each change 對照表**:改了什麼 → 用什麼檢查(數字用 assert、組合件用干涉、新零件用看圖、參照用 inspect) | 分散在 prompt 與 `cad-chat-verify` | **自寫(prompt)** | 直接改寫進 agent 的 system prompt。連同三句原則一起搬:「數字不從圖上讀」「檢查失敗或無法判定,等於什麼都沒證明」「重試時省略或縮小指定特徵,等於做了另一個設計」 |
+
+### 3.3 參照與點選
+
+| # | 上游做法 | 現況 | 決策 | 理由與要點 |
+|---|---|---|---|---|
+| C1 | **元素歷史命名**(`engine/kernel/history.py`,1027 行):攔截 OCCT 各種 maker 的 `Modified` / `Generated`,在每個特徵後追蹤每個面/邊/頂點的來源,給出跨重建穩定的名字 | 點選幾何依 GLB 內嵌的 STEP topology 序號 | **移植** | 這是上游最硬的技術資產。序號在參數一改就可能全部位移;穩定命名讓「點這個面 → 改參數 → 還是指同一個面」成立。各種 maker 的 adapter 對照表是純苦工知識,自寫不划算。風險:它掛在 memo 的特徵追蹤上,要先抽出獨立的攔截層;且針對 OCP 8 撰寫 |
+| C2 | **`made_by`**:inspect 一個元素時回報「產生它的函式、檔案、行號」 | 點選後把幾何描述交給 agent 自己找 | **自寫,依賴 C1** | 點選面之後直接告訴 agent 該改哪一行。沒有 C1 也可以先做零件層級(label → 產生函式) |
+| C3 | **Ref 文法**(`engine/refs.py`):`<文件>#<零件路徑>/<元素>`,同名兄弟以 `.N` 區分;解析失敗時列出可能的候選而不是自動挑一個 | 自有的點選 payload | **自寫** | 借「失敗時列候選、絕不代選」與路徑寫法。文法本身照我們的 session/版本模型調整 |
+| C4 | **`leaves()`**:讀入大型廠商 STEP 時,直接回傳已定位的葉節點,避免 build123d 每次 `located()` 複製整棵樹 | STP 零件庫與匯入流程 | **移植(小)** | 上游文件稱每次呼叫可差到「數秒與數百 MB」。零件庫模式會受益 |
+
+### 3.4 機構
+
+| # | 上游做法 | 現況 | 決策 | 理由與要點 |
+|---|---|---|---|---|
+| D1 | **以 build123d joints 為作者介面**,文件時期收割成 AP242 式的 links / pairs | MOTION 契約(宣告式) | **不做** | 作者介面換掉等於所有 fixtures、範本、教訓重寫,換來的只是寫法不同。MOTION 保留 |
+| D2 | **耦合是約束不是控制**:`gear_pair` / `rack_and_pinion_pair` / `screw_pair`;耦合值 0 恆等於建成姿態;**耦合的行程自動取各關節限位的交集** | MOTION `couple` 手寫比例與範圍 | **自寫** | 在 MOTION 內加「範圍自動推導」與「耦合不得移動建成姿態」兩條規則,並在驗證層檢查 |
+| D3 | **具名機構狀態與時間序列**(`mechanism_state`、configuration sequence),所有工具都接受 `--pose 名稱` 或 `名稱@秒` | 掃掠驗證取樣 | **自寫** | 讓看圖、干涉、匯出都能指定同一組具名姿態(例如 `開`、`夾持`)。與 B6、E1 共用 |
+| D4 | **虛擬小齒輪**:兩個滑動互相耦合(平行夾爪兩指)時,以一個不對應零件的旋轉軸當耦合基準 | gripper 家族自行處理 | **不做** | 我們的 `couple` 已能直接表達兩滑動同動 |
+
+### 3.5 看圖
+
+| # | 上游做法 | 現況 | 決策 | 理由與要點 |
+|---|---|---|---|---|
+| E1 | **Kernel 端離屏渲染**(`engine/snapshot.py` + `engine/render/`):由 OCCT 直接畫 PNG,支援指定相機、隱藏線、剖切、只顯示某些零件、指定姿態 | L4 固定機位協定經 Playwright 截瀏覽器畫面 | **自寫** | 給 agent 看的圖不需要瀏覽器。在 worker 內直接出圖,agent 每回合都能要「只看這個零件」「剖開看內部」「在夾持姿態看」。上游渲染層很大且含 Linux/Xvfb 處理,只借參數設計。Windows 上 OCCT 離屏 OpenGL 要先驗可行性;不行就退回以 three.js headless 出圖 |
+| E2 | **看圖紀律**(`snapshot-review.md`):不 loop 截圖;組合件先看單件、再看一起動的件、再看關節兩端、最後才看整體,且要看背面 | 特徵數規則 + 固定機位 | **自寫(prompt)** | 補進現有看圖協定 |
+
+### 3.6 製造與圖面
+
+| # | 上游做法 | 現況 | 決策 | 理由與要點 |
+|---|---|---|---|---|
+| F1 | **鈑金辨識與展開**(`build123d/_dfm_sheet.py` 2365 行、`_internal/sheet_plane.py`、`_internal/dfm/sheet.py`):對任意 B-rep 以射線取樣投票出板厚,辨識 skin / bend / 切邊 / 沉頭孔,以 K-factor 展開,並量測孔到折彎、relief、最小法蘭、hem 等 16 類 | `SheetMetal` fold tree,只能展開自己生成的件,無 DFM | **移植** | 演算法密集、邊界案例多(joggle、複合折彎、offset web),上游已處理。移植後:匯入的鈑金 STEP 可展開;自家 fold tree 的輸出可被獨立驗證;補上鈑金可製造性檢查 |
+| F2 | **精確展開輸出**(`build123d/_flatten.py`,255 行):聯集與 kerf 補償用 OCC 運算,圓弧輸出為 DXF `ARC`、孔為 `CIRCLE`,不取樣成折線 | DXF 走 `skills/dxf` CLI | **移植** | 小而獨立。雷射/水刀廠收到真圓弧 |
+| F3 | **CNC DFM**(`_dfm_cnc*.py`,主檔 3023 行):依刀具、軸數、素材檢查可加工性 | 無 | **移植** | 機構設計使用者最常遇到的製程。放在 F1 之後 |
+| F4 | 射出成型、3D 列印 DFM | 無 | **不做** | 與目前使用情境(機構、鈑金、無塵電纜)距離遠 |
+| F5 | **工程圖標註**(`eng_drawing.py`,1547 行):`view.dim`、`view.hole`(通孔/深度/沉頭/螺紋)、`view.overall()`、公差與配合、自動排到下一列、標註互相重疊偵測、「尺寸落在空白處」偵測 | `drawing_pdf.py`:PolyAlgo 網格 HLR 四視圖 + 少量固定尺寸線 | **移植標註層,保留我們的投影** | 上游投影用精確 `HLRBRep_Algo`,即本專案記錄過掃出件 0xC0000005 的路徑,不能換。把它的標註、排版、重疊偵測接到現有 PolyAlgo 投影上 |
+| F6 | **FEA**(CalculiX 線性靜力) | 無 | **不做(現階段)** | 是獨立的新產品面向,不在這次重構的主線。記為後續候選 |
+
+### 3.7 不採用
+
+| 上游做法 | 不採用的原因 |
+|---|---|
+| 全機共用一個 daemon、所有 agent app 共享 | cad-chat 是單一應用,由 Node 伺服器自己管 worker 更簡單,也不會被別的程式影響 |
+| uvx 安裝、首次連網下載 kernel、自動更新 | 與 Electron 內嵌 Python、離線可用、裝即用的方向相反 |
+| 預設開啟遙測 | 不需要 |
+| `.xbf` 文件格式 | 我們的互通格式是 STEP/GLB;記憶體內文件不需要自訂落地格式 |
+| `@model` 無參數函式、每個組態一個模型 | 與 PARAMS 滑桿契約根本衝突;滑桿是 cad-chat 的核心互動 |
+| plugin manifests、pcb、render、print3d、robot-simulation、CI/release 流程 | 與本專案無關 |
+
+## 4. 建議的重構順序
+
+依相依關係排,不是依工程量。
+
+1. **地基**:A1 warm worker → A3 退休 → A4 外部逾時 → A2 standby。完成後先重量第 2 節的數字,確認收益。
+2. **記憶體內文件**:A5(build 不落 STEP,GLB/inspect/validate 讀記憶體)→ A8 determinism → A6 closure key → A7 零件層級快取。
+3. **新驗證層**:B2 finding schema → B1 三態語意 → B3 delta → B4 干涉 → B8 具名診斷 → B7、B9 prompt 規則。
+4. **機構**:D3 具名姿態 → D2 範圍推導 → B6 joint ranges。
+5. **看圖**:E1 離屏渲染 → E2 紀律。
+6. **參照**:C3 ref 文法 → C2 零件層級 made_by → C1 元素歷史命名 → C2 元素層級。
+7. **製造與圖面**:F2 → F1 → F5 → F3,C4 隨零件庫需要插入。
+
+第 1、2 步完成前不要動第 3 步:新驗證層的 pair 快取、delta、assert 都假設幾何常駐在記憶體。
+
+## 5. 風險與未確認事項
+
+**需要先驗證才能動工的技術假設**
+
+- A8 determinism 在 build123d 0.11 是否生效(它對不符的版本會靜默放棄)。
+- B4 的 `BRepExtrema_ShapeProximity` 在 OCP 7.9 是否可用、行為是否一致。
+- E1 在 Windows 上 OCCT 離屏渲染是否可行。
+- C1、F1、F3 都針對 build123d 0.13 / OCP 8 撰寫。移植時二選一:改寫成相容 OCP 7.9,或把整個 `.venv` 升級到 0.13 / OCP 8。升級會影響所有現有 fixtures 與 `cadpy.parts`,但長期較省事——**建議在重構分支一開始就試升級**,先看現有 L0–L3 能不能過,再決定。
+
+**常駐行程帶來的新問題**
+
+- 模組層狀態殘留:產生器腳本若在模組層保存狀態,熱行程內重跑會與冷啟動結果不同。上游的對策是每次 build 重新載入腳本與其第一方模組。
+- 記憶體:每個 session 一個 worker 加 standby,多開分頁時要有上限。
+- Electron 打包:worker 生命週期要併入現有的「關窗優雅退出零孤兒」機制。
+
+**本報告沒有做的事**
+
+- 沒有執行任何上游程式碼;各模組的實際品質、速度、在我們 fixtures 上的結果都未知。
+- 沒有逐一核對 cad-chat 現況欄的每個描述,只查了 `python.mjs`、`pipeline.mjs` 的 spawn 點與 `geometry_checks` 的函式列表。
+- 本機 import 8.5 秒為何是上游所稱的三倍,沒有查原因。這本身可能有便宜的改善(例如延後 import IPython / sklearn / sympy),與 A1 不衝突。
+- 上游未合併分支(`amy/cam*` 刀具路徑、`amy/desktop-*` 桌面 app)只看了分支名與最新 commit 標題。
