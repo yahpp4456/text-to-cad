@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "type": "assembly",
+  "generator": "stewart_platform.py",
+  "partCount": 14,
+  "parts": [
+    {
+      "label": "base"
+    },
+    {
+      "label": "platform"
+    },
+    {
+      "label": "leg1_body"
+    },
+    {
+      "label": "leg1_rod"
+    },
+    {
+      "label": "leg2_body"
+    },
+    {
+      "label": "leg2_rod"
+    },
+    {
+      "label": "leg3_body"
+    },
+    {
+      "label": "leg3_rod"
+    },
+    {
+      "label": "leg4_body"
+    },
+    {
+      "label": "leg4_rod"
+    },
+    {
+      "label": "leg5_body"
+    },
+    {
+      "label": "leg5_rod"
+    },
+    {
+      "label": "leg6_body"
+    },
+    {
+      "label": "leg6_rod"
+    }
+  ],
+  "imports": [],
+  "updatedAt": "2026-11-10T00:00:00.000Z"
+}

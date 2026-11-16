@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "about": "教訓庫的人為裁決(以 signature 為鍵;merge-lessons 合併後套用)。status=disabled 必給 reason:graduated(規則已進系統提示或決定性檢查,note 寫明去處)/ retired(過期或本來就錯)/ manual。at=這個決定的時間:晚於教訓的 statusAt 才覆寫狀態、晚於 distilledAt 才覆寫措辭。格式由 src/server/lessons.curate.mjs validateCuration 驗。",
+  "updatedAt": "2026-11-10T04:00:00.000Z",
+  "lessons": {
+    "build:KeyError": {
+      "status": "disabled",
+      "reason": "retired",
+      "at": "2026-11-10T04:00:00.000Z",
+      "note": "病灶已在管線修掉:2026-07-16 起滑桿重生以磁碟現值墊底合併(rewriteParams),只送部分參數不再讓其他鍵消失;最後一次命中在修好之前。"
+    },
+    "build:AssertionError:interference": {
+      "status": "active",
+      "at": "2026-11-10T04:00:00.000Z",
+      "title": "從貼合面起算定位;重疊只留給真配合",
+      "rootCause": "用零件中心或軸線座標直接擺放,沒從相鄰件的貼合面起算自身半長,邊界插進鄰件;或穿孔的軸/銷/聯軸器外徑沒對照對方孔徑。",
+      "rule": "擺每個件前先定基準面(底座頂面、座板端面、軸承端面),位置=基準面±自身半長,兩件恰貼合不插入;穿過孔的軸/銷/聯軸器外徑取「對方孔徑−間隙」,不各用各的型錄值;要重疊的只有配合(軸孔/銷孔/壓配/螺紋鎖入),建該幾何的同一步就寫進模組層 INTENDED_CONTACT。build 報未宣告重疊時先改幾何讓開,不要直接把那一對加進白名單。"
+    },
+    "build:Standard_DomainError": {
+      "status": "active",
+      "at": "2026-11-10T04:00:00.000Z",
+      "title": "參數防呆要蓋住滑桿調得到的每個組合",
+      "rootCause": "_check_params 只擋了幾條明顯約束,emit_params 的 min/max 卻讓使用者調得到沒被擋的組合(承載件比母件長、衍生尺寸變負、圓角大於邊長),幾何核心丟出沒有訊息的錯誤。",
+      "rule": "寫完 _check_params 後逐一過 emit_params 的每個參數:把它單獨拉到 min 與 max(其餘維持預設),檢查由它推導的尺寸(行程餘量、間距、壁厚、孔邊距、圓角對相鄰邊長)是否仍為正且不超出母件;不成立就補一條 ValueError(寫明哪個參數、合法範圍)或把 min/max 收窄,互相牽制的參數取保守交集。任何滑桿組合都不該走到幾何核心才失敗。"
+    },
+    "build:edits-failed": {
+      "status": "disabled",
+      "reason": "graduated",
+      "at": "2026-11-10T04:00:00.000Z",
+      "note": "系統提示「語氣與語言」段:產生器註解一律英文/ASCII、定位常數寫成裸 NAME = value、說明集中在常數表上方——精修錨點對不上的成因(行尾中文註解)已從源頭移除。13 案有 11 案代理當回合自行修好。"
+    },
+    "turn:agent_error": {
+      "status": "disabled",
+      "reason": "retired",
+      "at": "2026-11-10T04:00:00.000Z",
+      "note": "蒸餾自 23 筆基礎設施錯誤(額度用盡、模型不支援、輸出上限、工具呼叫解析失敗),不是建模教訓;規則內容「MOTION 僅 linear」與現行能力相反。這類案例已不再錄製、也不再自動蒸餾。"
+    },
+    "validate:motion_sweep:penetration": {
+      "status": "active",
+      "at": "2026-11-10T04:00:00.000Z",
+      "title": "滑動介面的貼合面要與行程平行,固定側蓋住全行程",
+      "rootCause": "滑動/伸縮對只照起始姿態建模:貼合面法向沿著行程方向、或固定側長度沒涵蓋全行程,移動件一動就頂進配對件。",
+      "rule": "每個滑動/伸縮對(滑塊×導軌、桿×缸、爪×導槽):兩件的貼合面必須與該軸行程平行(法向垂直行程);固定側沿行程方向的長度 ≥ 移動件長度+行程;介面留 ≥0.2 mm 間隙,不留間隙的才宣告 INTENDED_CONTACT。寫完在行程兩端各算一次移動件包絡,確認仍落在固定側範圍內。"
+    },
+    "validate:interference": {
+      "status": "disabled",
+      "reason": "graduated",
+      "at": "2026-11-10T04:00:00.000Z",
+      "note": "系統提示「產生器格式」段已規定 INTENDED_CONTACT 宣告在模組層、check_geometry 帶同一份;「標準件幾何」段逐家族列出哪些子件必列入。"
+    },
+    "manual:revolute-swing-clearance": {
+      "status": "active",
+      "at": "2026-11-10T04:00:00.000Z",
+      "title": "用全擺弧包絡決定支點位置",
+      "rootCause": "擺臂只照起始姿態擺放,沒算整段擺角掃過的範圍;支點貼固定件太近、臂在支點後方又留了料,立起時掃進鄰件。",
+      "rule": "擺放繞固定支點旋轉的臂/板前,先算它在整段擺角內掃過的包絡(離支點最遠的角點畫弧),不是只看起始姿態:支點到相鄰固定件的淨距 ≥ 臂在支點後方伸出的料長+半厚+4 mm,用具名常數由這個條件反算支點座標,支點後方不留多餘的料。revolute 的 pairs 列入臂×每個鄰近固定件,samples 取 16 以上。"
+    },
+    "build:Standard_ConstructionError": {
+      "status": "disabled",
+      "reason": "retired",
+      "at": "2026-11-10T04:00:00.000Z",
+      "note": "只對單一構型成立(氣缸與翻轉臂共面時把缸偏出旋轉平面),當成通則會誤導。缸推擺臂現有參考模型 models/cylinder_tilt_platform 示範共面佈置+叉頭連桿的做法。"
+    },
+    "manual:motion-phase-couple": {
+      "status": "disabled",
+      "reason": "graduated",
+      "at": "2026-11-10T04:00:00.000Z",
+      "note": "系統提示「運動宣告」段 couple 用途②:同一件的連貫複合運動拆成多個 dof、全 couple 到同一主動,內層先宣告。"
+    },
+    "manual:planetary-motion-decompose": {
+      "status": "active",
+      "at": "2026-11-10T04:00:00.000Z",
+      "title": "行星/擺線的公轉+自轉拆成兩個 revolute 疊加",
+      "rootCause": "誤判偏心公轉+自轉無法用定軸旋轉表達而放棄宣告從動件的運動;結構驗證不會檢查會動的件有沒有 dof。",
+      "rule": "行星/擺線類的「公轉+自轉」拆成兩個 couple 到主動 dof 的 revolute:先宣告內層自轉(pivot=盤的初始中心、angle_deg=−α·N/(N−1)),後宣告外層公轉(pivot=中心軸、angle_deg=α);輸出件另以 angle_deg=−α/(N−1) couple 到同一主動(α=輸入轉角、N=針齒數)。組合件裡每個會動的 label 都要出現在某個 dof 的 moving。"
+    },
+    "build:TypeError": {
+      "status": "active",
+      "at": "2026-11-10T04:00:00.000Z",
+      "title": "實體尺寸在建構子給齊,不對實體做算術",
+      "rootCause": "把 build123d 的 Cylinder 當成可乘縮放的物件,用算術運算子補高度。",
+      "rule": "build123d 基本實體的尺寸(半徑、高度、對齊)在建構子一次給齊,如 Cylinder(r, h, align=(Align.CENTER, Align.CENTER, Align.MIN));不可對 Solid/Part 用 *、+ 等算術運算子做拉伸、縮放或補高度——長度先在數字上算完,再把結果傳進建構子。"
+    },
+    "manual:compound-children-transform": {
+      "status": "disabled",
+      "reason": "graduated",
+      "at": "2026-11-10T04:00:00.000Z",
+      "note": "系統提示「標準件幾何」段:變換整顆 Compound 不帶動 children,二擇一(逐子件各套同一組變換,或整顆當一件加入)。"
+    }
+  }
+}

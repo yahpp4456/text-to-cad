@@ -8,10 +8,25 @@ export function triangleU(tSec, periodS, i = 0) {
   return 1 - Math.abs(2 * phase - 1);
 }
 
-// 某 dof 在參數 u 的 frame-matrix Mi(THREE.Matrix4)。
-//   linear   → 沿 axis 平移 axis·u·travel。
-//   revolute → 繞「過 pivot、方向 axis」的軸旋轉 u·angle_deg:T(+pivot)·R(axis,θ)·T(−pivot)。
-export function frameMatrix(THREE, dof, u) {
+// dof 在群參數 u∈[0,1] 的位移比(乘上 travel / angle_deg 即實際位移)。
+// 無 profile = u(線性,舊語意不變);帶 profile(u 等分節點上的位移比,首 0 尾 1)=
+// 節點間分段線性內插——閉鏈連桿(滑塊-曲柄、缸推擺臂)的非線性從動用。
+// 與 cadpy.motion_decl.motion_fraction 逐式鏡射(掃掠用那支):兩邊不一致=畫面閉合、
+// 驗證脫開(或反過來)。cadMotionMath.test.js 有對拍 golden。
+export function profileFraction(dof, u) {
+  const prof = dof?.profile;
+  if (!Array.isArray(prof) || prof.length < 2) return u;
+  const n = prof.length - 1;
+  const x = Math.min(1, Math.max(0, Number(u) || 0)) * n;
+  const i = Math.min(n - 1, Math.floor(x));
+  return prof[i] + (prof[i + 1] - prof[i]) * (x - i);
+}
+
+// 某 dof 在參數 u 的 frame-matrix Mi(THREE.Matrix4);f = profileFraction(dof, u)。
+//   linear   → 沿 axis 平移 axis·f·travel。
+//   revolute → 繞「過 pivot、方向 axis」的軸旋轉 f·angle_deg:T(+pivot)·R(axis,θ)·T(−pivot)。
+export function frameMatrix(THREE, dof, uRaw) {
+  const u = profileFraction(dof, uRaw);
   const axis = Array.isArray(dof.axis) ? dof.axis : [0, 0, 0];
   const Mi = new THREE.Matrix4();
   if (dof.type === "revolute") {

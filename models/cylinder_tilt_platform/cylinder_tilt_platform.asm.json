@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "type": "assembly",
+  "generator": "cylinder_tilt_platform.py",
+  "partCount": 9,
+  "parts": [
+    {
+      "label": "frame"
+    },
+    {
+      "label": "platform"
+    },
+    {
+      "label": "link"
+    },
+    {
+      "label": "knuckle"
+    },
+    {
+      "label": "hinge_pin"
+    },
+    {
+      "label": "pin_plat"
+    },
+    {
+      "label": "pin_rod"
+    },
+    {
+      "label": "cyl_body"
+    },
+    {
+      "label": "cyl_rod"
+    }
+  ],
+  "imports": [],
+  "updatedAt": "2026-11-10T00:00:00.000Z"
+}

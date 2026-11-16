@@ -44,7 +44,7 @@ description: apps/cad-chat 的分層驗證流程與擴充守則。改動 cad-cha
 1–3(`.out/<prefix>_review_<n>_<view>.png`,草模頁/空畫布回 `[]`),再用 Read 逐張看圖;
 4 視需要手動。**迴圈**:看圖列出問題清單 → 修(agent `cad_build(edits)` 或自己改)→
 **同組機位重拍比對** → 清單清空才算過;修過的假綠缺陷照既有規矩走 `emit_lesson_offer`
-記教訓。`smoke_verify_gate.py` H 段在免 LLM 的齒輪齒條頁釘住 helper 能跑(6 張落地)。
+記教訓。`smoke_verify_gate.py` I 段在免 LLM 的齒輪齒條頁釘住 helper 能跑(6 張落地)。
 
 ## 指令速查
 
@@ -110,6 +110,55 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   齒比錯了 `test_validate_motion.CoupledSweepIntegration` 會抓)、cadMotion.js 播放從動
   借主動 period+相位 index(`smoke_verify_gate` F 段斷純滾動 y=-R·θ)。動任一端 →
   三處測試都跑;L4 `smoke_gear_rackpinion_live.py` 驗 agent 真的會宣告。
+- **MOTION `profile`(閉鏈連桿的非線性從動,2026-11-10)**:`couple` 只做線性同步,閉鏈
+  (缸→剛性連桿→擺臂)要靠從動 dof 的 `profile`(u 等分節點位移比,首 0 尾 1)才全程閉合。
+  **`cadpy.motion_decl.motion_fraction`(掃掠)與 `cadMotionMath.profileFraction`(播放)
+  逐式鏡射**,golden 在 `test_motion_decl.ProfileTests` 與 `cadMotionMath.test.js` 兩邊對拍
+  ——動任一端兩邊一起改。參考模型 `models/cylinder_tilt_platform`(design prompt 指名先
+  Read):動它或動 profile 語意 → `tests/test_validate_motion.py`(`ClosedChainProfileIntegration`
+  三案 + `CylinderTiltReferenceIntegration`,~30s,需 build123d)+ 先 sync-vendored
+  + L3 `smoke_verify_gate.py` H 段(真 GLB 播放:u=0.5 連桿孔心與擺臂銷同心;fixture GLB
+  是 LFS pointer 時該段會直接紅並提示重生,不假綠)。
+  判讀:把鉸點「連桿×銷」列進 pairs 後掃掠紅,多半是真的(閉式解算錯桿長、漏了連桿自己的
+  擺角 dof、或連桿擺動撞叉槽),不要靠拿掉 pairs 變綠。動 prompt 的閉鏈段 → L4 一回合
+  (缸推擺臂題)看 agent 是否 Read 參考模型並宣告 profile。
+- **掃掠的同動剔除 + dof 上限(2026-11-10 案例演練)**:`validate.py` 剔除配對的條件是「兩端在
+  耦合群內吃到的 dof 清單完全相同」(舊版只看單一 dof 的 moving,會把同被主動帶著走、各自又有
+  不同從動 dof 的一對誤剔——note 出現「N 對同動剔除」時核對那幾對是不是真的相對靜止)。
+  `MOTION_MAX_DOFS` 是 16(平行機構每腿兩個從動 dof)。動這兩處 → `tests/test_validate_motion.py`
+  (`CoMovingPairEliminationTests`、`StewartPlatformReferenceIntegration`、
+  `LinkageGripperReferenceIntegration`)+ sync-vendored + `smoke_verify_gate.py`。
+  參考模型共三個閉鏈/平行類:`cylinder_tilt_platform`(主動=輸出)、`linkage_gripper`(主動=輸入、
+  鏡射)、`stewart_platform`(逆運動學)。**鏡射陷阱**:build123d `mirror()` 預設 XY 平面,
+  靜態檢查抓不到鏡錯的件——新參考模型有對稱件時,用運動配對或 bbox 斷言鎖左右。
+- **草模剛性桿定長預檢(2026-11-10)**:`sketch_present` 在可達性預檢後跑
+  `findStretchedCouplers`——coupler 兩端距離在行程內變化 > max(0.5mm, 0.5%) 即擋
+  (actuator 不檢查,它本來就伸縮)。煙測/手測注入的場景若把 coupler 當伸縮件用會被拒絕,
+  改用 actuator。動它 → `sketchEval.test.js` H 段 + `sketch.present.test.js` + `smoke_sketch.py`。
+- **⇪ 轉為正式設計的 prefill 不可帶其他對話的檔案路徑(2026-11-10)**:新對話讀不到草模
+  對話的資料夾(readScope 硬閘),機構定義一律由 `lib/promoteText.js` 算進文字;
+  `promoteText.test.js` 鎖「不含 .cadchat / .sketch.json」,`smoke_sketch.py` 斷 prefill
+  含「- 驅動:」「樞軸 (」。
+- **機構設計知識庫 `apps/cad-chat/kb/`(2026-11-10)**:系統提示只帶 `INDEX.md` 的清單(`agent/kb.mjs`,
+  每程序讀一次——**改 INDEX 要重啟**),主題檔由代理執行期 Read;readScope 只多放行這個目錄。
+  動 kb/ 任何檔、`kb.mjs`、readScope 的 allow → L1 `prompt.kb.test.js`(索引↔檔案雙向、必要章節、
+  提示帶得到索引、`apps/` 其他路徑照拒、主題檔引用的 `models/` 路徑存在)。主題檔裡寫的選型工具
+  行為(如 `ball_screw` 接受 `rated_rpm`、`linear_guide` 不含安全係數)改 `cadpy.parts.select` 時要
+  回頭對——沒有自動測試釘這層,手打 `select_part.py <family> '<json>'` 核對。新增打包資產要同步
+  `electron-builder.yml` extraResources(kb 已列)。代理會不會在對的時機讀、讀了有沒有照算 → 只有
+  L4 能驗(題目例:「水平搬 5 kg、行程 300、速度 100 mm/s 的滑台,其餘你決定」看是否讀
+  linear-axis 並把質量/加速時間標 assumed)。
+- **教訓機制(2026-11-10 重構)**:雜訊判準 `lessons.curate.mjs` `isNoiseCase` 是錄製/合併/整理
+  共用的單一真相——**煙測暫存件必須以 `tmp_smoke` 開頭命名**才會被濾掉(新煙測造暫存專案照這個
+  前綴,否則故意餵的壞參數會進教訓庫)。人的決定寫在版控的 `data/curation.lessons.json`
+  (signature 為鍵;檔名不可以 `lessons` 開頭,合併輸入 glob 是 `lessons*.json`),`merge-lessons`
+  合併後套用。動教訓資料或裁決 → `lessons.curate.test.js`(鎖「repo 快照已是套用後狀態、digest
+  不超預算、沒有『…』半句規則」——改了裁決檔要重跑
+  `node scripts/merge-lessons.mjs --inputs data/lessons.sam.json,data/lessons.vm.json --snapshot data/lessons.<m>.json --no-live`
+  兩次(sam、vm)讓快照跟上,否則這條紅)+ `lessons.lifecycle.test.js`;動面板/API →
+  `smoke_lessons.py` + `smoke_lesson_offer.py`。`/api/lessons` 的教訓列是白名單映射
+  (`middleware/lessons.mjs` `lessonView`)——教訓加欄位要在那裡透出,否則面板拿不到(2026-11-10
+  實測踩過:L1 全綠、面板卻不顯示停用理由,開真頁面才發現)。
 - **齒輪幾何只能用 `cadpy.parts.gear` family,不要手刻**:單弦梯形齒 vs 直邊齒條滾動
   必互咬(需隨 module 放大的減薄 ≈(0.05+2/z)·m,齒會瘦到難看);family 齒腹是
   「過真漸開線點的折線」(內接弦只減料不加料),0.05 背隙即全 z 零穿透——嚙合面

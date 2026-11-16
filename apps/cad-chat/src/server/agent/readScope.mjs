@@ -1,6 +1,6 @@
 // Read/Glob/Grep 讀取範圍硬閘(跨使用者/跨對話資料隔離的最後一道;prompt 只是軟規則)。
 // 允許:本對話工作目錄、本使用者 modelsRoot(專案/零件庫)、共用 fixtures 層
-// (RUNTIME_ROOT/models 的範本)、skills/(build123d 參考檔)。
+// (RUNTIME_ROOT/models 的範本)、skills/(build123d 參考檔)、apps/cad-chat/kb(機構設計知識庫)。
 // 拒絕:任何 .cadchat/<其他 session>、其他使用者的 users/<u>/、repo 其他目錄
 // (apps/ src、.env、data/ 教訓快照…)、以及「沒指定目錄」的全域 Glob/Grep
 // (cwd=RUNTIME_ROOT,**/x 會掃到所有人的資料)。
@@ -10,6 +10,9 @@ import { MODELS_FIXTURES_ROOT, RUNTIME_ROOT } from "../config.mjs";
 import { pathIsInside } from "../cad/paths.mjs";
 
 export const READ_TOOLS = new Set(["Read", "Glob", "Grep"]);
+
+// 知識庫相對 RUNTIME_ROOT 的位置(dev = repo 根下;打包版由 extraResources 放到同一相對路徑)。
+export const KB_DIR_REL = "apps/cad-chat/kb";
 
 const GLOB_META = /[*?[\]{}]/;
 
@@ -50,7 +53,8 @@ export function readScopeFor(
     session.workdirAbs || session.workdir || path.join(rt, session.workdirRel || ""),
   );
   const modelsRoot = session.modelsRoot ? path.resolve(session.modelsRoot) : null;
-  const allow = [modelsRoot, fx, path.join(rt, "skills")].filter(Boolean);
+  // 機構設計知識庫(apps/cad-chat/kb):只放行這一個目錄,apps/ 其他地方(src、data、.env)照拒。
+  const allow = [modelsRoot, fx, path.join(rt, "skills"), path.join(rt, KB_DIR_REL)].filter(Boolean);
   const sessionsDirs = [modelsRoot && path.join(modelsRoot, ".cadchat"), path.join(fx, ".cadchat")].filter(
     Boolean,
   );
@@ -73,5 +77,5 @@ export function isReadAllowed(target, scope) {
 }
 
 export const READ_DENY_MSG =
-  "越界讀取被拒絕:只能讀本對話工作目錄、models 下的範本與零件庫、以及 skills/ 參考檔;" +
+  "越界讀取被拒絕:只能讀本對話工作目錄、models 下的範本與零件庫、skills/ 參考檔、以及機構設計知識庫;" +
   "其他對話/其他使用者的資料與系統檔案一律不可讀,也不要再嘗試。Glob/Grep 請指定目錄。";

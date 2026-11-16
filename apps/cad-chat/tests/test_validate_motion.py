@@ -156,6 +156,87 @@ class CoupledSweepIntegration(unittest.TestCase):
         self.assertIn("穿透", check["note"])
 
 
+class ClosedChainProfileIntegration(unittest.TestCase):
+    """profile 掃掠語意(需 build123d/OCP):滑塊-曲柄(缸推擺臂)閉鏈——擺臂銷
+    繞支點轉、連桿一端跟滑塊平移一端套在擺臂銷上。從動件對擺角是非線性關係:
+
+    - 帶 profile(閉式解取樣)→ 連桿孔全程套住擺臂銷,把 link×crank_pin 列入
+      pairs 掃掠全程無穿透(= 鉸點閉合被真的驗到);
+    - 線性 couple(無 profile)→ 兩端點閉合但行程中段銷心偏出孔隙,掃掠必抓;
+    - 連桿只跟滑塊平移(審查 F7 的實際產物寫法)→ 行程末端銷脫開,掃掠必抓。
+    """
+
+    R, L, TH, N = 35.0, 120.0, 30.0, 32  # 擺臂半徑 / 桿長 / 擺角(度) / profile 段數
+
+    @classmethod
+    def setUpClass(cls):
+        from build123d import Axis, Box, Cylinder, Pos
+
+        from cadpy.assembly import label_shape
+
+        R, L = cls.R, cls.L
+
+        def ycyl(x, z, r, length):
+            return Pos(x, 0, z) * Cylinder(r, length).rotate(Axis.X, 90)
+
+        # 擺臂銷:home 在支點正下方 R;連桿:中心線 z=-R,兩端孔比銷大 0.4(單邊 0.2)
+        pin = ycyl(0.0, -R, 4.0, 20.0)
+        slider_pin = ycyl(-L, -R, 4.0, 20.0)
+        bar = Pos(-L / 2, 0, -R) * Box(L + 16.0, 6.0, 16.0)
+        bar -= ycyl(0.0, -R, 4.2, 10.0)
+        bar -= ycyl(-L, -R, 4.2, 10.0)
+        for shape, name in ((pin, "crank_pin"), (slider_pin, "slider_pin"), (bar, "link")):
+            label_shape(shape, name)
+        cls.named = [("crank_pin", pin), ("slider_pin", slider_pin), ("link", bar)]
+
+    def _closed_form(self):
+        import math
+
+        R, L = self.R, self.L
+
+        def at(deg):
+            t = math.radians(deg)
+            dz = R * (1.0 - math.cos(t))
+            return R * math.sin(t) + L - math.sqrt(L * L - dz * dz), math.degrees(math.asin(dz / L))
+
+        s_end, phi_end = at(self.TH)
+        knots = [at(self.TH * i / self.N) for i in range(self.N + 1)]
+        return s_end, phi_end, [k[0] / s_end for k in knots], [k[1] / phi_end for k in knots]
+
+    def _motion(self, *, profile=True, swing=True):
+        s_end, phi_end, s_prof, phi_prof = self._closed_form()
+        pairs = [["link", "crank_pin"]]
+        dofs = [{"id": "theta", "type": "revolute", "axis": [0, -1, 0], "pivot": [0, 0, 0],
+                 "angle_deg": self.TH, "moving": ["crank_pin"], "pairs": pairs, "samples": 16}]
+        if swing:  # 內層:連桿繞滑塊銷(home 位置)擺;宣告在承載它的 linear 之前
+            dofs.append({"id": "link_swing", "type": "revolute", "axis": [0, -1, 0],
+                         "pivot": [-self.L, 0, -self.R], "angle_deg": phi_end,
+                         "moving": ["link"], "pairs": pairs, "couple": "theta", "samples": 16,
+                         **({"profile": phi_prof} if profile else {})})
+        dofs.append({"id": "slide", "axis": [1, 0, 0], "travel": s_end,
+                     "moving": ["slider_pin", "link"], "pairs": pairs, "couple": "theta",
+                     "samples": 16, **({"profile": s_prof} if profile else {})})
+        m, errs = validate._read_motion(SimpleNamespace(MOTION={"dofs": dofs}), self.named)
+        self.assertEqual(errs, [])
+        return m
+
+    def test_profile_keeps_joint_closed(self):
+        check = validate._run_motion_sweep(self.named, self._motion())
+        self.assertTrue(check["ok"], check)
+        self.assertFalse(check.get("skipped"))
+        self.assertIn("耦合群 theta+link_swing+slide", check["note"])
+
+    def test_linear_couple_opens_joint_mid_stroke(self):
+        check = validate._run_motion_sweep(self.named, self._motion(profile=False))
+        self.assertFalse(check["ok"], check)
+        self.assertIn("link~crank_pin", check["note"])
+
+    def test_translate_only_link_opens_joint(self):
+        check = validate._run_motion_sweep(self.named, self._motion(profile=False, swing=False))
+        self.assertFalse(check["ok"], check)
+        self.assertIn("link~crank_pin", check["note"])
+
+
 FLIP = REPO / "models" / "flip_gripper" / "flip_gripper.py"
 
 
@@ -203,6 +284,168 @@ class FlipGripperIntegration(unittest.TestCase):
             [d["id"] for d in self.mo["motion"]["dofs"]],
         )
         self.assertEqual(self.full["partCount"], self.mo["partCount"])
+
+
+TILT = REPO / "models" / "cylinder_tilt_platform" / "cylinder_tilt_platform.py"
+
+
+@unittest.skipUnless(TILT.exists(), "cylinder_tilt_platform fixture 不存在")
+class CylinderTiltReferenceIntegration(unittest.TestCase):
+    """閉鏈連桿參考模型(design prompt 指名「先 Read」的那份)端到端:profile 宣告
+    經 validate.py 全掃掠——鉸點(連桿×兩支銷)與兩個叉槽都列在 pairs 裡仍全程無穿透。
+    這顆紅了 = 參考模型教 agent 的寫法本身驗不過,prompt 指引同步失效。"""
+
+    @classmethod
+    def setUpClass(cls):
+        env = {**os.environ, "PYTHONUTF8": "1"}
+        r = subprocess.run(
+            [sys.executable, str(CAD_DIR / "validate.py"), str(TILT)],
+            capture_output=True, text=True, timeout=180, env=env,
+        )
+        cls.out = json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_full_validation_clean_with_joint_pairs(self):
+        self.assertTrue(self.out["ok"], self.out)
+        sweep = next(c for c in self.out["checks"] if c["id"] == "motion_sweep")
+        self.assertTrue(sweep["ok"], sweep)
+        self.assertFalse(sweep.get("skipped"))
+        self.assertIn("耦合群 theta+link_swing+rod", sweep["note"])
+        self.assertIn("7 對", sweep["note"])
+
+    def test_playback_carries_profiles_on_coupled_dofs(self):
+        dofs = {d["id"]: d for d in self.out["motion"]["dofs"]}
+        self.assertNotIn("profile", dofs["theta"])
+        for did in ("link_swing", "rod"):
+            prof = dofs[did]["profile"]
+            self.assertEqual(len(prof), 33)
+            self.assertEqual((prof[0], prof[-1]), (0.0, 1.0))
+        # 非線性的證據:中點位移比偏離 0.5(連桿擺角 ∝ 1−cosθ,中點約 0.25)
+        self.assertLess(dofs["link_swing"]["profile"][16], 0.3)
+
+
+def _validate_model(name):
+    path = REPO / "models" / name / f"{name}.py"
+    env = {**os.environ, "PYTHONUTF8": "1"}
+    r = subprocess.run(
+        [sys.executable, str(CAD_DIR / "validate.py"), str(path)],
+        capture_output=True, text=True, timeout=240, env=env,
+    )
+    return json.loads(r.stdout.strip().splitlines()[-1])
+
+
+@unittest.skipUnless((REPO / "models" / "stewart_platform" / "stewart_platform.py").exists(), "fixture 不存在")
+class StewartPlatformReferenceIntegration(unittest.TestCase):
+    """平行機構參考模型(六足平台):一條升降軌跡 = 1 主動 + 每腿 2 個 profile 從動 = 13 dof。
+    這顆同時鎖住「dof 上限要容得下平行機構」(曾是 8,13 個直接被宣告驗證拒收)。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.out = _validate_model("stewart_platform")
+
+    def test_thirteen_coupled_dofs_sweep_clean(self):
+        self.assertTrue(self.out["ok"], self.out)
+        sweep = next(c for c in self.out["checks"] if c["id"] == "motion_sweep")
+        self.assertTrue(sweep["ok"], sweep)
+        self.assertFalse(sweep.get("skipped"))
+        self.assertIn("13 DOF", sweep["note"])
+        self.assertIn("18 對", sweep["note"])  # 6×(桿×筒 + 筒×基座球窩 + 桿×平台球窩)
+
+    def test_every_leg_dof_is_coupled_with_profile(self):
+        dofs = self.out["motion"]["dofs"]
+        self.assertEqual(len(dofs), 13)
+        self.assertNotIn("couple", dofs[0])
+        for d in dofs[1:]:
+            self.assertEqual(d["couple"], "heave")
+            self.assertEqual(len(d["profile"]), 17)
+
+
+@unittest.skipUnless((REPO / "models" / "linkage_gripper" / "linkage_gripper.py").exists(), "fixture 不存在")
+class LinkageGripperReferenceIntegration(unittest.TestCase):
+    """連桿夾爪參考模型:主動是輸入(推桿行程),雙指與兩支連桿是 profile 從動,左右鏡射。
+    18 對配對含 link_r×link_l——兩支連桿都隨推桿平移(同在主動的 moving 裡)但各自反向擺動,
+    舊的「同 dof 兩端同動就剔除」會把這對誤剔成 17 對。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.out = _validate_model("linkage_gripper")
+
+    def test_sweep_clean_and_keeps_counter_swinging_pair(self):
+        self.assertTrue(self.out["ok"], self.out)
+        sweep = next(c for c in self.out["checks"] if c["id"] == "motion_sweep")
+        self.assertTrue(sweep["ok"], sweep)
+        self.assertIn("5 DOF", sweep["note"])
+        self.assertIn("18 對", sweep["note"])
+        self.assertNotIn("同動剔除", sweep["note"])
+
+    def test_left_side_is_mirrored_across_yz(self):
+        # mirror() 預設鏡射平面是 XY(z→−z):左側件會掉到模型下方而靜態檢查照過。
+        dofs = {d["id"]: d for d in self.out["motion"]["dofs"]}
+        self.assertEqual(dofs["finger_l"]["pivot"][0], -dofs["finger_r"]["pivot"][0])
+        self.assertEqual(dofs["finger_l"]["pivot"][2], dofs["finger_r"]["pivot"][2])
+        self.assertEqual(dofs["finger_l"]["axis"][1], -dofs["finger_r"]["axis"][1])
+
+
+@unittest.skipUnless((REPO / "models" / "cartesian_3d_printer" / "cartesian_3d_printer.py").exists(), "fixture 不存在")
+class Cartesian3dPrinterReferenceIntegration(unittest.TestCase):
+    """整機等級參考模型(方框式 3D 印表機,53 件、三個獨立軸):全對靜態干涉 + 三軸掃掠。
+    這顆同時是「大型組合件驗得動」的時間護欄(本機約 25 秒)。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.out = _validate_model("cartesian_3d_printer")
+
+    def test_whole_machine_validates(self):
+        self.assertTrue(self.out["ok"], self.out)
+        self.assertEqual(self.out["partCount"], 53)
+        checks = {c["id"]: c for c in self.out["checks"]}
+        self.assertIn("0 undeclared overlaps", checks["interference"]["note"])
+        self.assertTrue(checks["motion_sweep"]["ok"], checks["motion_sweep"])
+        self.assertIn("3 DOF", checks["motion_sweep"]["note"])
+        self.assertIn("25 對", checks["motion_sweep"]["note"])
+
+    def test_axes_are_independent_and_ride_along(self):
+        dofs = {d["id"]: d for d in self.out["motion"]["dofs"]}
+        self.assertEqual(set(dofs), {"x", "y", "z"})
+        self.assertTrue(all("couple" not in d for d in dofs.values()))
+        self.assertTrue(set(dofs["x"]["moving"]) < set(dofs["y"]["moving"]))  # 工具頭隨 Y 軸一起走
+
+
+class CoMovingPairEliminationTests(unittest.TestCase):
+    """掃掠的同動剔除:兩端在群內吃到的 dof 完全相同才剔。"""
+
+    @classmethod
+    def setUpClass(cls):
+        from build123d import Box, Pos
+
+        from cadpy.assembly import label_shape
+
+        a = Pos(-12, 0, 0) * Box(10, 10, 10)
+        b = Pos(12, 0, 0) * Box(10, 10, 10)
+        wall = Pos(0, 0, -20) * Box(60, 20, 10)
+        for shape, name in ((a, "a"), (b, "b"), (wall, "wall")):
+            label_shape(shape, name)
+        cls.named = [("a", a), ("b", b), ("wall", wall)]
+
+    def _motion(self, *, extra_swing):
+        dofs = [{"id": "lift", "axis": [0, 0, 1], "travel": 20.0, "moving": ["a", "b"],
+                 "pairs": [["a", "b"], ["a", "wall"]], "samples": 6}]
+        if extra_swing:  # a 另外朝 b 靠過去 → 與 b 有相對運動(會撞)
+            dofs.insert(0, {"id": "close", "axis": [1, 0, 0], "travel": 20.0, "moving": ["a"],
+                            "pairs": [["a", "b"]], "couple": "lift", "samples": 6})
+        m, errs = validate._read_motion(SimpleNamespace(MOTION={"dofs": dofs}), self.named)
+        self.assertEqual(errs, [])
+        return m
+
+    def test_truly_co_moving_pair_is_dropped(self):
+        check = validate._run_motion_sweep(self.named, self._motion(extra_swing=False))
+        self.assertTrue(check["ok"], check)
+        self.assertIn("1 對同動剔除", check["note"])
+
+    def test_pair_with_different_extra_dof_is_swept_and_caught(self):
+        check = validate._run_motion_sweep(self.named, self._motion(extra_swing=True))
+        self.assertFalse(check["ok"], check)
+        self.assertIn("a~b", check["note"])
+        self.assertNotIn("同動剔除", check["note"])
 
 
 if __name__ == "__main__":

@@ -23,11 +23,24 @@ const clamp = (v, n) => {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 };
 
+// 規則/根因超長時退到上限內最後一個句界(。;;)再截——硬截會把規則切在半句
+// (2026-11 整理時 13 條裡有 5 條以「…」結尾,digest 每回合把半句話注入系統提示)。
+const clampSentence = (v, n) => {
+  const s = String(v ?? "").trim();
+  if (s.length <= n) return s;
+  const head = s.slice(0, n);
+  const cut = Math.max(head.lastIndexOf("。"), head.lastIndexOf(";"), head.lastIndexOf(";"));
+  return cut >= n * 0.5 ? head.slice(0, cut + 1).replace(/[;;]$/, "。") : clamp(s, n);
+};
+
 // 系統提示已靜態涵蓋的規則摘要(prompt.mjs 鐵則 + skills/cad/references/lessons.md L-1..L-5)。
 // 蒸餾出的教訓必須是這些「之外」的新增細節;prompt.mjs 大改時同步這份摘要。
-export const STATIC_RULES_SUMMARY = `- PARAMS 單層 dict 契約、gen_step() 無參數、check_geometry 寫檔前 gate
+export const STATIC_RULES_SUMMARY = `- PARAMS 單層 dict 契約、gen_step() 無參數、check_geometry 寫檔前 gate、_check_params 跨參數防呆
 - INTENDED_CONTACT 白名單語意;結構件不得互穿(接合須銷媒介/面貼合,L-5)
-- MOTION v1 宣告(linear、moving/pairs label 唯一、travel 引用 PARAMS);獨立末端缸各自成 DOF
+- MOTION 宣告:linear + revolute(revolute 必明給 pairs)、moving/pairs label 唯一、travel/angle_deg 引用 PARAMS;獨立末端缸各自成 DOF
+- couple 同步耦合三用途:定比傳動(幅度須符合傳動比)/ 同一件的連貫複合運動(內層先宣告)/ 閉鏈連桿(從動加 profile 閉式位移表、鉸點「連桿×銷」必列入 pairs)
+- 標準件(cadpy.parts)簽章與座標慣例;變換整顆 Compound 不帶動 children(逐子件各套變換,或整顆當一件 add);鏡射要明給平面(mirror() 預設 XY)
+- 齒輪/鈑金/掃出/線性滑台/龍門/閉鏈連桿各有指定參考模型,改編不重推
 - 修復一律 cad_build(edits) 最小段精修,不重送整份 code;retry 上限 3 次後誠實回報
 - 大型組合件(≥8 件):每子系統一個 builder、定位常數集中頂部一張表、IC 按介面分組
 - 靜態教訓 L-1..L-5:無效實體必擋 / 全對干涉列舉 / 允收白名單 / 運動掃掠含 baseline / 禁黏方塊`;
@@ -78,8 +91,8 @@ export function parseDistillOutput(text) {
     if (a === -1 || b <= a) return null;
     const obj = JSON.parse(t.slice(a, b + 1));
     const title = clamp(obj.title, 40);
-    const rootCause = clamp(obj.rootCause, 120);
-    const rule = clamp(obj.rule, 160);
+    const rootCause = clampSentence(obj.rootCause, 140);
+    const rule = clampSentence(obj.rule, 220);
     if (!title || !rootCause || !rule) return null;
     return {
       title,
@@ -253,7 +266,12 @@ export async function maybeDistill({
           // 自動蒸餾:排除人工記的 manual: 教訓(定案「留 pending 手動蒸餾」——只由使用者
           // 面板「立即蒸餾」升級),且對連敗 ≥MAX_AUTO_ATTEMPTS 的叢集放棄(退避);
           // 手動 force 兩者皆不受限。
-          (force || (!g.signature.startsWith("manual:") && (g.attempts || 0) < MAX_AUTO_ATTEMPTS)),
+          // turn:* 是基礎設施錯誤(額度/模型/傳輸),沒有建模資訊,永不自動蒸餾——2026-07 曾把
+          // 23 筆這種案例蒸成「MOTION 僅 linear」的錯規則。(新案例已在錄製層濾掉;這裡擋舊資料。)
+          (force ||
+            (!g.signature.startsWith("manual:") &&
+              !g.signature.startsWith("turn:") &&
+              (g.attempts || 0) < MAX_AUTO_ATTEMPTS)),
       );
       const limit = force ? 5 : 3;
       const distilled = [];

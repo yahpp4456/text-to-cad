@@ -243,11 +243,22 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
   切點附近浮點抖動不算)→ 走同一失敗契約回 `errors[{path:"derived.<id>", message}]`
   (訊息帶驅動值/桿長/銷到導線最短距離),不寫檔不 bump。播放端仍鉗到切點畫圖
   (永不 NaN),但「桿長已被違反」不能再當成功呈現。
-- **⇪ 轉為正式設計的 prefill 帶原始場景檔路徑(2026-09-26)**:`lib/promoteText.js`
-  從 `sceneUrl` 的 `file=` 取相對路徑(`models/.cadchat/<id>/versions/vN/<name>.sketch.json`,
-  相對 DATA_ROOT;dev 下 = repo 根 = design agent 的 cwd,`Read` 直接可讀)寫進
-  prefill,叫 design agent 先讀原檔取鉸點/桿長/行程,不憑 label+驅動範圍摘要猜。
-  已知限制:per-user 部署(VM)的路徑相對 DATA_ROOT 而非 agent cwd,可能讀不到。
+- **剛性桿定長預檢(2026-11-10)**:可達性預檢之後再跑 `findStretchedCouplers`
+  (同一組取樣)。`coupler` 的畫法是自動落在兩錨點之間,兩點距離若隨 drive 改變,
+  畫面上桿會跟著伸縮,把不閉合的機構畫成連得上(審查 F4)。行程內 (max−min) 超過
+  `max(0.5 mm, 0.5%×桿長)` → 同一失敗契約(不寫檔、不 bump、errors 回 agent 自修),
+  訊息帶 min/max/變化量與修法(一端落 pin_on_line 定長,或本來就是伸縮件改用 actuator)。
+  閉式定長鏈的實際變化是 1e-13 級,四個 fixture 與 prompt 內嵌範例都遠在容差內。
+  prompt 同步改寫:actuator=會伸縮、coupler=剛性桿(原句「自動對準+伸縮,永不懸空」
+  把兩者混為一談)。
+- **⇪ 轉為正式設計的 prefill 直接帶機構定義(2026-11-10 改;原為 2026-09-26 的「帶原始
+  場景檔路徑」)**:`lib/promoteText.js` 用 `compileSketch`/`evalPose` 從場景算出驅動範圍、
+  各關節的軸與樞軸世界座標、滑銷導線與定長、剛性連桿桿長、致動器安裝長度與行程、主要
+  外形,條列進輸入框。**為什麼不再帶路徑叫 design agent 去 Read**:轉正式設計會開新對話,
+  而 2026-10-01 加的讀取範圍硬閘(`agent/readScope.mjs`)拒絕讀其他對話的資料夾——那個
+  Read 必被擋,agent 只剩 label+驅動範圍(等於退回審查 F6)。數字直接進文字則與讀取範圍
+  無關,使用者送出前也看得到、改得了。場景抓不到/編不動 → 降級句明講沒帶到、請 agent
+  先確認,不假裝有規格。L1 `promoteText.test.js`(含「文字不得含 .cadchat 路徑」鎖)。
 - **驅動/傳動先問(2026-07-14)**:需求含運動軸而**未指明「驅動方式(汽缸/馬達)」
   或「傳動呈現(皮帶/齒輪齒條/直接耦合的加工幾何)」→ 必 emit_clarify**(拓撲級
   選擇,猜錯整台重搭;紀律搬自設計模式 prompt 的「未指明驅動必列澄清」)。一次整合
@@ -594,7 +605,7 @@ cable 模式原本只有對話一條路(範例/打字/上傳 STEP 全要 LLM)。
   在場即為證。
 - 測試:`smoke_versions.py` §6 匯出段加 pdf 正案(`%PDF-` magic bytes)。
 
-## MOTION 運動宣告(linear + revolute + couple)
+## MOTION 運動宣告(linear + revolute + couple + profile)
 
 產生器模組層宣告(與 `INTENDED_CONTACT` 同慣例),**一份真相三個消費者**:
 (a) validate.py 據此建 poses 跑真運動掃掠(per-「群」獨立掃、baseline=seated、
@@ -616,6 +627,26 @@ cable 模式原本只有對話一條路(範例/打字/上傳 STEP 全要 LLM)。
 比率不符純滾動 travel = R×θ(rad) 會被抓到穿透),前端播放從動借主動的 period+相位
 index(嚙合不打滑;獨立 dof 仍相位錯開以便辨識)。規則:主/從都必須明給 pairs、
 禁止鏈式耦合。`schemaVersion` 維持 `1`(加法式擴充)。
+
+**閉鏈連桿加 `"profile"`(2026-11-10)**:`couple` 是「同一進度 u、位移成正比」,只對定比
+傳動精確。缸/曲柄經剛性連桿推擺臂(滑塊-曲柄)這類閉鏈,從動件對主動件是非線性關係——
+線性同步只在兩端點閉合,行程中段鉸點脫開(審查 F7 的實際產物:連桿只跟推桿平移 → 30°
+時銷心與連桿孔差 4.69 mm;連桿補一個線性擺角 dof → 中段仍差約 1.2 mm;兩種寫法把
+「連桿×銷」列入 pairs 都會被掃掠判穿透,所以當時只能不列、精算照過)。從動 dof 加
+`"profile": [f0…fN]` = u 等分節點上的位移比(首 0 尾 1、3–129 點,節點間線性內插;
+實際位移 = 位移比 × travel/angle_deg,travel/angle_deg 仍是終值),由產生器的閉式解函式
+取樣產生。規則:只給帶 `couple` 的從動 dof;無 profile = 線性(舊語意逐位不變)。
+單一真相 `cadpy.motion_decl.motion_fraction`(掃掠 `_dof_frame_shape` 用)與前端
+`cadMotionMath.profileFraction`(播放用)**逐式鏡射**,兩邊有同一組 golden 對拍——
+改一邊必改另一邊,否則畫面閉合而驗證脫開(或反過來)。位移精確之後,**鉸點的
+「連桿×銷」與連桿×叉槽要列進 pairs**:這時掃掠才真的在驗「鉸點全程閉合、連桿擺動
+不撞槽」。參考模型 `models/cylinder_tilt_platform`(缸推平台前傾;design prompt 指名
+先 Read):3 dof(擺角主動 + 連桿擺角/缸桿行程兩個 profile 從動)、7 對配對全程無穿透;
+它同時修掉原產物被隱藏的真干涉(連桿在滿擺角撞平台叉槽頂——以前沒列 pairs 所以沒人
+知道)。測試:`test_motion_decl.ProfileTests`、`cadMotionMath.test.js` 三案、
+`tests/test_validate_motion.py` 的 `ClosedChainProfileIntegration`(profile 過 / 線性擋 /
+只平移擋)與 `CylinderTiltReferenceIntegration`(參考模型端到端)、L3
+`smoke_verify_gate.py` H 段(真 GLB + `__cadMotion`:行程中點連桿孔心與擺臂銷同心)。
 
 ```python
 MOTION = {
@@ -669,6 +700,80 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
 正交來源合流在同一次 `applyPartVisualState`(hidden 走原生 `hiddenPartIds`、ghost 走
 `record.effectStyle.opacity`,與運動示意的 `effectMatrix` 正交可同時作用);dev 鉤
 `__cadVisual.display()/stateFor(label)`。
+
+## 機構設計知識庫(`kb/`,2026-11-10)
+
+設計模式的代理要**決定**尺寸、選型或構型時查的知識:選型計算、設計慣例,以及這些知識怎麼對應到
+本系統的選型工具與標準件幾何。七個主題檔:
+
+| 檔 | 內容 |
+| --- | --- |
+| `kb/linear-axis.md` | 軸向力、導程與轉速、危險轉速與 DN 值、馬達扭矩與慣量、線軌負載與壽命、螺桿支撐配置 |
+| `kb/pneumatic.md` | 理論出力與負荷率、行程餘量、側向負載與導引、安裝型式、夾爪夾持力、旋轉缸扭矩 |
+| `kb/rotary-drive.md` | 旋轉負載扭矩與慣量、減速方式比較、正齒輪、同步帶、聯軸器與軸承支撐 |
+| `kb/structure-fastening.md` | 螺絲間隙孔/沉頭孔/底孔表、定位銷、常用配合、板厚與加工性、NEMA 安裝面 |
+| `kb/layout-selection.md` | 直線驅動方式比較、取放構型、多軸堆疊原則、佈局檢核、repo 內可改編的參考模型對照表 |
+| `kb/parallel-mechanism.md` | 逆運動學(姿態定腿長)、6-6 接頭佈局、行程與接頭擺角、受力、一條軌跡的運動宣告 |
+| `kb/gripper-design.md` | 夾爪型式、夾持力與連桿力放大、夾指與可換夾塊(V 槽)細節、分層與銷配合、鏡射 |
+
+- **怎麼被用到**:`agent/kb.mjs` 把 `kb/INDEX.md` 的清單(每主題一行)帶進系統提示;主題檔本身
+  不進提示,代理遇到清單上的情境才 Read。讀取範圍硬閘只多放行 `apps/cad-chat/kb` 這一個目錄
+  (`apps/` 其他地方照拒)。打包版由 `electron-builder.yml` 帶到 `runtime/apps/cad-chat/kb`。
+- **每個主題檔的固定章節**:適用情境 / 計算與選型 / 在本系統怎麼做 / 做不到與要講明的事 /
+  來源與信心。「在本系統怎麼做」寫明選型工具的輸入該怎麼算——例如 `linear_guide` 的 load_N 是直接
+  與額定動負荷比、不含安全係數;`ball_screw` 預設以 3000 rpm 反推導程,步進馬達要帶
+  `rated_rpm: 600`(工具本來就接受這個欄位,只是說明沒寫;`cad_source_part` 的說明已補上)。
+- **數值來源**:廠商選型資料(SMC 負荷率、THK 危險轉速與 DN 值、HIWIN 靜安全係數與壽命式、
+  Oriental Motor 扭矩安全係數、KHK 最少齒數)與 ISO 273 等標準;經驗值在各檔「來源與信心」標明。
+  這些是讓代理估算用的,**不是設計保證**——本系統只驗幾何。
+- **新增主題不用改程式**:複製 `kb/_TEMPLATE.md`、在 `INDEX.md` 補一行、重啟(`kb/README.md`)。
+  格式由 L1 `prompt.kb.test.js` 守:索引↔檔案雙向一致、必要章節、提示帶得到索引、讀取範圍、
+  主題檔引用的 `models/` 參考模型存在。
+- **案例演練(2026-11-10)**:照設計提示詞與知識庫手動當代理,做了兩個比既有範例難的機構,走完
+  建置與完整精算,另加一台整機。(不是 LLM 回合——只驗證「照規則寫得出來、驗得過」,沒驗證代理會不會照做。)
+
+  | 案例 | 結果 | 過程中發現並修掉的問題 |
+  | --- | --- | --- |
+  | 史都華平台 `models/stewart_platform`(六足平行機構;姿態為輸入的逆運動學,升降一條軌跡) | 13 個 dof、18 對配對全程無穿透;傾斜姿態通過、拿掉 profile 被擋、超出致動器行程給人話訊息 | 運動宣告的 dof 上限是 8,平行機構每腿要兩個從動 dof(13 個)直接被拒 → 上限放寬到 16 |
+  | 連桿夾爪 `models/linkage_gripper`(推桿經連桿帶動雙指、可換 V 形夾塊;主動取輸入件) | 5 個 dof、18 對配對全程無穿透;拿掉 profile 在連桿×曲柄銷被擋 | ① `mirror()` 預設對 XY 平面鏡射,左側件掉到模型下方而靜態檢查全過(靠運動配對才抓到)→ 寫進提示詞與知識庫;② 掃掠的「同動剔除」只看單一 dof,把兩支各自反向擺動的連桿誤判成相對靜止而不掃 → 改成比對兩件在群內吃到的全部 dof |
+
+  | 3D 印表機整機 `models/cartesian_3d_printer`(方框式;12 支含 T 槽的鋁擠型、XY 龍門、懸臂 Z 軸熱床、工具頭,53 件) | 第一次建置只有 1 處未宣告干涉(Z 馬達軸與螺桿端重疊 4 mm),修正後全過:53 件、7 對宣告接觸、3 個獨立軸 25 對配對全程無穿透;改成形尺寸(床 150~300、Z 120)照樣通過;完整精算約 25 秒 | 沒有引擎問題。確認整機等級可行,並把「整機怎麼組織、能呈現到哪裡」寫進 `kb/layout-selection.md` |
+
+  兩個模型都留作參考模型(知識庫新增 `parallel-mechanism.md`、`gripper-design.md` 兩個主題並指向
+  它們)。回歸鎖:`tests/test_validate_motion.py` 的 `StewartPlatformReferenceIntegration`、
+  `LinkageGripperReferenceIntegration`、`CoMovingPairEliminationTests`。
+- 與 `DRIVETRAIN_KB_PLAN.md` 的關係:沿用它的「索引+主題檔+格式守護測試」架構,但內容改以
+  自動化機構的選型計算為主;該計畫的「七種減速構型示意配方+行星參考模型」仍未做。
+
+## 機構相關提示詞修訂(2026-11-10)
+
+對 design / sketch 兩份系統提示與教訓蒸餾摘要做的一輪機構面修訂(細節與證據見
+[審查報告 §9](CHATCAD_MECHANISM_CODE_REVIEW_2026-09-25.md)):
+
+- **閉鏈連桿**:工作區「先 Read」清單加入 `models/cylinder_tilt_platform`;運動宣告段把
+  `couple` 改寫成三種用途(定比傳動 / 同一件的連貫複合運動 / 閉鏈連桿+`profile`),
+  並要求鉸點「連桿×銷」與連桿×叉槽列入 pairs。順帶讓教訓 LS-10(連貫運動要 couple)、
+  LS-11(行星運動拆兩 revolute)與 prompt 一致——原句只講嚙合傳動,digest 又註明
+  「衝突以上方規則為準」,等於把這兩條教訓作廢。
+- **標準件擺放**:明寫「變換整顆 Compound 不帶動 `.children`」,二擇一(逐子件各套變換 /
+  整顆當一件 add)。原句「整顆 rotate 再平移」+「children 可解包」正是教訓 LS-13 的成因。
+- **結構件不得互穿**:規則直接寫進 prompt(銷/螺栓媒介或面貼合),不再只寫「見 lessons L-5」
+  ——agent 看不到那份帳本,而且容易和教訓 digest 的 `[LS-5]` 編號混淆。
+- **先定運動鏈再想外形**:流程 0 階段要求先定機架/輸出件/驅動→傳動→輸出;2 階段的計畫
+  多列一條「運動鏈與驗收」;可推導量(傳動比、中心距、行程換算)自己算不拿去問。
+- **減速構型未定必問**:旋轉減速需求未指名構型時,澄清選項要給真實構型(行星/諧波/
+  擺線/蝸輪/正齒輪/同步帶)與一句取捨,並講明正齒輪以外只能做簡化示意。
+  (`DRIVETRAIN_KB_PLAN.md` 的 KB 本體仍未實作。)
+- **紀律**:建置成功/會動不代表機構正確;沒列入 pairs 的鉸點一律說「未驗」。
+- **草模**:actuator=會伸縮、coupler=剛性桿;升級引導改指向「⇪ 轉為正式設計」按鈕,
+  並提醒 agent 另外條列沒畫進草模的確認事項(驅動/傳動、被省略的軸)。
+- **教訓蒸餾**:`lessons.distill.mjs` 的 `STATIC_RULES_SUMMARY` 更新為現行能力(原本仍寫
+  「MOTION v1 宣告(linear…)」)。
+
+驗證範圍:L0 build、L1 全套(492)、Python 運動測試(契約/掃掠整合/參考模型端到端,
+build123d 0.11)、L3 `smoke_sketch.py`(44)與 `smoke_verify_gate.py`(65,含新增 H 段)皆綠。
+**尚未驗證**:L3 其餘 26 支煙測沒跑(Linux 雲端環境、LFS fixture 拉不到);**prompt 改動
+沒有免 LLM 的等價驗證**,L4 真回合(閉鏈連桿題、減速構型澄清題、草模伸縮桿自修)未跑。
 
 ## 單一快路徑 + 匯出閘(2026-07-10 收斂;前身為 2026-07-09 的產圖雙模式)
 
@@ -1081,6 +1186,59 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
   `record` 人工記教訓,缺內容 → ok:false empty、寫入失敗 → 500)。
 - **開關**:`CADCHAT_LESSONS=0` 整個子系統停用(錄製/蒸餾/注入全 no-op)。
 
+### 教訓機制重構(2026-11-10):雜訊過濾 + 停用理由 + 版控裁決檔
+
+整理兩份快照的 124 筆案例後發現,問題不在蒸餾品質而在**餵進去的東西**與**人做的決定留不住**:
+
+| 發現 | 數量 | 後果 |
+| --- | --- | --- |
+| 煙測暫存件(`tmp_smoke_*`,故意餵壞參數驗回滾)被記成失敗案例 | 40 筆 | 「參數須先驗域約束」那條的 43 例裡只有 3 例是真的 |
+| 回合層基礎設施錯誤(額度用盡、模型不支援、輸出上限、工具呼叫解析失敗) | 23 筆 | 被蒸餾成「MOTION 僅 linear」的錯規則(審查 F3) |
+| 滑桿撞到參數防呆、`_check_params` 照設計丟 ValueError | 3 筆 | 防呆生效被記成生成失敗 |
+| 規則被硬截在半句(以「…」結尾) | 13 條裡 5 條 | digest 每回合把半句話注入系統提示 |
+| 停用只存在各機活庫,合併是 union(任一份 active 就復活)、沒有理由 | — | 同一個判斷每台機器要手動再做一次(`LESSONS_HANDOFF` 那份筆記) |
+
+對應的改動:
+
+- **`isNoiseCase`(`src/server/lessons.curate.mjs`)**:上表前三類 + ANSI 殘骸的單一判準,錄製
+  (`flushTurnRecorder` 不落盤)、合併、整理共用。滑桿撞到**非 ValueError**(幾何核心原始例外)
+  仍然記——那代表防呆沒蓋到,是真訊號。`turn:*` 另在自動蒸餾排除(擋舊資料)。
+- **教訓多三欄**:`statusAt`(這個決定何時做的)、`statusReason`(`manual` / `graduated` 規則已進
+  系統提示或決定性檢查 / `retired` 過期或本來就錯)、`statusNote`(畢業到哪、為何退役)。
+  `status` 仍只有 active|disabled,digest 與 API 不變;面板 pill 顯示「已畢業/已退役」並列出 note。
+- **合併取最新決定**:有 `statusAt` 的教訓取最新那筆的狀態,停用會跨機傳播;全無 `statusAt` 的
+  舊資料沿用 union。
+- **版控裁決檔 `data/curation.lessons.json`**(以 signature 為鍵):人的決定(狀態、理由、改寫的
+  措辭)寫在這裡,`merge-lessons` 合併後套用(`applyCuration`,冪等)。裁決的 `at` 晚於教訓的
+  `statusAt` 才覆寫狀態、晚於 `distilledAt` 才覆寫措辭——面板上更晚的手動切換與之後的重新蒸餾
+  優先。`--no-curation` 可略過。檔名刻意不以 `lessons` 開頭(合併的輸入 glob 是 `lessons*.json`)。
+- **超長規則退到句界再截**(`clampSentence`,規則上限 160→220、根因 120→140)。
+- **蒸餾的「已涵蓋規則摘要」有測試釘住**(必含 revolute/couple/profile/children)。
+
+**目前的教訓(整理後,兩份快照一致)**:13 條裡 6 條生效(digest 約 1500 字,預算 2000)、4 條畢業、
+3 條退役;案例 124 → 58 筆。
+
+| 教訓 | 狀態 | 說明 |
+| --- | --- | --- |
+| 從貼合面起算定位;重疊只留給真配合 | 生效 | 27 例 13 修復;措辭改寫 |
+| 參數防呆要蓋住滑桿調得到的每個組合 | 生效 | 濾掉煙測後 3 例;改寫成「逐參數拉到 min/max 檢查」的做法 |
+| 滑動介面的貼合面要與行程平行,固定側蓋住全行程 | 生效 | 措辭改寫 |
+| 用全擺弧包絡決定支點位置 | 生效 | 措辭改寫 |
+| 行星/擺線的公轉+自轉拆成兩個 revolute 疊加 | 生效 | 補完被截斷的規則 |
+| 實體尺寸在建構子給齊,不對實體做算術 | 生效 | 補完被截斷的規則 |
+| edit 錨點勿選含行內註解的整行 | 畢業 | 系統提示已規定產生器註解英文、常數行裸寫 |
+| 預期貼合接觸須同步宣告於模組層 | 畢業 | 系統提示「產生器格式」「標準件幾何」段 |
+| 同零件順序運動須 couple 同相位 | 畢業 | 系統提示「運動宣告」couple 用途② |
+| 多子件標準件須逐子件帶位移 | 畢業 | 系統提示「標準件幾何」段 |
+| 參數重生合併並校驗引用鍵齊全 | 退役 | 病灶已在管線修掉 |
+| 迴轉/齒條輸出勿硬塞線性 MOTION | 退役 | 蒸餾自基礎設施錯誤,內容與現行能力相反 |
+| 驅動缸須偏置出擺臂旋轉平面 | 退役 | 只對單一構型成立 |
+
+**各機活庫要跑一次才會套用**(活庫不在版控):在 `apps/cad-chat/` 下 `npm run merge-lessons`
+(先 `-- --dry-run` 看報告),然後重啟伺服器。測試:`lessons.curate.test.js`(含「repo 內快照已是
+套用後狀態」「digest 不超預算、沒有半句規則」)、`lessons.lifecycle.test.js`。
+
+
 ## 煙測(Playwright,`tests/smoke/`)
 
 對著**跑中的 dev server** 驗證 UI 互動與免 LLM 的 API 鏈路(90+ 斷言)。前置:
@@ -1117,7 +1275,7 @@ open-project 再送;`smoke_open_dedupe.py` 已隨開檔 option C 退場,不在 O
 截圖與 handoff 檔寫 `tests/smoke/.out/`(gitignored)。單支可獨立跑
 (versions 先於 restore)。不接 `scripts/test/test.sh`(CI 面不動)。
 L4 看圖用 `_util.capture_review_views(page, prefix, motion_period_s=T)` 拍固定機位組
-(等角/前/上/右 + 行程起終點;`smoke_verify_gate.py` H 段釘住 helper),逐張 Read 對照
+(等角/前/上/右 + 行程起終點;`smoke_verify_gate.py` I 段釘住 helper),逐張 Read 對照
 缺陷類清單——協定表見 `.claude/skills/cad-chat-verify/SKILL.md`「L4 看圖固定機位協定」。
 
 給 AI 的完整驗證流程(分層金字塔、新需求擴充決策樹、失敗分流)見

@@ -20,8 +20,10 @@ G. regen 失敗回滾(臨時 fixture:w<h → 負長度 Box 必炸):滑桿套壞�
    error 事件含「已還原」、tool note 是 condense 摘要(例外行+產生器行號)、
    params_values 事件把滑桿拉回、磁碟 .py PARAMS 還原;再套合法值成功出新版
    (自癒鏈路)。
-前置:dev server 8788、models/flip_gripper 與 models/steering_box_rack_pinion
-已重生(.step.glb 為實體檔)。
+H. cylinder_tilt_platform 閉鏈連桿動畫(profile 非線性從動:連桿孔心全程與擺臂銷
+   同心;真 GLB + __cadMotion)。
+前置:dev server 8788、models/flip_gripper、models/steering_box_rack_pinion 與
+models/cylinder_tilt_platform 已重生(.step.glb 為實體檔)。
 """
 import json
 import os
@@ -393,7 +395,81 @@ with sync_playwright() as p:
 
     c.check("F 頁無 JS 錯誤", not errs_f, "; ".join(errs_f[:3]))
     page3.screenshot(path=out_path("smoke_verify_gate_gear.png"))
-    # ── H. L4 看圖固定機位組(等角/前/上/右 + 行程兩端;給人/AI 目視,不是驗證)──
+
+    # ── H. cylinder_tilt_platform 閉鏈連桿(真 GLB + __cadMotion profile 非線性從動) ──
+    # 擺臂銷繞鉸軸轉 θ;連桿先繞桿端銷擺 φ(θ)、再隨缸桿平移 s(θ)——φ、s 對 θ 非線性,
+    # 兩個從動 dof 帶 profile(閉式解取樣)。斷言:u=0.5 時連桿末端孔心仍與擺臂銷同心
+    # (線性 couple 在這裡會偏 >1mm;profile 沒被播放器吃到就是那個數字)。
+    _tglb_rel = "cylinder_tilt_platform/.cylinder_tilt_platform.step.glb"
+    _tglb_abs = os.path.join(REPO, "models", _tglb_rel)
+    if not os.path.exists(_tglb_abs) or os.path.getsize(_tglb_abs) < 1024:
+        # LFS pointer(131B)或未重生:不假裝有測到
+        c.check("H: cylinder_tilt_platform GLB 為實體檔(git lfs checkout 或 scripts/step 重生)", False,
+                "fixture 缺,H 段未執行")
+    else:
+        import math as _m
+        R_T, L_T, TH_T, N_T = 35.0, 120.0, 30.0, 32  # lever_drop / link_len / theta_max / 段數
+        HX, MY, HZ = 100.0, 100.0, 70.0              # 鉸軸;擺臂銷 home 在 (HX, MY, HZ-R)
+
+        def _chain(deg):
+            t = _m.radians(deg)
+            dz = R_T * (1 - _m.cos(t))
+            return R_T * _m.sin(t) + L_T - _m.sqrt(L_T * L_T - dz * dz), _m.degrees(_m.asin(dz / L_T))
+
+        s_end, phi_end = _chain(TH_T)
+        knots = [_chain(TH_T * i / N_T) for i in range(N_T + 1)]
+        TILT_MOTION = {
+            "schemaVersion": 1,
+            "dofs": [
+                {"id": "theta", "type": "revolute", "axis": [0, -1, 0], "pivot": [HX, MY, HZ],
+                 "angle_deg": TH_T, "period_s": 4, "moving": ["platform", "pin_plat"]},
+                {"id": "link_swing", "type": "revolute", "axis": [0, -1, 0],
+                 "pivot": [HX - L_T, MY, HZ - R_T], "angle_deg": phi_end, "period_s": 4,
+                 "couple": "theta", "moving": ["link"], "profile": [k[1] / phi_end for k in knots]},
+                {"id": "rod", "type": "linear", "axis": [1, 0, 0], "travel": s_end, "period_s": 4,
+                 "couple": "theta", "moving": ["cyl_rod", "knuckle", "pin_rod", "link"],
+                 "profile": [k[0] / s_end for k in knots]},
+            ],
+        }
+        _tglb = "/api/asset?file=" + urllib.parse.quote(_tglb_rel, safe="")
+        tilt_url = (
+            BASE + "/?glb=" + urllib.parse.quote(_tglb, safe="")
+            + "&name=cylinder_tilt&motion=" + urllib.parse.quote(json.dumps(TILT_MOTION), safe="")
+        )
+        page4 = browser.new_page(viewport={"width": 1480, "height": 920})
+        errs_h = []
+        page4.on("pageerror", lambda e: errs_h.append(str(e)))
+        page4.goto(tilt_url)
+        page4.wait_for_selector("canvas.cad-canvas", timeout=30000)
+        page4.wait_for_timeout(2500)
+        cov_h = page4.evaluate("() => window.__cadMotion && window.__cadMotion.coverage && window.__cadMotion.coverage()")
+        c.check("H: 閉鏈運動 coverage=1(7 個 moving label 都對上 record)", cov_h == 1, f"cov={cov_h}")
+        page4.evaluate("() => window.__cadMotion.applyAt(1)")  # 主動相位 0.25 → u=0.5 → θ=15°
+        ml = page4.evaluate("() => window.__cadMotion.matrixFor('link')")
+        mpin = page4.evaluate("() => window.__cadMotion.matrixFor('pin_plat')")
+        ok_h = isinstance(ml, list) and isinstance(mpin, list) and len(ml) == 16 and len(mpin) == 16
+        c.check("H: link/pin_plat 都有 effectMatrix", ok_h)
+        if ok_h:
+            def _apply(mat, pt):  # column-major 4x4 × 點
+                x, y, z = pt
+                return [mat[0] * x + mat[4] * y + mat[8] * z + mat[12],
+                        mat[1] * x + mat[5] * y + mat[9] * z + mat[13],
+                        mat[2] * x + mat[6] * y + mat[10] * z + mat[14]]
+
+            home = (HX, MY, HZ - R_T)  # 連桿末端孔心 = 擺臂銷心(home 同點)
+            eye, pin = _apply(ml, home), _apply(mpin, home)
+            gap = _m.dist(eye, pin)
+            t15 = _m.radians(TH_T / 2)
+            want = (HX + R_T * _m.sin(t15), MY, HZ - R_T * _m.cos(t15))
+            c.check("H: u=0.5 擺臂銷在閉式位置(θ=15°)", _m.dist(pin, want) < 0.02,
+                    f"pin={[round(v, 3) for v in pin]}")
+            c.check("H: u=0.5 連桿孔心與擺臂銷同心(profile 生效;線性 couple 會偏 >1mm)",
+                    gap < 0.05, f"gap={gap:.4f}mm")
+            c.check("H: 連桿有自己的擺角(非純平移)", abs(ml[2]) > 1e-3 or abs(ml[8]) > 1e-3,
+                    f"m[2]={ml[2]:.5f}")
+        c.check("H 頁無 JS 錯誤", not errs_h, "; ".join(errs_h[:3]))
+        page4.screenshot(path=out_path("smoke_verify_gate_tilt.png"))
+    # ── I. L4 看圖固定機位組(等角/前/上/右 + 行程兩端;給人/AI 目視,不是驗證)──
     # 這裡在免 LLM 的真 GLB + MOTION 頁上證明 helper 能跑;真 L4 回合後用同一支
     # helper 拍同組機位比對(協定見 cad-chat-verify SKILL.md「L4 看圖固定機位協定」)。
     # 齒輪齒條藏在 housing 內:行程兩張要先把外殼轉 ghost(拍完還原)才看得到運動件。
@@ -402,14 +478,14 @@ with sync_playwright() as p:
       chips: [{ k: '行程(特徵數)', v: '7.7 mm' }, { k: '模數', v: 'm0.7 z14' }] } })""")
     page3.wait_for_selector('.canvas-spec[data-open="true"]', timeout=5000)
     review = capture_review_views(page3, "smoke_verify_gate_gear", motion_period_s=4, ghost=("housing",))
-    c.check("H: 拍完規格面板還原為展開", page3.locator('.canvas-spec[data-open="true"]').count() == 1)
-    c.check("H: 固定機位組 6 張(4 機位 + 行程起/終點)", len(review) == 6, f"n={len(review)}")
-    c.check("H: 每張截圖落地且非空",
+    c.check("I: 拍完規格面板還原為展開", page3.locator('.canvas-spec[data-open="true"]').count() == 1)
+    c.check("I: 固定機位組 6 張(4 機位 + 行程起/終點)", len(review) == 6, f"n={len(review)}")
+    c.check("I: 每張截圖落地且非空",
             all(os.path.exists(q) and os.path.getsize(q) > 1000 for q in review))
     disp_after = page3.evaluate("() => window.__cadVisual.display()")
-    c.check("H: ghost 外殼拍完已還原(display map 空)", disp_after == {}, str(disp_after))
+    c.check("I: ghost 外殼拍完已還原(display map 空)", disp_after == {}, str(disp_after))
     st_ghost = page3.evaluate("() => { window.__cadVisual.set('housing', 'ghost'); return window.__cadVisual.stateFor('housing'); }")
-    c.check("H: __cadVisual.set(housing, ghost) 真的半透明(opacity<1)",
+    c.check("I: __cadVisual.set(housing, ghost) 真的半透明(opacity<1)",
             isinstance(st_ghost, dict) and (st_ghost.get("opacity") or 1) < 1, str(st_ghost))
     page3.evaluate("() => window.__cadVisual.set('housing', null)")
     browser.close()

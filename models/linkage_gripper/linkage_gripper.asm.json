@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "type": "assembly",
+  "generator": "linkage_gripper.py",
+  "partCount": 14,
+  "parts": [
+    {
+      "label": "body"
+    },
+    {
+      "label": "crosshead"
+    },
+    {
+      "label": "finger_r"
+    },
+    {
+      "label": "finger_l"
+    },
+    {
+      "label": "pad_r"
+    },
+    {
+      "label": "pad_l"
+    },
+    {
+      "label": "link_r"
+    },
+    {
+      "label": "link_l"
+    },
+    {
+      "label": "pivot_pin_r"
+    },
+    {
+      "label": "pivot_pin_l"
+    },
+    {
+      "label": "crank_pin_r"
+    },
+    {
+      "label": "crank_pin_l"
+    },
+    {
+      "label": "cross_pin_r"
+    },
+    {
+      "label": "cross_pin_l"
+    }
+  ],
+  "imports": [],
+  "updatedAt": "2026-11-10T00:00:00.000Z"
+}

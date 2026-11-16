@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "type": "assembly",
+  "generator": "cartesian_3d_printer.py",
+  "partCount": 53,
+  "parts": [
+    {
+      "label": "post_fl"
+    },
+    {
+      "label": "post_fr"
+    },
+    {
+      "label": "post_bl"
+    },
+    {
+      "label": "post_br"
+    },
+    {
+      "label": "bottom_front"
+    },
+    {
+      "label": "bottom_back"
+    },
+    {
+      "label": "bottom_left"
+    },
+    {
+      "label": "bottom_right"
+    },
+    {
+      "label": "top_front"
+    },
+    {
+      "label": "top_back"
+    },
+    {
+      "label": "top_left"
+    },
+    {
+      "label": "top_right"
+    },
+    {
+      "label": "base_plate"
+    },
+    {
+      "label": "y_rail_l"
+    },
+    {
+      "label": "y_block_l"
+    },
+    {
+      "label": "y_motor_plate_l"
+    },
+    {
+      "label": "y_motor_l"
+    },
+    {
+      "label": "y_pulley_l"
+    },
+    {
+      "label": "y_idler_plate_l"
+    },
+    {
+      "label": "y_idler_l"
+    },
+    {
+      "label": "y_belt_l"
+    },
+    {
+      "label": "y_rail_r"
+    },
+    {
+      "label": "y_block_r"
+    },
+    {
+      "label": "y_motor_plate_r"
+    },
+    {
+      "label": "y_motor_r"
+    },
+    {
+      "label": "y_pulley_r"
+    },
+    {
+      "label": "y_idler_plate_r"
+    },
+    {
+      "label": "y_idler_r"
+    },
+    {
+      "label": "y_belt_r"
+    },
+    {
+      "label": "gantry_plate_l"
+    },
+    {
+      "label": "gantry_plate_r"
+    },
+    {
+      "label": "x_beam"
+    },
+    {
+      "label": "x_rail"
+    },
+    {
+      "label": "x_block"
+    },
+    {
+      "label": "x_motor"
+    },
+    {
+      "label": "x_pulley"
+    },
+    {
+      "label": "x_idler"
+    },
+    {
+      "label": "x_belt"
+    },
+    {
+      "label": "x_carriage"
+    },
+    {
+      "label": "hotend_heatsink"
+    },
+    {
+      "label": "heater_block"
+    },
+    {
+      "label": "nozzle"
+    },
+    {
+      "label": "part_fan"
+    },
+    {
+      "label": "extruder"
+    },
+    {
+      "label": "z_motor"
+    },
+    {
+      "label": "z_coupling"
+    },
+    {
+      "label": "z_screw"
+    },
+    {
+      "label": "z_nut"
+    },
+    {
+      "label": "z_rod_l"
+    },
+    {
+      "label": "z_rod_r"
+    },
+    {
+      "label": "z_top_bracket"
+    },
+    {
+      "label": "bed_carrier"
+    },
+    {
+      "label": "bed"
+    }
+  ],
+  "imports": [],
+  "updatedAt": "2026-11-10T00:00:00.000Z"
+}

@@ -137,7 +137,7 @@ export function buildCadchatServer({ session, emit, signal }) {
       ),
       tool(
         "cad_source_part",
-        "選用標準件。requirement 鍵(依 family):cylinder={load_N,stroke_mm,pressure_bar?,action?=push|pull|double,body_shape?=round|square|null(圓身預設/薄型方身如 SMC CQ2/不限)} bearing={shaft_dia,radial_load_N?} stepper={torque_Nm} linear_guide={load_N,rail_len} ball_screw={load_N,travel,target_speed_mm_s,accuracy?} gripper={grip_force_N,opening_mm,pressure_MPa?}(平行氣爪) gear={torque_Nm,shaft_dia?,teeth_min?}(正齒輪,容許轉矩取彎曲/齒面耐久較小者)。",
+        "選用標準件。requirement 鍵(依 family):cylinder={load_N,stroke_mm,pressure_bar?,action?=push|pull|double,body_shape?=round|square|null(圓身預設/薄型方身如 SMC CQ2/不限)} bearing={shaft_dia,radial_load_N?} stepper={torque_Nm}(與保持扭矩比;運轉可用扭矩較低,所需扭矩先乘安全係數) linear_guide={load_N,rail_len}(load_N 直接與額定動負荷比,不含安全係數——傳單顆滑塊等效負載×3–5) ball_screw={load_N,travel,target_speed_mm_s,accuracy?,rated_rpm?}(導程由速度÷rated_rpm 反推;rated_rpm 預設 3000=伺服,步進馬達帶 600) gripper={grip_force_N,opening_mm,pressure_MPa?}(平行氣爪) gear={torque_Nm,shaft_dia?,teeth_min?}(正齒輪,容許轉矩取彎曲/齒面耐久較小者)。",
         { family: z.string(), requirement: z.record(z.string(), z.any()).optional() },
         async ({ family, requirement }) => {
           const gated = clarifyGate();
