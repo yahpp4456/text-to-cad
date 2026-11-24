@@ -59,6 +59,10 @@ export function assetMiddleware() {
       sendText(res, 403, "forbidden");
       return;
     }
+    if (/^session\.json(?:\.tmp)?$/i.test(path.basename(resolved))) {
+      sendText(res,403,"private session metadata");
+      return;
+    }
     fs.stat(resolved, (err, stat) => {
       if (err || !stat.isFile()) {
         sendText(res, 404, "not found");

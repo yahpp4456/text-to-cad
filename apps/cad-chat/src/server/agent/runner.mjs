@@ -1,5 +1,7 @@
 // 用 Agent SDK query() 驅動一個對話回合,把訊息串流映射成 SSE 事件。
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { providerFor } from "../provider.mjs";
+import { codexTurn } from "./codexTurn.mjs";
 
 import {
   REPO_ROOT,
@@ -136,7 +138,8 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
   // 介面文字系統(chat.mjs resolveLocale):prompt 的語言規則段讀 session._locale(transient,不落盤)。
   session._locale = locale === "zh-Hans" ? "zh-Hans" : "zh-Hant";
   // 回合遙測:SDK 訊息逐則餵入(no-throw),finally 發 metrics 事件 + 落 metrics.jsonl。
-  const tm = beginTurnMetrics(session, { variant: orch ? "orch" : "single" });
+  const usingCodex = providerFor(!!session.user) === "codex";
+  const tm = usingCodex ? null : beginTurnMetrics(session, { variant: orch ? "orch" : "single" });
   const orchDebug = process.env.CADCHAT_ORCH_DEBUG === "1";
 
   // per-user 分流 context:demo 身分走自備 API key + 便宜模型(絕不用訂閱 OAuth);
@@ -180,6 +183,39 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
     };
   }
 
+  const instructions = isSketch ? buildSketchSystemPrompt(session)
+    : mode === "library" ? buildLibrarySystemPrompt(session)
+    : mode === "cable" ? buildCableSystemPrompt(session) : buildSystemPrompt(session);
+  if (usingCodex) {
+    try {
+      await codexTurn({mcp, allowed, session, instructions, content, abort, emit,
+        onThread(id) {
+          session.sdkSessionId = id;
+          session._rehydrateNote = null;
+          persistSession(session);
+          emit("session", {sessionId:session.sessionId, sdkSessionId:id, mode});
+        },
+        onTool(name) {
+          emit("busy", {what:name});
+          const stage = autoStage ? nextStage(session._stageCur, "mcp__cadchat__"+name) : null;
+          if (stage != null) {
+            session._stageCur = stage;
+            emit("stage", {index:stage});
+          }
+        },
+      });
+      return {ok:true};
+    } catch (err) {
+      if (!abort.signal.aborted) {
+        recordTurnError(session, err, "exception");
+        emit("error", {message:scrubPaths(err.message)});
+      }
+      return {ok:false};
+    } finally {
+      abort.abort();
+      if (session.currentAbort === abort) session.currentAbort = null;
+    }
+  }
   const model = resolveModelFor(demoCtx);
   // packaged:釘死 SDK spawn 的 claude CLI(asar → .unpacked 改寫);dev 回 null
   // → 不傳,SDK 內建解析(行為與舊版完全一致)。
@@ -202,13 +238,7 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
-        append: isSketch
-          ? buildSketchSystemPrompt(session)
-          : mode === "library"
-            ? buildLibrarySystemPrompt(session)
-            : mode === "cable"
-              ? buildCableSystemPrompt(session)
-              : buildSystemPrompt(session),
+        append: instructions,
         // SDK ≥0.3.267 預設 snapshot:true = 系統提示只在對話首回合錄製一次,之後 resume
         // 一律送錄製版——append 變了也要等 compaction 才生效。cad-chat 的 append 每回合
         // 都會變(累積教訓摘要、已匯入元件註記、rehydrate 接續註記),必須每回合現算。
@@ -332,8 +362,8 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
       }
     }
   } catch (err) {
+    ok = false;
     if (!abort.signal.aborted) {
-      ok = false;
       recordTurnError(session, err, "exception");
       // 降級接續:resume 靠的是磁碟還原的 sdkSessionId,而 query 在 init 前就炸。
       // 但炸的原因未必是 transcript 損毀——token 過期、CLI spawn 失敗、API 瞬斷都會
@@ -376,6 +406,7 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
       }
     }
   } finally {
+    if (abort.signal.aborted) ok = false;
     // 回合遙測:metrics 事件必在 done 之前(done 由 chat.mjs sse.end 寫);遙測永不擋回合。
     try {
       const summary = finishTurnMetrics(tm, { session, ok });

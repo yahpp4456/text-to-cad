@@ -24,6 +24,7 @@ export function normalizeProject(raw) {
 // registry key 含使用者維度:同 id 不同 user = 不同 session(B 送 A 的 id 只會在
 // B 的空間 mint 全新 session,拿不到 A 的物件或目錄)。\n 不可能出現在兩段中。
 const sessions = new Map();
+export const sessionsBusy = () => Array.from(sessions.values()).some(s => s.busy || s.childProcs?.size);
 
 function mapKey(user, id) {
   return `${user || ""}\n${id}`;
@@ -121,11 +122,17 @@ const SESSION_META = "session.json";
 export function persistSession(session) {
   if (!session?.workdir) return;
   try {
+    const target = path.join(session.workdir, SESSION_META);
+    const temporary = target + ".tmp";
     fs.writeFileSync(
-      path.join(session.workdir, SESSION_META),
+      temporary,
       JSON.stringify(
         {
           mode: normalizeMode(session.mode),
+          provider: session.provider || "claude",
+          history: session.history || [],
+          uiSnapshot: session.uiSnapshot || null,
+          pendingRequest: session.pendingRequest || null,
           sdkSessionId: session.sdkSessionId || null,
           version: session.version || 0,
           lastName: session.lastName || null,
@@ -140,6 +147,7 @@ export function persistSession(session) {
       ),
       "utf8",
     );
+    fs.renameSync(temporary, target);
   } catch {
     /* 落盤失敗不擋 turn(下次寫入點再試) */
   }
@@ -180,6 +188,10 @@ function hydrateSession(session) {
   session.imports = (Array.isArray(meta.imports) ? meta.imports : []).filter(
     (rel) => typeof rel === "string" && fs.existsSync(path.join(session.workdir, rel)),
   );
+  session.uiSnapshot = meta.uiSnapshot || null;
+  session.provider = meta.provider === "codex" ? "codex" : "claude";
+  session.history = Array.isArray(meta.history) ? meta.history.filter(v=>typeof v==="string").slice(-80) : [];
+  session.pendingRequest = meta.pendingRequest || null;
   session.sdkSessionId =
     typeof meta.sdkSessionId === "string" && meta.sdkSessionId ? meta.sdkSessionId : null;
   // 專案綁定在產物守衛**之後**還原:產物不在就沒有可儲存的東西,綁定跟著作廢
@@ -220,7 +232,10 @@ export function probeSessionOnDisk(id, user = null) {
   const rawProject = live ? live.project : hasGenerator ? meta?.project : null;
   const project = normalizeProject(rawProject);
   const dirty = !!project && version > project.ver;
-  return { exists: true, lastName, version, mode, hasGenerator, hasSketch, project, dirty };
+  const record = live || meta || {};
+  return { exists: true, lastName, version, mode, hasGenerator, hasSketch, project, dirty,
+    provider:record.provider || "claude", canContinue:!!record.pendingRequest && !live?.busy,
+    hasHistory:!!record.history?.length };
 }
 
 // 啟動時 GC:刪掉超過 maxAgeDays 沒動過的 session 目錄(models/.cadchat/*)。

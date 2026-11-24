@@ -9,6 +9,7 @@ import TypeBadge from "./TypeBadge.jsx";
 // demoGuard(403),這裡純 UX。「＋ 新對話」對 demo 開放,不受影響。
 export default function Header({
   demo = false,
+  agent,
   phase,
   hasVersions,
   canvasType,
@@ -41,7 +42,7 @@ export default function Header({
         <span className="hdr-mark">穗</span>
         <span className="hdr-divider" />
         <div className="hdr-titles">
-          <span className="hdr-eyebrow">SUIYAO · CONVERSATIONAL CAD</span>
+          <span className="hdr-eyebrow" title={agent?.model}>{agent && !demo ? `${agent.provider === "codex" ? "Codex" : "Claude"} · ${agent.model} · ${agent.effort}` : "SUIYAO · CONVERSATIONAL CAD"}</span>
           <h1 className="hdr-title">對話式 CAD 產圖</h1>
         </div>
         {/* 專案 chip(綁定了才出;dirty/saved 兩態,文字單一真相在 lib/projectState)。

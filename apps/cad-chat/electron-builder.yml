@@ -16,6 +16,7 @@ files:
   - package.json
   - .env.baked
   - "!**/*.test.js"
+  - "!**/*.fixture.mjs" # 測試用替身(假 worker 等)
   - "!**/__pycache__/**"
   # 前端-only 依賴不進 runtime asar(dist 已 build 完;three 的 examples/ 很肥)
   - "!node_modules/three/**"
@@ -50,6 +51,10 @@ extraResources:
   - from: src/server/cad
     to: runtime/apps/cad-chat/src/server/cad
     filter: ["*.py"]
+  # cad-chat 專用 Python 套件(常駐 worker 等;python.mjs 以 RUNTIME_ROOT 相對路徑啟動)
+  - from: py
+    to: runtime/apps/cad-chat/py
+    filter: ["**/*.py"]
   # agent 執行期 Read 的教學文件(few-shot 品質必需)
   - from: ../../skills/cad/SKILL.md
     to: runtime/skills/cad/SKILL.md

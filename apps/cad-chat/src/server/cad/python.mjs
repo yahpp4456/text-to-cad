@@ -1,10 +1,12 @@
 // Windows-aware Python 子程序 spawn helper(腳本絕對化到 RUNTIME_ROOT,cwd=DATA_ROOT)。
 // dev 下 RUNTIME_ROOT === DATA_ROOT === repo root,行為與舊版(cwd=REPO_ROOT)一致。
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { DATA_ROOT, PYTHON_EXE, REPO_ROOT, RUNTIME_ROOT, sandboxEnv } from "../config.mjs";
+import { DATA_ROOT, PACKAGED, PYTHON_EXE, REPO_ROOT, RUNTIME_ROOT, sandboxEnv } from "../config.mjs";
+import { createWorkerPool, defaultRssCapMb, pySourceFingerprint } from "./workerPool.mjs";
 
 // ---------------------------------------------------------------------------
 // 路徑消毒:把子程序輸出(Python traceback / JSON)裡的本機絕對路徑收斂成相對/
@@ -94,21 +96,133 @@ export function condenseTraceback(stderr, { generatorName, maxLen = 300 } = {}) 
   return parts.join("\n").slice(0, maxLen * 2);
 }
 
+// 強制 Python 子程序以 UTF-8 輸出(否則 Windows 預設 code page 會讓繁中亂碼)。
+// PYTHON_COLORS=0:server 若從帶 FORCE_COLOR 的終端啟動,Python 3.13+ 會吐
+// ANSI 彩色 traceback——condenseTraceback 的行號 regex 抓不到、UI note 滿是
+// 逃逸碼(PYTHON_COLORS 優先權高於 FORCE_COLOR/NO_COLOR,關這根就夠)。
+function pythonEnv() {
+  return { ...sandboxEnv(), PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8", PYTHON_COLORS: "0" };
+}
+
+// ---------------------------------------------------------------------------
+// 常駐 worker(workerPool.mjs):載入 build123d 的腳本改在已暖好的行程裡執行,
+// 省掉每次約 8.5 秒的 import。呼叫端看到的契約不變({code, stdout, stderr})。
+//   CADCHAT_WORKER=0          全部退回每次 spawn(也是出問題時的開關)
+//   CADCHAT_MAX_WORKERS       worker 上限(預設 3)
+//   CADCHAT_WORKER_SPARE=0    不保持備用 worker(省一份約 400 MiB 的常駐記憶體)
+//   CADCHAT_WORKER_IDLE_MS    閒置多久回收(預設 15 分鐘;0 = 不回收)
+//   CADCHAT_WORKER_RSS_MB     記憶體退休上限(預設實體記憶體 1/4、至少 2048;0 = 不設限)
+// ---------------------------------------------------------------------------
+const WORKER_SCRIPT = path.resolve(RUNTIME_ROOT, "apps/cad-chat/py/cadchat_ext/worker/cad_worker.py");
+// 走 worker 的腳本(RUNTIME_ROOT 相對、正斜線)。不在清單內的維持每次 spawn:
+//   drawing_pdf.py  精確 HLR 可能以 0xC0000005 帶走整個行程,必須隔離
+//   select_part.py / cable_check.py  不載入 OCP,冷啟動只要 0.2 秒
+const WORKER_SCRIPTS = new Set([
+  "skills/cad/scripts/step",
+  "skills/cad/scripts/inspect",
+  "skills/dxf/scripts/dxf",
+  "apps/cad-chat/src/server/cad/validate.py",
+  "apps/cad-chat/src/server/cad/flat_glb.py",
+  "apps/cad-chat/src/server/cad/export_parts.py",
+]);
+// 開發時這些目錄的 .py 改了,就把已載入舊模組的 worker 換掉(打包版程式碼不會變,不檢查)。
+const WORKER_WATCH_DIRS = [
+  path.resolve(RUNTIME_ROOT, "skills/cad/scripts/packages"),
+  path.resolve(RUNTIME_ROOT, "apps/cad-chat/py"),
+];
+
+function envInt(key, fallback) {
+  const raw = String(process.env[key] ?? "").trim();
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+}
+
+export function workerEligible(scriptAbs) {
+  const rel = path.relative(RUNTIME_ROOT, scriptAbs).split(path.sep).join("/");
+  return WORKER_SCRIPTS.has(rel);
+}
+
+let pool = null;
+let workerScriptOk = null;
+
+function workerEnabled() {
+  if (process.env.CADCHAT_WORKER === "0") return false;
+  if (workerScriptOk == null) workerScriptOk = fs.existsSync(WORKER_SCRIPT);
+  return workerScriptOk;
+}
+
+function getPool() {
+  if (!pool) {
+    pool = createWorkerPool({
+      command: PYTHON_EXE,
+      args: [WORKER_SCRIPT],
+      cwd: DATA_ROOT,
+      env: pythonEnv(),
+      maxWorkers: Math.max(1, envInt("CADCHAT_MAX_WORKERS", 3)),
+      spare: process.env.CADCHAT_WORKER_SPARE !== "0",
+      idleMs: envInt("CADCHAT_WORKER_IDLE_MS", 15 * 60_000),
+      rssCapMb: envInt("CADCHAT_WORKER_RSS_MB", defaultRssCapMb()),
+      fingerprint: PACKAGED ? null : () => pySourceFingerprint(WORKER_WATCH_DIRS),
+      killFn: killTree,
+      log: (line) => console.log(`[cad-chat] ${scrubPaths(line)}`),
+    });
+  }
+  return pool;
+}
+
+// 預先暖一個 worker(伺服器啟動、對話回合開始時呼叫);立即返回,不等它就緒。
+export function prewarmPython() {
+  if (workerEnabled()) getPool().prewarm();
+}
+
+// 伺服器關閉時呼叫:砍掉所有 worker。之後若再有請求會重新建池。
+export async function disposePython() {
+  const closing = pool;
+  pool = null;
+  if (closing) await closing.dispose();
+}
+
+export function pythonWorkerStats() {
+  return pool ? pool.stats() : null;
+}
+
 // scriptDir 為 RUNTIME_ROOT 相對路徑(如 "skills/cad/scripts/step"),以 `python <dir> ...`
 // 執行。腳本在這裡統一絕對化(唯讀程式資產根);cwd=DATA_ROOT(可寫資料根)是產物
 // 相對路徑的基準——打包後兩根分離,cwd 只能當產物基準,腳本必須走絕對路徑。
-export function spawnPython(scriptDir, args, { session, onLog, signal } = {}) {
+// 永不 reject;回 {code, stdout, stderr}。
+export async function spawnPython(scriptDir, args, { session, onLog, signal } = {}) {
   const scriptAbs = path.isAbsolute(scriptDir)
     ? scriptDir
     : path.resolve(RUNTIME_ROOT, scriptDir);
+  if (workerEnabled() && workerEligible(scriptAbs)) {
+    const result = await getPool().run({
+      script: scriptAbs,
+      argv: args,
+      cwd: DATA_ROOT,
+      key: session ? `${session.user || ""}\n${session.sessionId}` : null,
+      signal,
+      // 進行中的 worker 行程記在 session 上:interrupt 砍得到、sessionsBusy 看得到。
+      onAcquire: (child) => session?.childProcs?.add(child),
+      onRelease: (child) => session?.childProcs?.delete(child),
+    });
+    if (result) {
+      const stdout = scrubPaths(result.stdout);
+      const stderr = scrubPaths(result.stderr);
+      if (stdout) onLog?.(stdout);
+      if (stderr) onLog?.(stderr);
+      return { code: result.code, stdout, stderr };
+    }
+    // null = 池目前無法服務(起不來 / 正在關閉)→ 照舊每次 spawn
+  }
+  return spawnCold(scriptAbs, args, { session, onLog, signal });
+}
+
+function spawnCold(scriptAbs, args, { session, onLog, signal } = {}) {
   return new Promise((resolve) => {
     const child = spawn(PYTHON_EXE, [scriptAbs, ...args], {
       cwd: DATA_ROOT,
-      // 強制 Python 子程序以 UTF-8 輸出(否則 Windows 預設 code page 會讓繁中亂碼)。
-      // PYTHON_COLORS=0:server 若從帶 FORCE_COLOR 的終端啟動,Python 3.13+ 會吐
-      // ANSI 彩色 traceback——condenseTraceback 的行號 regex 抓不到、UI note 滿是
-      // 逃逸碼(PYTHON_COLORS 優先權高於 FORCE_COLOR/NO_COLOR,關這根就夠)。
-      env: { ...sandboxEnv(), PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8", PYTHON_COLORS: "0" },
+      env: pythonEnv(),
       windowsHide: true,
     });
     session?.childProcs?.add(child);
@@ -152,6 +266,8 @@ export function spawnPython(scriptDir, args, { session, onLog, signal } = {}) {
 // 殺整棵程序樹(Windows 用 taskkill /T,否則 SIGKILL)。
 export function killTree(child) {
   if (!child || child.killed || child.exitCode != null) return;
+  // 給 worker 池看的記號:taskkill 是非同步的,這個行程在真正消失前不可再接請求。
+  child.cadKilled = true;
   if (process.platform === "win32") {
     try {
       spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {

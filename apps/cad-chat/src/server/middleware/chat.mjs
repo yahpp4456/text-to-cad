@@ -1,6 +1,9 @@
 // POST /api/chat — 起/續一個 agent turn,以 SSE 串流回前端。
 // body: { message?, sessionId?, pickRef?, params?, imageRefs?, orch? }
 import fs from "node:fs";
+import { markLocalSession } from "../localRecovery.mjs";
+import { providerFor, providerHealth } from "../provider.mjs";
+import { importHistory, remember, prepareHandoff } from "../handoff.mjs";
 import path from "node:path";
 
 import { isDemoAllowedMode, isDesignLike, isMode } from "../../lib/chatModes.js";
@@ -11,7 +14,7 @@ import { demoEventFilter } from "../demoEvents.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
 import { acquireBusy, getOrCreateSession, persistSession, releaseBusy } from "../sessions.mjs";
 import { consumeTurn } from "../quota.mjs";
-import { condenseTraceback, scrubPaths } from "../cad/python.mjs";
+import { condenseTraceback, prewarmPython, scrubPaths } from "../cad/python.mjs";
 import { resolveInside } from "../cad/paths.mjs";
 import { MAX_IMAGE_BYTES, sniffImageType } from "../images.mjs";
 import { MAX_STEP_BYTES, sniffStepFile } from "../stepFiles.mjs";
@@ -42,7 +45,8 @@ export function chatMiddleware() {
       sendJson(res, 405, { error: "method not allowed" });
       return;
     }
-    const auth = resolveAuth();
+    const provider = providerFor(!!req.cadchat?.user || req.cadchat?.demo);
+    const auth = provider === "claude" ? resolveAuth() : await providerHealth();
     if (!auth.agentReady) {
       sendJson(res, 503, { error: "agent_not_ready", warnings: auth.warnings });
       return;
@@ -69,6 +73,11 @@ export function chatMiddleware() {
       return;
     }
     const session = getOrCreateSession(body.sessionId, { mode: body.mode, user: req.cadchat?.user });
+    const resumingWork = body.resumeWork === true;
+    if (resumingWork) {
+      if (!session.pendingRequest || session.busy) return sendJson(res,409,{error:"沒有可接續的工作"});
+      body = {...session.pendingRequest, sessionId:session.sessionId, mode:session.mode};
+    }
     if (req.cadchat?.demo && !isDemoAllowedMode(session.mode)) {
       sendJson(res, 403, { error: "demo_mode_forbidden", mode: session.mode });
       return;
@@ -126,6 +135,9 @@ export function chatMiddleware() {
     // busy 鎖領 token:interrupt 提早放行後新 turn 可能先 begin,本 turn 的
     // finally 只准釋放自己領的鎖(見 sessions.mjs acquireBusy 註解)。
     const busyToken = acquireBusy(session);
+    // 回合一開始就暖 CAD worker:模型要想幾秒才會叫第一個工具,剛好拿來付 import 成本
+    // (已有閒置 worker 時是 no-op)。草模回合零 Python,不必暖。
+    if (session.mode !== "sketch") prewarmPython();
     // 教訓案例:本 turn 的紅色先進記憶體 buffer,finally 一次落盤(涵蓋 agent 與參數重生兩路)。
     // 持有 rec 引用:interrupt 提早放行 busy 後新 turn 可能先 begin,舊 turn 的 finally
     // 只准 flush 自己的 buffer(lessons.mjs 以身份比對防呆)。
@@ -135,7 +147,7 @@ export function chatMiddleware() {
     const imgCount = Array.isArray(body.imageRefs) ? body.imageRefs.length : 0;
     // 派工實驗回合也不進教訓管線:實驗失敗型(import/label 錯)不該汙染正式 prompt 的教訓庫,
     // 且 noteBuildSuccess 會把並行中他件的 open case 一起閉環(案例配對會錯)。
-    const orch = resolveOrch(body, session, { demo });
+    const orch = provider === "claude" && resolveOrch(body, session, { demo });
     const lessonRec = demo || orch
       ? null
       : beginTurnRecorder(session, {
@@ -148,7 +160,20 @@ export function chatMiddleware() {
     const sse = openSse(res);
     // demo:tool.code(產生器原始碼)在 server 端剝掉,不進網路(見 demoEvents.mjs)
     const filterEvent = demoEventFilter(demo);
-    const emit = (event, data) => sse.emit(event, filterEvent(event, data));
+    importHistory(session,body.legacyHistory);
+    const context = willRunLlm ? prepareHandoff(session,provider) : "";
+    if (!resumingWork) {
+      const { message, params, imageRefs, stepRefs, pickRef, pickRefs, locale, canvas, orch } = body;
+      session.pendingRequest = { message, params, imageRefs, stepRefs, pickRef, pickRefs, locale, canvas, orch };
+      remember(session, "user", session.pendingRequest);
+    }
+    markLocalSession(session);
+    persistSession(session);
+    const emit = (event, data) => {
+      if (session._busyToken !== busyToken) return;
+      if (["ai","params","spec","clarify","present"].includes(event)) remember(session,event,data.text || data);
+      sse.emit(event,filterEvent(event,data));
+    };
     session.emit = emit;
     emit("session", {
       sessionId: session.sessionId,
@@ -173,6 +198,7 @@ export function chatMiddleware() {
           if (session.currentAbort === abort) session.currentAbort = null;
         }
         // 被 interrupt 的 regen 早退時別回 ok:true 誤報成功
+        if (!abort.signal.aborted && session._busyToken === busyToken) session.pendingRequest = null;
         sse.end({ ok: !abort.signal.aborted, version: session.version });
       } else {
         const locale = resolveLocale(body);
@@ -180,11 +206,12 @@ export function chatMiddleware() {
         const { ok } = await runTurn({
           session,
           emit,
-          message: buildUserText(body, session, img, steps, locale),
+          message: context + (resumingWork ? `接續上次中斷的工作。請先核對目前產物與最新已呈現版本 v${session.version}，從尚未完成的步驟繼續。\n` : "") + buildUserText(body, session, img, steps, locale),
           imageBlocks: img.blocks,
           orch,
           locale,
         });
+        if (ok && session._busyToken === busyToken) session.pendingRequest = null;
         sse.end({ ok, version: session.version });
       }
     } catch (err) {

@@ -757,11 +757,9 @@ class InspectRefsTests(unittest.TestCase):
         assembly_step_path.write_text("ISO-10303-21; END-ISO-10303-21;\n", encoding="utf-8")
         source_identity = python_source_hash(assembly_path)
 
-        with mock.patch.object(
-            step_targets,
-            "resolve_cad_source_path",
-            return_value=("assembly", assembly_path),
-        ), self._mock_glb_topology(
+        # The generator written above is what makes this target an assembly: targets resolve
+        # from the files beside them (cadpy.catalog.lookup_source_by_cad_ref).
+        with self._mock_glb_topology(
             {
                 **_refs_manifest(assembly_cad_ref),
                 "sourceKind": "python",

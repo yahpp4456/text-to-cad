@@ -189,6 +189,64 @@ def find_source_by_cad_ref(cad_ref: str, root: Path | None = None) -> CadSource 
     return source_by_cad_ref(root).get(normalized or "")
 
 
+def find_source_for_step_path(step_path: Path, root: Path | None = None) -> CadSource | None:
+    """The source ``find_source_by_cad_ref`` would return for an existing STEP file, found
+    without walking ``root``.
+
+    A STEP file's catalog source can only be one of two things, both decided by the file's
+    own directory: the same-stem Python generator beside it (a generator always writes
+    ``<script>.step``), or the STEP file itself as an imported part. So one ``stat`` and at
+    most one parse answer what the tree walk answers after parsing every generator under
+    ``root`` -- a walk whose cost grows with every session and snapshot kept there.
+
+    Returns None exactly where the walk would not have discovered the file: outside
+    ``root``, under an ignored directory, or missing. Unlike the walk it does not notice a
+    duplicate or malformed source elsewhere in the tree, which is the point: an unrelated
+    broken generator no longer fails the lookup of this one.
+    """
+    resolved_root = (CAD_ROOT if root is None else root).resolve()
+    resolved = step_path.resolve()
+    if resolved.suffix.lower() not in STEP_SUFFIXES:
+        return None
+    try:
+        relative = resolved.relative_to(resolved_root)
+    except ValueError:
+        return None
+    if any(part in IGNORED_DISCOVERY_DIR_NAMES for part in relative.parts[:-1]):
+        return None
+    script_path = resolved.with_suffix(".py")
+    if script_path.is_file() and _looks_like_generator_script(script_path):
+        source = _read_python_source(script_path)
+        if source is not None:
+            return source
+    if not resolved.is_file():
+        return None
+    return _read_step_source(resolved, kind="part")
+
+
+def lookup_source_by_cad_ref(cad_ref: str, root: Path | None = None) -> CadSource | None:
+    """``find_source_by_cad_ref`` for one ref, found without walking ``root``.
+
+    A CAD ref is its STEP file's path under the root without the suffix, so the files that
+    can carry it are known up front: ``<ref>.py`` (a generator), ``<ref>.step`` or
+    ``<ref>.stp``. See ``find_source_for_step_path`` for what this deliberately skips.
+    """
+    normalized = normalize_cad_ref(cad_ref)
+    if not normalized:
+        return None
+    # Catalog refs are always relative to the root. A ref spelled from an absolute path
+    # (a Windows drive survives normalization) never matched one, and must not start to:
+    # joined onto the root it would simply replace it.
+    if Path(normalized).is_absolute() or Path(normalized).drive:
+        return None
+    base = (CAD_ROOT if root is None else root).resolve() / normalized
+    for suffix in STEP_SUFFIXES:
+        source = find_source_for_step_path(base.with_name(base.name + suffix), root)
+        if source is not None:
+            return source
+    return None
+
+
 def find_source_by_source_ref(source_ref: str, root: Path | None = None) -> CadSource | None:
     normalized = normalize_source_ref(source_ref)
     if not normalized:

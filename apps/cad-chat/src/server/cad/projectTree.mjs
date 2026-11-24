@@ -18,7 +18,7 @@ import path from "node:path";
 // (轉檔區取名 .exports 帶點前綴,避免與手工專案裡使用者自己的 exports/ 目錄撞名被丟。)
 // uploads/ 跳過:聊天附件(參考圖/客戶 STEP)屬於 session,產生器只引用 imported/;
 // 帶出去會把附件塞進 git 追蹤的專案目錄。
-const SKIP_NAMES = new Set(["__pycache__", "versions", ".exports", "session.json", "uploads"]);
+const SKIP_NAMES = new Set(["__pycache__", "versions", ".exports", "session.json", "session.json.tmp", "uploads"]);
 
 export function shouldSkipProjectEntry(name) {
   if (SKIP_NAMES.has(name)) return true;

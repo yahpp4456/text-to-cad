@@ -68,6 +68,37 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
 
 ## 環境 gotcha(踩過的坑,先讀省一小時)
 
+- **常駐 CAD worker(2026-11-24)**:載入 build123d 的腳本改在常駐 Python 行程裡執行
+  (`cad/python.mjs` 分流 → `cad/workerPool.mjs` → `py/cadchat_ext/worker/cad_worker.py`;
+  README「常駐 CAD worker」章)。動這條路要知道:
+  - **兩種設定都要驗**:`CADCHAT_WORKER=0`(每次 spawn)與預設(worker)各起一個實例跑全套
+    煙測。只驗一邊會漏掉「常駐才會出現」的問題(模組殘留、`.pyc` 過期、輸出串到下一個
+    請求)。對照量測用 `node apps/cad-chat/tests/bench/worker_bench.mjs`——**機器要閒**,
+    同時跑測試會把冷啟動拖到 50 秒以上,數字全廢。
+  - **必跑**:L1 `cad/frames.test.js` + `cad/workerPool.test.js`(假 worker,秒級)、
+    `apps/cad-chat/tests/test_worker.py`(真 worker,~2.5 分)。動 `cadpy.generation` /
+    `scripts/step` / `scripts/inspect` 的模組層狀態或 import 結構 → 也跑 `test_worker.py`
+    (它斷「worker 與冷啟動逐位元組相同」)。
+  - **改 `cadpy` 後不必重啟 dev server**(同步 vendored 複本後,池偵測到 `.py` 變動會換新
+    worker);`src/server/**.mjs` 仍然要重啟。
+  - **Windows 上冷啟動的 Python 在管線上輸出 `\r\n`**,worker 與它一致。測試比輸出要嘛
+    `splitlines()`、要嘛直接拿冷啟動的位元組來比,別寫死 `\n`。
+  - **venv 的 `python.exe` 是轉接器**,真正的直譯器是它的子行程:worker 回報的 pid ≠
+    `child.pid`。砍行程一律 `killTree`(`taskkill /T`),只砍 `child.pid` 會留下真正的直譯器。
+  - **新入口腳本要不要走 worker**:看 `python.mjs` 的 `WORKER_SCRIPTS`。會崩潰帶走行程的
+    (如 `drawing_pdf.py` 的精確 HLR)與不載入 OCP 的輕腳本維持 spawn。
+- **回歸基準 `scripts/dev/regress_fixtures.py`(2026-11-24)**:把 `models/` 下全部產生器
+  (31 個)建一次,記錄幾何(零件數/包絡/體積/面數)、`validate.py` 各檢查結果、管線產出,
+  `--compare <基準>` 比對(幾何與檢查結果不同 = FAIL、面數不同 = WARN、耗時不比)。升級
+  build123d/OCP、動 `cadpy.generation` 或 `geometry_checks` 前後各跑一次:
+  `PYTHONUTF8=1 .venv/Scripts/python.exe scripts/dev/regress_fixtures.py --pipeline --jobs 6 --out tmp/regress/<名>.json [--compare tmp/regress/<基準>.json]`
+  (~15 分;`--python` 可指定另一個 venv 的直譯器)。**`smc_cg1_cylinder` 與
+  `smc_cq2_cylinder` 的 validate 原本就不通過**,不是你弄壞的。
+- **`scripts/test/test-python.sh` 在 Windows 要帶 `PYTHON_BIN=$PWD/.venv/Scripts/python.exe`**
+  (它預設找 `.venv/bin/python`),而且用 `set -e`:bambu-labs skill 有 2 個既有 ERROR
+  (Windows 跑不了測試用的假腳本),腳本到那裡就停,後面的 cad/dxf/… 測試不會跑。要全跑
+  用 `bash scripts/dev/run-python-suites.sh`:逐組跑、不因一組失敗而中止、每組印一行
+  PASS/FAIL 摘要(含 `apps/cad-chat/tests/test_*.py`;完整 log 在 `tmp/pysuite-*.log`)。
 - **PYTHONUTF8=1 必帶**:Windows cp950 對 ✓/✗/中文輸出直接 UnicodeEncodeError。
 - **spawned Python 的彩色 traceback 會咬人(2026-07-14)**:dev server 從帶
   FORCE_COLOR 的終端(agent harness、部分 CI)啟動時,Python 3.13+ 對 pipe 也吐

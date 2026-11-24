@@ -70,6 +70,21 @@ powershell -ExecutionPolicy Bypass -File scripts\build-python-runtime.ps1
 `cadquery-ocp` 會拉 vtk ~300MB,`--no-deps` 讓 vtk 從頭不進來);constraints 釘
 dev venv 現版防漂移。
 
+## 常駐 CAD worker 與打包(2026-11-24)
+
+- worker 的程式在 `py/cadchat_ext/`,由 `electron-builder.yml` 的 extraResources 帶到
+  `resources/runtime/apps/cad-chat/py/`(`python.mjs` 以 RUNTIME_ROOT 相對路徑啟動它)。
+  **在 `py/` 下新增子套件不必改設定**(整個目錄的 `*.py` 都帶),但新增非 `.py` 的資料檔要
+  放寬 filter。
+- embeddable Python 以隔離模式執行,**忽略 `PYTHONPATH`**。所以 `cadchat_ext` 不靠環境變數
+  找到:`cad_worker.py` 啟動時自己把 `py/` 放進 `sys.path`。之後其他要 import `cadchat_ext`
+  的入口腳本也必須這樣做。
+- 打包版不做「程式碼改了就換新 worker」的檢查(程式碼不會變)。
+- 測試用替身 `src/server/**/*.fixture.mjs` 已從 asar 排除。
+- **打包版尚未實測**(階段 1 只在 dev 驗過)。出安裝檔前要冒煙:開一個既有專案、拉一次
+  滑桿,伺服器的 console 輸出應出現 `worker#1 就緒`。若只看到 `worker 連續啟動失敗`,代表
+  `py/` 沒帶到或 runtime 壞了——功能仍可用(退回每次 spawn),但每步多 8 秒。
+
 ## 快速迭代(不出安裝檔)
 
 ```bash

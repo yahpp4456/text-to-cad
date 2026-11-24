@@ -21,6 +21,10 @@ API key）驅動 repo 既有 text-to-cad pipeline → 真 STEP/GLB + 幾何驗�
   spawn Python 要帶 `PYTHONUTF8=1`（否則 cp950 炸繁中/✓）。
 - **`src/server/**.mjs` 沒有 HMR**：改完必須重啟 dev server 才生效。
   前端 jsx/css/js 有 Vite HMR。
+- **載入 build123d 的腳本跑在常駐 worker 裡**（`cad/workerPool.mjs` +
+  `py/cadchat_ext/worker/`；README「常駐 CAD worker」章）：`spawnPython` 的契約沒變，
+  但行程不再是一次性的——別在入口腳本或 `cadpy` 的模組層放「假設每次都是新行程」的
+  狀態。`CADCHAT_WORKER=0` 退回每次 spawn。
 - 動到 `packages/cadpy*`（Python 根源）後跑 `scripts/dev/sync-vendored.sh`
   同步 8 份獨立複本（本 fork 無 symlink），再回驗證表。
 
@@ -45,7 +49,10 @@ LLM 回合的 `smoke_queue_live`。dev 預覽捷徑：
     UI + `cad_*` 實跑 `.venv` 的 `scripts/step`/`scripts/inspect`/`geometry_checks`）。
     白名單沙箱：只允許 Read/Glob/Grep + cad 工具，**整個非同步家族被 disallow**
     （Agent/Task/ScheduleWakeup/Workflow… 不經 canUseTool，只能整個移除）。
-  - `cad/`：pipeline 接線 + Python spawn（`python.mjs` 有 `scrubPaths` 遮絕對路徑）。
+  - `cad/`：pipeline 接線 + Python 執行（`python.mjs` 是咽喉點：`scrubPaths` 遮絕對路徑、
+    分流到常駐 worker 池或一次性 spawn）。
+- `py/cadchat_ext/`：cad-chat 專用的 Python 套件（常駐 worker 等）。**不鏡像**到 vendored
+  複本；通用且被 `cadpy.generation` / `cadpy.parts` 用到的才放 `packages/cadpy`。
   - `middleware/`：chat(SSE)/interrupt/health/asset/files/project。
 - `src/`（React + Vite）：SUIYAO 6 區；3D 用 `packages/cadjs` three.js 載真 GLB，
   物件屬性/幾何點選來自 GLB 內嵌的 STEP topology。**three 必須單一副本**

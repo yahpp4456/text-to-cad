@@ -1,13 +1,13 @@
 # cad-chat — 本機網頁版「對話式 CAD 產圖」
 
 在瀏覽器用自然語言描述零件 → 看 AI 逐步思考/動手 → 真實 3D CAD 模型即時出現 →
-用文字 / 點選幾何 / 拉參數迭代。後端用 **Claude Agent SDK**(訂閱 OAuth 或 API key
-雙模式),驅動 repo 既有的 text-to-cad pipeline 產出真 STEP/GLB 並跑幾何驗證。
+用文字 / 點選幾何 / 拉參數迭代。Windows 本機可用 **Codex CLI**（ChatGPT 登入）或 **Claude Agent SDK**（訂閱 OAuth 或 API key
+雙模式）驅動既有的 text-to-cad pipeline，產出 STEP/GLB 並跑幾何驗證。
 
 設計來自 Claude Design 稿 `cad-chat.dc.html`(SUIYAO 淺色企業風);產品定義見
 `ref/web-agent-ui-design-brief.md`。
 
-## 一次性設定(認證,二選一)
+## Claude 認證（主代理或教訓蒸餾使用，二選一）
 
 **A. 自用(綁訂閱)** — 需 Claude Pro / Max / Team / Enterprise:
 
@@ -36,6 +36,14 @@ API key,寫進 `.env.local` 的 `ANTHROPIC_API_KEY=`。按量計費(Commercial T
 >
 > 兩者都設時採 **API key**;呼叫 Agent 時只傳入選中的那一種憑證(`agentEnv`),
 > Python 子程序(跑 LLM 產生器碼)一律看不到任何憑證(`sandboxEnv`)。
+
+## Windows 本機選擇代理
+
+在 repo 根目錄雙擊「用 Codex 啟動.cmd」或「用 Claude 啟動.cmd」。兩者沿用同一網址與工作目錄。再次啟動相同代理會開啟現有站台；切換時若有工作執行中，選「是」等待完成或「否」取消。手動啟動的伺服器須由原啟動者關閉，才能在相同連接埠使用啟動器。
+
+Codex 使用本機 CLI 的 ChatGPT 登入，模型固定為 `gpt-6.2-astra`，所有模式皆為 `high`。Claude 使用原有的模型與 effort 設定。確認主代理可看頁首或 `/api/health`。教訓蒸餾沿用 Claude，需要 Claude 認證，可獨立於主對話使用。
+
+開啟舊對話會還原紀錄及模型。跨代理時，下次操作會帶入工作區、最近對話及模型資訊；同代理可續用原生對話。若回合遭中斷，可點「繼續上次工作」重試上次的需求。
 
 ## 啟動
 
@@ -152,6 +160,103 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
 - 對話 scratch(`models/.cadchat/`)已被 `.gitignore` 忽略。**啟動時 GC** 會刪掉
   超過 `CADCHAT_GC_DAYS`(預設 7)天沒動過的 session 目錄;設 0 停用。中斷留下的
   半成品在期限內保留 —— rehydrate 與 edits 修復靠它們。
+
+## 常駐 CAD worker(2026-11-24;上游借鏡藍圖階段 1)
+
+建模、驗證、讀幾何事實原本每次都起一個新的 Python 行程,光 `import build123d` 就要
+8–10 秒,與模型大小無關。現在這些腳本改在**已暖好的常駐行程**裡執行,import 只付一次。
+藍圖與逐項決策見 [`docs/upstream-review-2026-11-16.md`](docs/upstream-review-2026-11-16.md)。
+
+實測(本機,`tests/bench/worker_bench.mjs`,中位數,秒):
+
+| 操作 | 每次起新行程 | 常駐 worker |
+|---|---|---|
+| 建鈑金件(`sheet_u_bracket`) | 9.2 | 0.65 |
+| 驗證鈑金件 | 7.1 | 0.48 |
+| 驗證 + 讀幾何事實(精算/匯出閘/開專案的形狀) | 7.4 | 0.68 |
+| 建 15 件線性滑台(`linear_stage`) | 9.6 | 1.6 |
+| 驗證線性滑台(含干涉與掃掠,真的在算) | 13.8 | 7.3 |
+| 讀幾何事實(`inspect`) | 1.5 | 0.2–0.3 |
+
+worker 啟動一次約 7–9 秒、常駐約 410 MiB。
+
+### 做法
+
+- **契約不變**:`spawnPython`(`cad/python.mjs`)仍回 `{code, stdout, stderr}`,19 個呼叫點
+  沒有改。它在內部分流:清單內的腳本(`scripts/step`、`scripts/inspect`、`scripts/dxf`、
+  `validate.py`、`flat_glb.py`、`export_parts.py`)送進 worker;其餘照舊每次 spawn——
+  `drawing_pdf.py` 的精確 HLR 可能以 0xC0000005 帶走整個行程,必須隔離;`select_part.py`
+  與 `cable_check.py` 不載入 OCP,冷啟動只要 0.2 秒。
+- **worker**(`py/cadchat_ext/worker/cad_worker.py`):以 `runpy` 把既有入口腳本當
+  `__main__` 執行,語意等同 `python <script> <argv…>`。輸出在 **fd 層**擷取(請求期間
+  fd 1/2 改接暫存檔),Python 與 OCCT 的 C 層輸出都收得到,回傳內容與冷啟動**逐位元組
+  相同**(`tests/test_worker.py` 釘住)。
+- **協定**(`cad/frames.mjs` ↔ `py/cadchat_ext/worker/frames.py`):一行 JSON,帶 `bytes`
+  時其後緊接那麼多個位元組。取自上游 `engine/frames.py`(MIT)。
+- **池**(`cad/workerPool.mjs`):worker 可互換,任何閒置的都能接任何請求;同一個 session
+  優先回到上次那個。有請求在跑時另外保持一個暖好的備用,所以 `runStep` 的「STEP + 攤平」
+  與 `runValidate` 的「inspect + validate」仍可平行。
+
+### 請求之間不殘留狀態
+
+每次請求後還原 `sys.path`、`sys.argv`、`os.environ`、工作目錄,並把請求期間載入、
+不屬於直譯器安裝目錄或 `cadpy` 的模組清掉(產生器、同目錄零件模組、各工具自己的 `cli`)。
+兩個只有常駐才會出現的問題已處理並有測試:
+
+- **同一秒內重寫同長度的 `.py`**(滑桿連拉):`.pyc` 以「秒級 mtime + 檔案大小」判新舊,
+  會載到舊碼。worker 在重模組載完後把 `sys.pycache_prefix` 指到空目錄,之後一律由原始碼
+  編譯,也不在工作目錄留 `__pycache__`。
+- **`scripts/step` 與 `scripts/inspect` 各有一個頂層 `cli.py`**:不清模組的話第二個工具會
+  拿到第一個的 `cli`。
+
+### 生命週期
+
+- **預熱**:伺服器進入點(`server.mjs`、Electron 的 `entry.child.mjs`)啟動後暖一個;每個
+  非草模的對話回合開始時也呼叫一次(已有閒置 worker 時是 no-op)。刻意不放在
+  `startServer()` 裡——L1 測試會反覆 `startServer({port:0})`。
+- **中止與逾時**:kernel 呼叫無法從行程內打斷,所以 `signal` 中止一律**砍掉 worker**,池再
+  補一個。進行中的 worker 行程記在 `session.childProcs`,`/api/interrupt` 與 `sessionsBusy()`
+  照舊運作。
+- **崩潰**:請求進行中行程沒了 → 回它的 exit code 與死前寫出的輸出(讀擷取檔),池自動恢復。
+- **記憶體退休**:每個請求回報常駐記憶體,超過上限就在請求之間換新。
+- **閒置回收**:預設 15 分鐘。
+- **程式碼改了就換新**(僅開發):`skills/cad/scripts/packages` 或 `py/` 下的 `.py` 有變動,
+  已載入舊模組的 worker 不再接請求。所以改 `cadpy`(同步後)不必重啟 dev server;
+  `src/server/**.mjs` 仍然要。
+- **關閉**:`startServer().close()` 與代理切換的 drain 會收掉 worker;worker 讀到 stdin EOF
+  也會自己結束,伺服器被強制終止時不留孤兒(實測)。
+- **起不來就退回**:worker 連續兩次啟動失敗,池暫停 60 秒,期間照舊每次 spawn。
+
+### 環境變數
+
+| 變數 | 預設 | 作用 |
+|---|---|---|
+| `CADCHAT_WORKER` | 開 | 設 `0` 全部退回每次 spawn(出問題時的開關,也用來做對照量測) |
+| `CADCHAT_MAX_WORKERS` | 3 | worker 上限;超過的請求排隊 |
+| `CADCHAT_WORKER_SPARE` | 開 | 設 `0` 不保持備用(少一份約 410 MiB) |
+| `CADCHAT_WORKER_IDLE_MS` | 900000 | 閒置多久回收;`0` 不回收 |
+| `CADCHAT_WORKER_RSS_MB` | 實體記憶體 1/4,至少 2048 | 記憶體退休上限;`0` 不設限 |
+
+### 連帶修掉的:`inspect` 每次掃整個資料根
+
+常駐之後才看得出來:`inspect` 在暖行程裡仍要 5–7 秒。原因是 `cadpy.step_targets` 為了
+解析**一個** STEP 目標,會把整個工作目錄走一遍(開發時是整個 repo,打包後是使用者資料
+目錄),對每個像產生器的 `.py` 做語法解析,而且一次呼叫走兩遍。成本隨累積的 session 與
+版本快照成長,任何一個不相干的壞產生器也會讓查找失敗。
+
+改成局部查找(`cadpy.catalog.lookup_source_by_cad_ref` / `find_source_for_step_path`):
+一個目標的來源只可能是同目錄同名的產生器,或 STEP 檔自己。精算、匯出閘、開專案、回退、
+`cad_measure`、`cad_align`、匯入元件都受益。`test_step_target_resolution.py` 釘住「結果與
+全樹掃描相同」。
+
+### 驗證
+
+- L1:`cad/frames.test.js`、`cad/workerPool.test.js`(用 `cad/fakeWorker.fixture.mjs`,真的
+  子行程但不載入 Python:排隊、親和、備用、中止、崩潰、退休、退避、過期換新、關閉)。
+- Python:`tests/test_worker.py`(起真 worker,約 2.5 分鐘)。
+- 回歸:`scripts/dev/regress_fixtures.py`——把 `models/` 下全部產生器建一次並與基準比對
+  (幾何、驗證結果、管線產出),升級 kernel 或動建模管線前後各跑一次。
+- L3:全套煙測在 `CADCHAT_WORKER=0` 與預設(開)兩種設定下都要全過。
 
 ## per-user 資料隔離(2026-07-15;VM 部署啟用,dev 零回歸)
 

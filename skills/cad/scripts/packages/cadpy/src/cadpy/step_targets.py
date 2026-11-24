@@ -3,9 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from cadpy.assembly_spec import REPO_ROOT, find_step_path, resolve_cad_source_path
+from cadpy.assembly_spec import REPO_ROOT
 from cadpy.cad_ref_syntax import normalize_cad_path, parse_cad_tokens
-from cadpy.catalog import find_source_by_cad_ref
+
+# Targets resolve through lookup_source_by_cad_ref, never the tree walk
+# (find_source_by_cad_ref): a target names the only files that can be its source, while the
+# walk parses every generator under the CAD root -- twice per call, before this -- and so
+# slows with every session and snapshot kept there, and fails on any unrelated broken one.
+from cadpy.catalog import lookup_source_by_cad_ref
 from cadpy.glb_topology import (
     STEP_EDGE_BARYCENTRIC_ATTRIBUTE,
     STEP_EDGE_CLASS_ATTRIBUTE,
@@ -119,14 +124,21 @@ def entry_target_from_target(target: str) -> EntryTarget:
     return EntryTarget(normalized)
 
 
+def find_step_path(cad_ref: str) -> Path | None:
+    """``assembly_spec.find_step_path`` for one ref, without the tree walk."""
+    source = lookup_source_by_cad_ref(cad_ref)
+    if source is not None and source.kind in {"part", "assembly"} and source.step_path is not None:
+        return source.step_path.resolve()
+    return None
+
+
 def step_path_from_target(target: str) -> Path:
     raw_step_path = _raw_step_path(str(target or "").strip())
     if raw_step_path is not None:
         return raw_step_path
 
     entry_target = entry_target_from_target(target)
-    lookup_cad_path = _lookup_cad_path(entry_target.cad_path)
-    step_path = find_step_path(lookup_cad_path)
+    step_path = find_step_path(entry_target.cad_path)
     if step_path is not None:
         return step_path
 
@@ -142,8 +154,7 @@ def resolve_step_target(target: str) -> ResolvedStepTarget:
     cad_path = entry_target.cad_path
     raw_step_path = _raw_step_path(str(target or "").strip())
     if raw_step_path is not None:
-        lookup_cad_path = _lookup_cad_path(cad_path)
-        source = find_source_by_cad_ref(lookup_cad_path)
+        source = lookup_source_by_cad_ref(cad_path)
         resolved_step_path = source.step_path if source is not None else None
         if source is not None and resolved_step_path is not None and resolved_step_path.resolve() == raw_step_path.resolve():
             return ResolvedStepTarget(
@@ -159,8 +170,7 @@ def resolve_step_target(target: str) -> ResolvedStepTarget:
             step_path=raw_step_path,
         )
 
-    lookup_cad_path = _lookup_cad_path(cad_path)
-    source = find_source_by_cad_ref(lookup_cad_path)
+    source = lookup_source_by_cad_ref(cad_path)
     if source is not None and source.kind in {"part", "assembly"}:
         if source.step_path is None:
             raise CadRefError(f"STEP file not found for ref '{cad_path}'.")
@@ -462,17 +472,6 @@ def _topology_artifact_error(
             f"{REGENERATE_STEP_PROMPT}"
         ),
     )
-
-
-def _cad_path_lookup_candidates(cad_path: str) -> tuple[str, ...]:
-    return (cad_path,) if cad_path else ()
-
-
-def _lookup_cad_path(cad_path: str) -> str:
-    for candidate in _cad_path_lookup_candidates(cad_path):
-        if resolve_cad_source_path(candidate) is not None:
-            return candidate
-    return cad_path
 
 
 def _relative_to_repo(path: Path) -> str:

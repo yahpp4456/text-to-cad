@@ -38,6 +38,7 @@ test("persist → 同 id 重掛還原全欄位(含 _resumedFromDisk)", () => {
     const s = getOrCreateSession(id); // Map 沒有這 id → 走 hydrate
     assert.equal(s.sessionId, id);
     assert.equal(s.sdkSessionId, "uuid-abc");
+    assert.equal(s.provider, "claude");
     assert.equal(s.version, 5);
     assert.equal(s.lastName, "foo");
     assert.equal(s.lastPartCount, 3);
@@ -46,6 +47,26 @@ test("persist → 同 id 重掛還原全欄位(含 _resumedFromDisk)", () => {
     assert.equal(s._resumedFromDisk, true);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("重啟可取回 Codex thread、交接紀錄與上次中斷的工作", () => {
+  const id = freshId("provider");
+  const workdir = makeDir(id);
+  try {
+    const pendingRequest = {message:"把左側安裝孔擴到 8 mm"};
+    const history = ["user 左側兩孔是安裝孔"];
+    persistSession({workdir,provider:"codex",sdkSessionId:"thread-a",pendingRequest,history});
+    const session = getOrCreateSession(id);
+    assert.equal(session.provider,"codex");
+    assert.equal(session.sdkSessionId,"thread-a");
+    assert.deepEqual(session.pendingRequest,pendingRequest);
+    assert.deepEqual(session.history,history);
+    assert.equal(probeSessionOnDisk(id).canContinue,true);
+    session.busy = true;
+    assert.equal(probeSessionOnDisk(id).canContinue,false);
+  } finally {
+    fs.rmSync(workdir, {recursive:true, force:true});
   }
 });
 

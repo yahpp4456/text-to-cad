@@ -14,6 +14,7 @@ import { apiUrl } from "@/lib/apiBase";
 export function useChatStream(dispatch, modeRef) {
   const ctrlRef = useRef(null);
   const sessionIdRef = useRef(null);
+  const recoveredHistory = useRef(null);
   const busyRef = useRef(false); // 本地 in-flight 旗標(state.running 的同步鏡像,免等 render)
   const queueRef = useRef([]);
   const sendRef = useRef(null); // 佇列 flush 要在 send 內部呼叫自己 → 走 ref 繞過宣告順序
@@ -50,6 +51,8 @@ export function useChatStream(dispatch, modeRef) {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             message: text,
+            resumeWork: payload.resumeWork || undefined,
+            legacyHistory: recoveredHistory.current?.id === sentWith ? recoveredHistory.current.items : undefined,
             sessionId: sessionIdRef.current,
             mode: modeRef?.current || undefined,
             // 介面文字系統(zh-Hant/zh-Hans):server 據此加 prompt 語言規則、括註文字系統
@@ -165,8 +168,9 @@ export function useChatStream(dispatch, modeRef) {
   // 換到「不同的」session(如開專案)時,針對舊 session 的排隊訊息/重試 timer 一併
   // 作廢——send 是開火時才讀 sessionIdRef,不清會把舊訊息打進新 session。
   const setSessionId = useCallback(
-    (id) => {
+    (id, items) => {
       if (!id) return;
+      recoveredHistory.current = items ? {id,items:items.slice(-80).map(({type,text,q,chips}) => ({type,text:text?.slice(0,2500),q,chips}))} : null;
       if (sessionIdRef.current && id !== sessionIdRef.current) clearPendingSends();
       sessionIdRef.current = id;
     },
@@ -177,6 +181,7 @@ export function useChatStream(dispatch, modeRef) {
   const resetSession = useCallback(() => {
     clearPendingSends();
     ctrlRef.current?.abort();
+    recoveredHistory.current = null;
     sessionIdRef.current = null;
   }, [clearPendingSends]);
 

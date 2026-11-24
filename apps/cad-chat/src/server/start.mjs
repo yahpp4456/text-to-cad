@@ -15,18 +15,19 @@ import {
   loadDotEnvLocal,
   demoAllowOauth,
   demoReady,
-  resolveAuth,
   resolveDemoApiKey,
   resolveDemoModel,
   resolveDemoQuota,
   resolveGcDays,
-  resolveModel,
   resolvePort,
 } from "./config.mjs";
 import { sendText } from "./httpUtil.mjs";
-import { gcAllSessions, gcDemoUsers } from "./sessions.mjs";
+import { disposePython } from "./cad/python.mjs";
+import { gcAllSessions, gcDemoUsers, sessionsBusy } from "./sessions.mjs";
 import { DEMO_MINT_PREFIX, isDemoUser } from "./users.mjs";
 import { userContextMiddleware } from "./middleware/userContext.mjs";
+import { providerHealth } from "./provider.mjs";
+import { distillInFlight } from "./lessons.distill.mjs";
 import { demoGuardMiddleware } from "./middleware/demoGuard.mjs";
 import { healthMiddleware } from "./middleware/health.mjs";
 import { assetMiddleware } from "./middleware/asset.mjs";
@@ -73,7 +74,33 @@ export async function startServer({ dev = false, port } = {}) {
     );
   }
 
+  const launcherToken = process.env.CADCHAT_LAUNCH_TOKEN;
+  delete process.env.CADCHAT_LAUNCH_TOKEN;
+  let draining = false;
+  let activeWrites = 0;
   const middlewares = [
+    (req,res,next) => {
+      if (launcherToken && req.url === "/__cadchat/launcher" && req.headers.authorization === "Bearer "+launcherToken) {
+        const busy = activeWrites > 0 || sessionsBusy() || distillInFlight();
+        const shutdown = req.method === "POST" && !busy;
+        if (shutdown) draining = true;
+        res.writeHead(busy && req.method === "POST" ? 409 : 200, {"content-type":"application/json"});
+        res.end(JSON.stringify({provider:process.env.CADCHAT_PROVIDER || "claude",busy}));
+        if (shutdown) {
+          disposePython(); // 常駐 CAD worker 一併收掉(不等;下面的 exit 是底線)
+          server.close(() => process.exit(0));
+          // HMR websockets can outlive the HTTP listener.
+          setTimeout(() => process.exit(0), 600).unref();
+        }
+        return;
+      }
+      if (draining) return sendText(res,503,"正在切換代理");
+      if (req.method === "POST") {
+        activeWrites++;
+        res.once("close", () => { activeWrites--; });
+      }
+      next();
+    },
     userContextMiddleware(), // 首位:所有 API 依賴 req.cadchat(user 資料根)
     demoGuardMiddleware(), // 緊接身分之後:demo 帳號的端點底線(health 不在擋單)
     healthMiddleware(),
@@ -143,11 +170,11 @@ export async function startServer({ dev = false, port } = {}) {
   actualPort = server.address().port;
   const url = `http://${HOST}:${actualPort}/`;
 
-  const auth = resolveAuth();
+  const auth = await providerHealth();
   console.log(`對話式 CAD 伺服器啟動於 ${url}  (${dev ? "dev" : "serve"})`);
   console.log(
     `認證:${
-      auth.authMode === "apikey"
+      auth.authMode === "chatgpt" ? "ChatGPT ✓" : auth.authMode === "apikey"
         ? "API key ✓(Commercial Terms 按量計費)"
         : auth.authMode === "oauth"
           ? "訂閱 OAuth ✓(限本人自用)"
@@ -155,7 +182,7 @@ export async function startServer({ dev = false, port } = {}) {
     }`,
   );
   console.log(
-    `模型:${resolveModel() || "(未設定 CADCHAT_MODEL — 用你 Claude Code CLI 的預設,會跟著 /model 變)"}`,
+    `代理:${auth.provider}，模型:${auth.model}，effort:${auth.effort}`,
   );
   console.log(
     gcDays > 0
@@ -193,6 +220,7 @@ export async function startServer({ dev = false, port } = {}) {
       server.closeAllConnections?.(); // keep-alive 連線不斷,close 會等到天荒地老
       await new Promise((resolve) => server.close(resolve));
       if (vite) await vite.close();
+      await disposePython(); // 常駐 CAD worker(若有起過)不留孤兒
     },
   };
 }

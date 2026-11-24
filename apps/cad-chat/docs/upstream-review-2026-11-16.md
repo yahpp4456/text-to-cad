@@ -38,6 +38,28 @@
 
 上游文件寫的 kernel 載入是 2.5–3 秒,本機是它的三倍。差距的原因沒有查(可能是 build123d 0.11 的相依較重,或 Windows Defender 掃描),但不影響結論:常駐行程把這筆成本從「每次」變成「一次」。
 
+### 2.1 階段 1 完成後重量(2026-11-24)
+
+`apps/cad-chat/tests/bench/worker_bench.mjs`,同一台機器、機器閒置、各 3 次取中位數(秒):
+
+| fixture | 操作 | 每次起新行程 | 常駐 worker | 倍數 |
+|---|---|---|---|---|
+| `sheet_u_bracket`(單件鈑金) | build | 9.16 | 0.65 | 14× |
+| | validate | 7.08 | 0.48 | 15× |
+| | inspect | 1.57 | 0.30 | 5× |
+| | validate + inspect(同時送出) | 7.41 | 0.68 | 11× |
+| `linear_stage`(15 件) | build | 9.64 | 1.61 | 6× |
+| | validate | 13.81 | 7.26 | 1.9× |
+| | inspect | 1.54 | 0.22 | 7× |
+| | validate + inspect | 14.64 | 8.00 | 1.8× |
+
+- worker 啟動約 7–9 秒(只付一次),常駐約 410 MiB。
+- `linear_stage` 的 validate 剩下的 7 秒是真的在算(重跑 `gen_step`、干涉 Boolean、掃掠),
+  屬於階段 2(不重跑產生器)與階段 3(篩選與 pair 快取)要處理的部分。
+- `inspect` 的「每次起新行程」原本是 6–11 秒。常駐後它仍要 5–7 秒,才發現不是 import,
+  而是 `cadpy.step_targets` 每次把整個資料根走兩遍(詳見 README「常駐 CAD worker」章末段)。
+  改成局部查找後才是表中的數字;這一項藍圖沒有列,是實作時量出來的。
+
 ## 3. 借鏡清單與決策
 
 決策欄的三種取法:
@@ -133,6 +155,13 @@
 7. **製造與圖面**:F2 → F1 → F5 → F3,C4 隨零件庫需要插入。
 
 第 1、2 步完成前不要動第 3 步:新驗證層的 pair 快取、delta、assert 都假設幾何常駐在記憶體。
+
+## 4.1 執行紀錄
+
+| 階段 | 狀態 | 備註 |
+|---|---|---|
+| 0 回歸基準 | ✅ 2026-11-24 | `scripts/dev/regress_fixtures.py`(31 個產生器;基準 `tmp/regress/fixtures-baseline-ocp79.json`,不進版控) |
+| 1 地基 A1–A4 | ✅ 2026-11-24 | 見 README「常駐 CAD worker」。與藍圖的差異:① worker 是可互換的池而非每 session 一個(階段 1 的 worker 沒有狀態,部署又是多人共用);② A4 沒有另做逾時機制——呼叫端原本就用 `signal` 設逾時,池把「中止」實作成砍 worker 即可;③ 第一版以 `runpy` 執行既有入口腳本,協定只有 `run` 一種操作,結構化操作留給階段 2 |
 
 ## 5. 風險與未確認事項
 

@@ -14,6 +14,7 @@ import { parseUrl, sendJson } from "../httpUtil.mjs";
 
 const BLOCKED = [
   "/api/files",
+  "/api/session-snapshot",
   "/api/open",
   "/api/open-project",
   "/api/templates",

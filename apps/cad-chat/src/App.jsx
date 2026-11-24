@@ -30,7 +30,8 @@ const STORE_KEY = "cadchat.session.v1";
 // 模式偏好(草模/設計):跨開機記住切換器位置(session 快照另有 mode,還原時以快照為準)
 const MODE_KEY = "cadchat.mode";
 
-function AuthBanner({ warnings }) {
+function AuthBanner({ warnings, provider }) {
+  if (provider === "codex") return <div className="auth-banner">{warnings?.join(" ")}</div>;
   return (
     <div className="auth-banner">
       <span>
@@ -262,6 +263,10 @@ export default function App() {
   modeRef.current = state.mode;
   const { send, interrupt, setSessionId, resetSession } = useChatStream(dispatch, modeRef);
   const [health, setHealth] = useState(null);
+  const [resumeWorkId, setResumeWorkId] = useState(null);
+  useEffect(() => {
+    if (state.running) setResumeWorkId(null);
+  }, [state.running]);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
   const [shelfRefresh, setShelfRefresh] = useState(0); // 工作台重抓訊號(另存案件後 +1)
@@ -279,11 +284,16 @@ export default function App() {
   const [pendingFiles, setPendingFiles] = useState([]);
   const fileSeqRef = useRef(0);
 
+  const healthRequest = useRef(null);
   useEffect(() => {
-    fetch(apiUrl("/api/health"))
-      .then((r) => r.json())
-      .then(setHealth)
-      .catch(() => setHealth({ agentReady: false, warnings: ["無法連線到本機伺服器。"] }));
+    const refresh = () => {
+      healthRequest.current = fetch(apiUrl("/api/health")).then(r => r.json())
+        .catch(() => ({agentReady:false,warnings:["無法連線到本機伺服器。"]}));
+      healthRequest.current.then(setHealth);
+    };
+    refresh();
+    window.addEventListener("focus",refresh);
+    return () => window.removeEventListener("focus",refresh);
   }, []);
   // DEMO 帳號(server 依 X-Remote-User 判定,經 /api/health 回旗):展示身分——
   // 開啟檔案/教訓/另存專案、零件庫寫入動作與附件上傳一律**照常渲染但禁用**
@@ -1075,6 +1085,7 @@ export default function App() {
     dispatch({ type: "RESET" });
     try {
       localStorage.removeItem(STORE_KEY);
+      document.cookie = "cadchat_last=new; Path=/; Max-Age=2592000; SameSite=Strict";
     } catch {
       /* ignore */
     }
@@ -1302,9 +1313,7 @@ export default function App() {
           if (restoreDoneRef.current) localStorage.removeItem(STORE_KEY);
           return;
         }
-        localStorage.setItem(
-          STORE_KEY,
-          JSON.stringify({
+        const snapshot = {
             sessionId: state.sessionId,
             mode: state.mode,
             _seq: state._seq,
@@ -1316,8 +1325,15 @@ export default function App() {
             motion: state.motion,
             project: state.project,
             savedAt: Date.now(),
-          }),
-        );
+        };
+        const serialized = JSON.stringify(snapshot);
+        localStorage.setItem(STORE_KEY, serialized);
+        if (health?.desktop && !state.running) {
+          document.cookie = "cadchat_last="+encodeURIComponent(state.sessionId)+"; Path=/; SameSite=Strict; Max-Age=2592000";
+          fetch(apiUrl("/api/session-snapshot?id="+encodeURIComponent(state.sessionId)), {
+            method:"POST",headers:{"content-type":"application/json"},body:serialized,
+          }).catch(()=>{});
+        }
       } catch {
         /* 配額滿等,略過(下次再試) */
       }
@@ -1327,6 +1343,8 @@ export default function App() {
     state.sessionId,
     state.mode,
     state._seq,
+    state.running,
+    health?.desktop,
     state.items,
     state.versions,
     state.activeVer,
@@ -1352,14 +1370,25 @@ export default function App() {
     } catch {
       snap = null;
     }
-    if (!snap?.sessionId) {
-      restoreDoneRef.current = true;
-      return;
-    }
     (async () => {
       try {
+        if (!snap?.sessionId) {
+          const id = document.cookie.match(/(?:^|; )cadchat_last=([A-Za-z0-9_-]+)/)?.[1];
+          if (id !== "new" && (await healthRequest.current)?.desktop) {
+            const backup = await fetch(apiUrl("/api/session-snapshot"+(id ? "?id="+id : "")));
+            if (backup.ok) snap = (await backup.json()).snapshot;
+          }
+          if (!snap?.sessionId) { restoreDoneRef.current = true; return; }
+        }
         const r = await fetch(apiUrl(`/api/session-info?id=${encodeURIComponent(snap.sessionId)}`));
         const info = await r.json();
+        if (info.desktop && info.lastName && info.version > 0 && !(snap.versions || []).some(v => v.id === "v"+info.version)) {
+          const backup = await fetch(apiUrl("/api/session-snapshot?id="+encodeURIComponent(snap.sessionId)));
+          if (backup.ok) {
+            const latest = (await backup.json()).snapshot;
+            if (latest) snap = {...latest, items:latest.items?.length ? latest.items : snap.items};
+          }
+        }
         // 探測往返期間使用者已開始互動(送訊息/匯入/開檔/開專案):不回灌舊快照——
         // 無條件 RESTORE 會把進行中的對話整個蓋掉,還把串流中的 sessionId 換走,
         // 之後的 interrupt/追問全打到錯的 session。快照留著(不清 key)下次再說。
@@ -1383,8 +1412,22 @@ export default function App() {
           dispatch({ type: "RESTORE", snapshot: snap });
           // 專案綁定以伺服端為準(session.json 有落盤;快照可能落後 500ms throttle)
           dispatch({ type: "SET_PROJECT", project: info.project || null, sessionId: snap.sessionId });
-          setSessionId(snap.sessionId);
-          notify(`已接續上次對話${info.lastName ? `(${info.lastName})` : ""}。`);
+          setSessionId(snap.sessionId,info.desktop && !info.hasHistory ? snap.items : null);
+          if (info.canContinue) setResumeWorkId(snap.sessionId);
+          if (info.desktop && !info.hasHistory && snap.items?.length) {
+            await fetch(apiUrl("/api/session-snapshot?id="+encodeURIComponent(snap.sessionId)), {
+              method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(snap),
+            });
+          }
+          const switched = info.desktop && info.provider !== info.desktop;
+          const status = switched ? "已切換至 " + (info.desktop === "codex" ? "Codex" : "Claude") : "已接續上次對話";
+          notify(status + (info.lastName ? "（"+info.lastName+"）" : "") +
+            (!info.hasHistory && !snap.items?.length ? "。先前的聊天紀錄未保存。" : "。"));
+        } else if (info.desktop && snap.items?.length) {
+          const items = snap.items.filter(it => ["user","ai","spec","clarify"].includes(it?.type));
+          dispatch({type:"RESTORE",snapshot:{sessionId:snap.sessionId,mode:snap.mode,items}});
+          setSessionId(snap.sessionId,items);
+          notify("已還原對話文字；先前的模型檔已清理。");
         } else {
           localStorage.removeItem(STORE_KEY);
           if (hasGenVersions) notify("上次的工作階段已過期(產物已被清理),已開新對話。");
@@ -1568,6 +1611,7 @@ export default function App() {
   return (
     <div className="app" data-mode={state.mode}>
       <Header
+        agent={health?.provider ? health : null}
         phase={state.phase}
         hasVersions={state.versions.length > 0}
         canvasType={state.canvas.type}
@@ -1618,7 +1662,11 @@ export default function App() {
           openProjectGuarded(rel);
         }}
       />
-      {needAuth && <AuthBanner warnings={health.warnings} />}
+      {needAuth && <AuthBanner warnings={health.warnings} provider={health.provider} />}
+      {resumeWorkId && resumeWorkId === state.sessionId && !state.running && <button onClick={() => {
+        setResumeWorkId(null);
+        send({resumeWork:true});
+      }}>繼續上次工作</button>}
       <StageStepper stageIdx={state.stageIdx} mode={state.mode} />
       <div className="body">
         {/* clarify 待答 → 左欄整塊反灰凍結(見 app.css .conv-col[data-frozen]);
