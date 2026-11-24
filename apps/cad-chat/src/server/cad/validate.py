@@ -339,7 +339,7 @@ def main() -> int:
         ))
         return 1
 
-    from cadpy.geometry_checks import enumerate_interferences, is_valid_solid
+    from cadpy.geometry_checks import enumerate_interferences, invalid_solid_detail, is_valid_solid
 
     try:
         from cadpy.geometry_checks import _as_named_parts
@@ -361,10 +361,20 @@ def main() -> int:
         })
     else:
         try:
-            verdicts = [(n, is_valid_solid(s)) for n, s in named]
-            bad = [n for n, ok in verdicts if not ok]
+            bad = [(n, s) for n, s in named if not is_valid_solid(s)]
             ok = len(bad) == 0
-            note = "BRepCheck valid" if ok else "無效: " + ", ".join(bad)
+            if ok:
+                note = "BRepCheck valid"
+            else:
+                # 每個壞件附上叫得出名字的問題(哪個殼沒封閉、哪個面的線框自交…;面號 = 點選
+                # token 的 fN)。叫不出名字的就只列件名——仍然是無效。只展開前 3 件,避免洗版。
+                def describe(name, shape):
+                    detail = invalid_solid_detail(shape)
+                    return f"{name}({detail})" if detail else name
+
+                note = "無效: " + ", ".join(
+                    describe(n, s) if i < 3 else n for i, (n, s) in enumerate(bad)
+                )
         except Exception as exc:  # noqa: BLE001
             ok, note = False, f"檢查失敗: {exc}"
         checks.append({

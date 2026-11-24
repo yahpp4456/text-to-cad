@@ -357,7 +357,14 @@ def assert_motion_clear(poses, pairs, *, baseline=None, tol=0.05):
  ]}
 ```
 
-頂層 `ok` = 沒有 `failed`；`complete` = 沒有 `not_checked`。每列的 `status` 有四種：
+頂層 `ok` = 沒有 `failed`；`complete` = 沒有 `not_checked`。
+
+`valid_solid` 沒過時，備註會說是哪一件、叫得出名字的問題是什麼，例如
+`無效: lid(shell 1: NotClosed)`、`無效: bracket(face 12 wire 2: SelfIntersectingWire)`
+（`cadpy.kernel.brep_checks`；面號就是點選 token 的 `fN`）。叫不出名字時只列件名——仍然是
+無效，只是 kernel 沒有可以逐項問出來的答案。
+
+每列的 `status` 有四種：
 
 | status | 意思 | `skipped` | 完整驗證算通過嗎 |
 |---|---|---|---|

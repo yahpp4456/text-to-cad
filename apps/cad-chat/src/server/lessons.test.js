@@ -61,6 +61,33 @@ test("signatureForBuild:AssertionError 訊息分型(interference / invalid-solid
   );
 });
 
+test("signatureForBuild:無效實體訊息附上具名診斷後,歸類不變(既有教訓對得上)", () => {
+  // cadpy.geometry_checks 現在會在訊息尾端附上「哪個殼/面/線框、什麼問題」。開頭字串沒變,
+  // 所以新舊訊息必須落在同一個 signature——否則同一種錯誤會被記成兩類。
+  const tb = (msg) =>
+    `Traceback (most recent call last):\n  File "x.py", line 1, in <module>\nAssertionError: ${msg}`;
+  const sig = (msg) => signatureForBuild({ exitCode: 1, stderr: tb(msg) }).signature;
+  assert.equal(
+    sig("bracket: BRepCheck_Analyzer reports an invalid solid (shell 1: NotClosed)"),
+    sig("bracket: BRepCheck_Analyzer reports an invalid solid"),
+  );
+  assert.equal(
+    sig("invalid part(s): lid [lid: shell 1: NotClosed]"),
+    sig("invalid part(s): rod, cap"),
+  );
+  assert.equal(sig("invalid part(s): lid [lid: face 12 wire 2: SelfIntersectingWire]"), "build:AssertionError:invalid-solid");
+  // 診斷文字裡出現別類的關鍵字也不會被誤分(分型看的是訊息開頭)
+  assert.equal(
+    sig("invalid part(s): a [a: face 3: IntersectingWires; +2 more]"),
+    "build:AssertionError:invalid-solid",
+  );
+  // 驗證列:signature 只看 id(valid_solid 沒有子型),備註多了診斷不影響
+  assert.equal(
+    signatureForCheck({ id: "valid_solid", note: "無效: lid(shell 1: NotClosed)" }).signature,
+    signatureForCheck({ id: "valid_solid", note: "無效: lid" }).signature,
+  );
+});
+
 test("signatureForBuild:例外類/模組名/fallback,且決定性", () => {
   const syn = signatureForBuild({ exitCode: 1, stderr: "  File \"p.py\", line 3\nSyntaxError: invalid syntax" });
   assert.equal(syn.signature, "build:SyntaxError");

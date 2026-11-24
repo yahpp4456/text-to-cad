@@ -107,10 +107,30 @@ def is_valid_solid(shape: Any) -> bool:
     return bool(BRepCheck_Analyzer(topo).IsValid())
 
 
+def invalid_solid_detail(shape: Any) -> str:
+    """What is wrong with an invalid solid, in one line, or ``""`` when no fault can be named.
+
+    ``shell 1: NotClosed; face 12 wire 2: SelfIntersectingWire`` -- face numbers are the
+    part's STEP-topology ordinals (see :mod:`cadpy.kernel.brep_checks`). Never raises.
+    """
+    try:
+        from cadpy.kernel.brep_checks import diagnose, summarize
+
+        return summarize(diagnose(_topods(shape)))
+    except Exception:  # noqa: BLE001 - detail is a courtesy; the verdict does not depend on it
+        return ""
+
+
 def assert_valid_solid(shape: Any, *, label: str = "solid") -> Any:
-    """Raise ``AssertionError`` unless ``shape`` is a valid B-rep solid."""
+    """Raise ``AssertionError`` unless ``shape`` is a valid B-rep solid.
+
+    The message keeps its fixed prefix (callers match on it) and appends the
+    named faults when there are any."""
     if not is_valid_solid(shape):
-        raise AssertionError(f"{label}: BRepCheck_Analyzer reports an invalid solid")
+        detail = invalid_solid_detail(shape)
+        raise AssertionError(
+            f"{label}: BRepCheck_Analyzer reports an invalid solid" + (f" ({detail})" if detail else "")
+        )
     return shape
 
 
@@ -125,9 +145,13 @@ def assert_all_valid(parts: Any, *, label: str = "part") -> None:
     named = _as_named_parts(parts)
     if not named:
         raise AssertionError(f"assert_all_valid: no {label}s to validate")
-    invalid = [name for name, shape in named if not is_valid_solid(shape)]
+    invalid = [(name, shape) for name, shape in named if not is_valid_solid(shape)]
     if invalid:
-        raise AssertionError(f"invalid {label}(s): {', '.join(invalid)}")
+        # "invalid <label>(s): a, b" stays the head of the message (callers match on it);
+        # the named faults of the first few follow.
+        message = f"invalid {label}(s): {', '.join(name for name, _ in invalid)}"
+        details = [f"{name}: {detail}" for name, shape in invalid[:3] if (detail := invalid_solid_detail(shape))]
+        raise AssertionError(message + (f" [{' | '.join(details)}]" if details else ""))
 
 
 # ---------------------------------------------------------------------------
