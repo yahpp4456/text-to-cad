@@ -58,6 +58,7 @@ LLM_GATED = [
     "smoke_gear_rackpinion_live.py",
     "smoke_image_clarify_live.py",
     "smoke_sheetmetal_live.py",
+    "smoke_checks_live.py",  # 使用者給的數字要在 check_geometry 裡量幾何驗(讀產生的 .py)
     "smoke_canvas_context_live.py",
     "smoke_lesson_offer_live.py",
     "smoke_sketch_live.py",

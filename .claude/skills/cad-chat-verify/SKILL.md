@@ -106,6 +106,14 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
     `CADCHAT_SMOKE_AUX_PORT` 可改)+ `smoke_verify_gate.py`。
   - 要手動重現逾時:`CADCHAT_SWEEP_DEADLINE_S=0` 起伺服器(或直接對 `validate.py` 設這個
     環境變數)。
+- **prompt 的「怎麼驗」規則(2026-11-25)**:設計 prompt 要求 agent 在 `check_geometry` 裡對
+  做出來的形狀 assert 使用者給的數字(量幾何再與 PARAMS 比),並有一張「改了什麼,用什麼
+  檢查」對照表與三條原則。動這兩段 → L1 `prompt.checks.test.js`(鎖文字與範例)+ L4 一個
+  **給明確數字**的回合,然後**打開產生的 `.py` 看 `check_geometry`**:要有量幾何的 assert
+  (`bounding_box` / `volume` / 圓邊的半徑與圓心 / 數量),不是 `assert PARAMS["od"] == 40`
+  這種重抄常數;且 build 沒有因為這些 assert 假失敗(容差太緊、量錯方向)。
+  `smoke_checks_live.py`(LLM-gated,圓法蘭題)就是做這件事:它讀產生的 `.py` 斷 assert 的
+  內容——其他 `*_live.py` 不看 `check_geometry`,只跑它們看不出這條規則有沒有被採用。
 - **建置憑證(2026-11-25)**:開專案與回退會先核對 `.<name>.build.json`,輸入、環境、產物都沒變
   就**不重建**(README「建置憑證」章;`cad/closure.mjs`)。動這條路要知道:
   - **煙測裡「開專案後斷言產物是新產生的」不再恆真**:對存過檔的專案第二次開會沿用。要逼它

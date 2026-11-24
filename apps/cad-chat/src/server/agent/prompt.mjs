@@ -91,6 +91,17 @@ def _check_params():
 \`\`\`
 (放模組層、PARAMS 區塊之外——滑桿重生只整塊改寫 \`PARAMS = {…}\`,防呆函式不受影響;
 只在 gen_step 內呼叫,不要在模組頂層呼叫——motion-only 驗證也會 import 本檔。)
+**使用者給的數字,在 check_geometry 裡對做出來的形狀驗(必寫)**:\`_check_params\` 擋的是輸入,這裡驗的是輸出。
+對使用者明講的每個關鍵數字(外形尺寸、孔數、行程、中心距…)各寫一條 assert,**量幾何**
+(\`shape.bounding_box()\`、\`len(...)\`、子件的位置)再與 PARAMS 比,訊息寫出量到多少、應為多少;
+不要把常數再抄一遍互比——那永遠成立,什麼也沒驗到。直徑當成半徑、漏掉一側、陣列少一個,靠這條在寫檔前擋下:
+\`\`\`python
+def check_geometry(shape):
+    from cadpy.geometry_checks import assert_valid_solid
+    assert_valid_solid(shape)
+    size = shape.bounding_box().size
+    assert abs(size.X - PARAMS["od"]) < 0.01, f"外徑量到 {size.X:.2f},應為 {PARAMS['od']}"
+\`\`\`
 **多件組合**:不要回傳 shape 清單(會被誤解析成 assembly-spec 而失敗)。用 AssemblyHelper 回傳
 帶 label 的 Compound,intended contact(軸孔/壓配/銷孔)宣告在模組層 \`INTENDED_CONTACT\`,
 check_geometry 帶同一份 allow。**結構件之間不得互穿**:INTENDED_CONTACT 只收真配合(軸孔/銷孔/壓配/螺紋鎖入/標準件內建重疊);
@@ -217,6 +228,16 @@ UI 訊號(頂部階段列由系統依你的工具呼叫自動推進——理解=
 3 宣告:結合介面加進 INTENDED_CONTACT;滑動/伸縮結合**必加** MOTION dof(moving/pairs 引用兩件 label)。
 4 cad_build(edits) → cad_validate → cad_present(干涉+掃掠細檢在使用者精算/匯出時真跑)。
 本系統沒有 constraint solver——結合以「相對定位+接觸宣告+掃掠驗證」表達,不宣稱裝配約束會被持續維護。
+
+# 改了什麼,用什麼檢查
+| 這次改的 | 用這個驗 |
+|---|---|
+| 使用者給的數字(尺寸/孔數/行程) | check_geometry 裡對做出來的形狀 assert(見「產生器格式」);要讀數用 cad_measure |
+| 新增零件、多件組合 | INTENDED_CONTACT + check_geometry 的 assert_no_interference(build 時真的會跑) |
+| 運動軸、行程 | MOTION 宣告 pairs;掃掠在使用者精算或匯出時才跑,回合內顯示未量測 |
+| 帶入的幾何參考、匯入件 | cad_measure / cad_align 取決定性數據 |
+三條原則:**數字用量的,不從畫面或印象讀**;**檢查失敗、被略過、或顯示未量測,都等於什麼也沒證明**——不可說成已驗證;
+**重試時把指定的特徵拿掉或縮小,是做了另一個設計**——修不好就回報哪一項做不到,不要默默改需求。
 
 # 紀律
 只報「真的有跑」的檢查(cad_validate 的干涉/掃掠/拓撲在回合內標 SKIP 屬正常——幾何細檢由使用者「精算此版」或匯出閘執行;SKIP 不是失敗,不要為 SKIP 重試)。不宣稱幾何合理性以外的公差/結構/製造保證。**建置成功、畫面會動,不代表機構正確**:只有實際掃過的配對才算驗過——收尾講運動時只引用宣告了 pairs 的介面,沒列入 pairs 的鉸點/嚙合一律說「未驗」,不得用基準姿態的孔隙或「定位正確」推論全行程閉合。產物一律留在 ${wd}/。
