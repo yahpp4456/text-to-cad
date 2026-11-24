@@ -180,6 +180,22 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
 
 worker 啟動一次約 7–9 秒、常駐約 410 MiB。
 
+上表是階段 1 完成當時(build123d 0.11 / OCP 7.9)。之後又做了三件事——`inspect` 局部解析的
+後半、行程掃掠預篩、開發環境切到 0.13 / OCP 8、worker 預熱後凍結 GC——2026-11-25 重量:
+
+| 操作 | 每次起新行程 | 常駐 worker |
+|---|---|---|
+| 建鈑金件 | 6.6 | 0.8 |
+| 驗證鈑金件 | 4.5 | 0.43 |
+| 驗證 + 讀幾何事實 | 5.3 | 0.38 |
+| 建 15 件線性滑台 | 7.1 | 2.0 |
+| 驗證線性滑台 | 5.2 | 1.2 |
+| 讀幾何事實 | 1.4 | 0.07–0.09 |
+
+worker 啟動約 5–6 秒、常駐約 350–400 MiB。常駐的 build 數字沒有比階段 1 當時好(0.65 → 0.8、
+1.6 → 2.0):直接量 worker 內部,同一個 build 在新環境是 0.45–0.6 秒,比舊環境快;經 Node
+量到的多出來的部分各次起伏很大(0.4–1.0 秒),沒有找到單一原因,如實記在這裡。
+
 ### 做法
 
 - **契約不變**:`spawnPython`(`cad/python.mjs`)仍回 `{code, stdout, stderr}`,19 個呼叫點
@@ -219,6 +235,9 @@ worker 啟動一次約 7–9 秒、常駐約 410 MiB。
   照舊運作。
 - **崩潰**:請求進行中行程沒了 → 回它的 exit code 與死前寫出的輸出(讀擷取檔),池自動恢復。
 - **記憶體退休**:每個請求回報常駐記憶體,超過上限就在請求之間換新。
+- **GC**:預熱留下的幾十萬個物件在預熱完成時 `gc.freeze()`,之後每個請求結束的回收只掃
+  該請求新產生的物件。不凍結的話每次回收 125–160 ms,而且是算在下一個請求的等待裡
+  (連續的 build → validate → inspect 每一步都多付一次)。
 - **閒置回收**:預設 15 分鐘。
 - **程式碼改了就換新**(僅開發):`skills/cad/scripts/packages` 或 `py/` 下的 `.py` 有變動,
   已載入舊模組的 worker 不再接請求。所以改 `cadpy`(同步後)不必重啟 dev server;
@@ -298,6 +317,33 @@ worker 啟動一次約 7–9 秒、常駐約 410 MiB。
 為什麼要兩版都能跑:開發環境、Electron 內嵌 runtime(`build-runtime/python`)、Linux VM
 部署是三個各自安裝的 Python,不會同時升級。實測 0.13 / OCP 8 的 `import build123d` 約
 3.9 秒(0.11 / 7.9 約 6 秒),31 個 fixture 的回歸總耗時少約四分之一。
+
+### 各環境目前的版本
+
+| 環境 | 版本 | 備註 |
+|---|---|---|
+| 開發 `.venv`(Sam 的 Windows 機) | build123d 0.13.0 / OCP 8.0.1.1 | 2026-11-25 切換;切換後整套驗證全過 |
+| 舊開發環境 `.venv-ocp79` | build123d 0.11.0 / OCP 7.9.3.1 | 保留作退路與對照;不進版控 |
+| Electron 內嵌 runtime | 0.11 / 7.9 | **尚未重建**;重建前打包版照舊跑 7.9 |
+| Linux VM 部署 | 0.11 / 7.9 | 未動 |
+
+退回舊環境:關掉 cad-chat,`mv .venv .venv-b13 && mv .venv-ocp79 .venv`。
+
+重建開發環境(repo 根,Git Bash;base 直譯器換成你機器上的 Python 3.13):
+
+```bash
+python -m venv .venv
+.venv/Scripts/python.exe -m pip install -r apps/cad-chat/requirements-dev.lock.txt
+.venv/Scripts/python.exe -m pip install --no-deps -e skills/cad/scripts/packages/cadpy
+```
+
+`requirements-dev.lock.txt` 是通過驗證的那個環境的 `pip freeze`(確切版本)。**上面這三行本身
+沒有從零跑過**——實際的環境是先裝 `build123d==0.13.0` 與 `cadquery-ocp-novtk>=8.0,<8.1`、
+再補上舊環境的其餘套件(Playwright 釘 1.60.0)裝出來的,鎖定檔是事後存的。
+
+`--no-deps` 是必要的:`cadpy` 宣告相依 `cadquery-ocp`(帶 vtk 的那一包),而 build123d 0.13
+裝的是 `cadquery-ocp-novtk`;兩包都提供 `OCP`,不能並存。所以 `pip check` 會抱怨
+「cadpy requires cadquery-ocp」,這是預期的。Playwright 釘 1.60.0 是為了沿用已下載的瀏覽器。
 
 ## per-user 資料隔離(2026-07-15;VM 部署啟用,dev 零回歸)
 

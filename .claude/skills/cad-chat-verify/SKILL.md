@@ -107,6 +107,9 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
 - **`smoke_open_project` / 回灌類斷言的偶發(2026-11-25 再確認)**:同一實例連跑三次只有第一次
   紅、或整套裡紅一次而單跑三次全綠——先重跑該支,不要急著改產品。`smoke_open_project` A 段
   「數 `.fb-projrow`」已補上等待(清單內容非同步載入);`smoke_library_mode` E 段回灌仍可能偶發。
+  另一種:斷言全綠、最後存證用的 `page.screenshot` 卻 `Timeout 30000ms`(無頭 WebGL 截圖卡住,
+  `smoke_measure` 遇過)——同樣重跑即可。**整套跑完有紅,先看是不是「單支重跑三次全綠」**:
+  是的話記為偶發並在交付時如實說明,不是的話才是真問題。
 - **`scripts/test/test-python.sh` 在 Windows 要帶 `PYTHON_BIN=$PWD/.venv/Scripts/python.exe`**
   (它預設找 `.venv/bin/python`),而且用 `set -e`:bambu-labs skill 有 2 個既有 ERROR
   (Windows 跑不了測試用的假腳本),腳本到那裡就停,後面的 cad/dxf/… 測試不會跑。要全跑

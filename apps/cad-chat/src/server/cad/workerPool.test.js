@@ -84,10 +84,32 @@ test("排隊:maxWorkers=1 時請求依序完成,全程只有一個 worker", asyn
   assert.equal(live(pool).length, 1);
 });
 
-test("並行:有空位時兩個同時進來的請求分到兩個 worker", async (t) => {
+test("並行:一個 worker 忙碌時,另一個閒置的立刻接下一個請求", async (t) => {
+  // 不靠計時:先確定「一忙一閒」的狀態成立,再送第二個請求。(原本的寫法是同時送兩個
+  // sleep:80,賭第二個 worker 會在 80ms 內暖好;機器忙的時候第一個先做完、同一個 worker
+  // 接走第二個,測試就紅。)
+  const { pool } = makePool(t, { maxWorkers: 2, spare: true });
+  const controller = new AbortController();
+  const busy = pool.run({ script: "hang", signal: controller.signal });
+  await until(() => live(pool).some((w) => w.state === "busy") && live(pool).some((w) => w.state === "idle"), {
+    what: "一個忙碌、一個閒置",
+  });
+  const busyPid = pool.stats().workers.find((w) => w.state === "busy").pid;
+  const other = await pool.run({ script: "echo" });
+  assert.equal(other.code, 0);
+  assert.notEqual(pidOf(other), busyPid, "沒有排在忙碌的 worker 後面等");
+  controller.abort();
+  await busy;
+});
+
+test("並行:同時進來的兩個請求不會超過 maxWorkers,且都完成", async (t) => {
   const { pool } = makePool(t, { maxWorkers: 2 });
-  const [a, b] = await Promise.all([pool.run({ script: "sleep:80" }), pool.run({ script: "sleep:80" })]);
-  assert.notEqual(pidOf(a), pidOf(b));
+  const results = await Promise.all([pool.run({ script: "sleep:80" }), pool.run({ script: "sleep:80" })]);
+  assert.deepEqual(
+    results.map((r) => r.code),
+    [0, 0],
+  );
+  assert.ok(live(pool).length <= 2);
 });
 
 test("備用:spare 開啟時,請求進行中會另外暖一個;關閉時不會", async (t) => {

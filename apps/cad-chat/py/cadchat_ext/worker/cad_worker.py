@@ -377,6 +377,12 @@ def main() -> int:
     sys.dont_write_bytecode = True
     sys.pycache_prefix = os.path.join(channels.tmpdir, "pyc")
 
+    # 預熱留下的幾十萬個物件(模組、類別、函式)會活到行程結束。凍結後,每次請求結束的
+    # gc.collect() 只掃該請求新產生的物件;不凍結的話每次都要把它們全部走一遍
+    # (實測 125–160 ms,而且是算在「下一個請求」的等待時間裡)。
+    gc.collect()
+    gc.freeze()
+
     channels.send(
         {
             "ready": True,

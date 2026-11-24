@@ -164,6 +164,7 @@
 | 1 地基 A1–A4 | ✅ 2026-11-24 | 見 README「常駐 CAD worker」。與藍圖的差異:① worker 是可互換的池而非每 session 一個(階段 1 的 worker 沒有狀態,部署又是多人共用);② A4 沒有另做逾時機制——呼叫端原本就用 `signal` 設逾時,池把「中止」實作成砍 worker 即可;③ 第一版以 `runpy` 執行既有入口腳本,協定只有 `run` 一種操作,結構化操作留給階段 2 |
 
 | 0 升級試驗 | ✅ 2026-11-25 | build123d 0.13.0 / OCP 8.0.1.1 在獨立環境通過:31 個 fixture 0 FAIL 0 WARN、`cadpy` 339 個測試、cad-chat Python 測試、全套煙測,失敗清單與 0.11 / 7.9 完全相同。`cadpy` 只需處理三類差異,已改成兩版通用(`cadpy/kernel/ocp_compat.py`;README「Kernel 版本」章)。第 5 節擔心的「升級會影響所有現有 fixtures」沒有發生 |
+| 0 環境切換 | ✅ 2026-11-25 | 開發 `.venv` 切到 0.13 / OCP 8(舊環境保留為 `.venv-ocp79`)。切換後:`cadpy` 346、cad-chat Python 測試、fixtures 回歸 31 個 0 FAIL 0 WARN、L1 550、全套煙測 29 支全過。Electron 內嵌 runtime 與 Linux VM 仍是 0.11 / 7.9,程式碼兩版通用 |
 | 2 A5 | 部分不做 | 量測結果:STEP 寫入各案例都在 1 秒內,不是瓶頸,「中間 build 不寫 STEP」不做。真正的大頭是行程掃掠沒有包絡箱預篩(B4 設計點 ①),已提前做掉:61 件龍門架三段掃掠 22 秒 → 1 秒,判定不變 |
 
 ## 5. 風險與未確認事項

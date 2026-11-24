@@ -70,6 +70,14 @@ powershell -ExecutionPolicy Bypass -File scripts\build-python-runtime.ps1
 `cadquery-ocp` 會拉 vtk ~300MB,`--no-deps` 讓 vtk 從頭不進來);constraints 釘
 dev venv 現版防漂移。
 
+## 內嵌 runtime 的 kernel 版本(2026-11-25)
+
+開發環境已切到 build123d 0.13 / OCP 8,但 `build-runtime/python/` **還是 0.11 / OCP 7.9**,
+尚未重建。程式碼兩版通用(README「Kernel 版本」章),所以現在打包仍會得到能跑的 7.9 版。
+要讓打包版也用 OCP 8,重建 runtime 時把白名單的版本換成 `requirements-dev.lock.txt` 裡的
+`build123d` 與 `cadquery-ocp-novtk`,重建後跑 `scripts/dev/regress_fixtures.py --python <runtime 的 python.exe>`
+與基準比對。這件事還沒做。
+
 ## 常駐 CAD worker 與打包(2026-11-24)
 
 - worker 的程式在 `py/cadchat_ext/`,由 `electron-builder.yml` 的 extraResources 帶到
