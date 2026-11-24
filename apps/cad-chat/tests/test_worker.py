@@ -274,6 +274,51 @@ class WorkerProtocolTests(unittest.TestCase):
         self.assertEqual(self.worker.run(script)[1], "251\n")
         self.assertFalse((workdir / "__pycache__").exists(), "worker 不在工作目錄留 .pyc")
 
+    def test_reads_reports_files_opened_for_reading_under_cwd(self) -> None:
+        """done frame 的 reads:腳本讀了哪些檔(Node 用它判斷輸入沒變就不重建)。"""
+        workdir = self.tmp / "reads"
+        write(workdir / "helper_mod.py", "VALUE = 1\n")
+        write(workdir / "data" / "spec.json", '{"w": 10}')
+        write(workdir / "unused.json", "{}")
+        outside = write(self.tmp / "outside-reads.txt", "elsewhere")
+        script = write(
+            workdir / "main.py",
+            f"""
+            import json, os
+            import helper_mod                                   # import 也是讀檔
+            json.load(open("data/spec.json", encoding="utf-8"))  # 相對路徑(相對 cwd)
+            open({str(outside)!r}).read()                        # cwd 之外:不回報
+            with open("out.txt", "w") as handle:                 # 寫檔:不回報
+                handle.write("x")
+            fd = os.open("out2.bin", os.O_WRONLY | os.O_CREAT)   # os.open 寫:不回報
+            os.close(fd)
+            fd = os.open("data/spec.json", os.O_RDONLY)          # os.open 讀:回報(已在清單內)
+            os.close(fd)
+            """,
+        )
+        code, _, err, message = self.worker.run(script, cwd=workdir)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(message["reads"], ["data/spec.json", "helper_mod.py", "main.py"])
+        # 下一個請求的清單是全新的,不帶上一個請求讀過的檔
+        other = write(workdir / "other.py", "x = 1\n")
+        _, _, _, message = self.worker.run(other, cwd=workdir)
+        self.assertEqual(message["reads"], ["other.py"])
+
+    def test_reads_of_a_real_build_include_the_generator(self) -> None:
+        work = REPO / "tmp" / "worker-test" / f"reads-{os.getpid()}"
+        shutil.copytree(REPO / "models" / "sheet_u_bracket", work, ignore=shutil.ignore_patterns("__pycache__", ".*"))
+        try:
+            gen = (work / "sheet_u_bracket.py").relative_to(REPO).as_posix()
+            code, _, err, message = self.worker.run(STEP_CLI, [gen, "--force"])
+            self.assertEqual(code, 0, err)
+            self.assertIn(gen, message["reads"])
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    def test_ready_frame_reports_a_cadpy_content_digest(self) -> None:
+        digest = self.worker.ready["versions"]["cadpy"]
+        self.assertRegex(digest, r"^[0-9a-f]{16}$")
+
     def test_tools_with_same_module_name_do_not_collide(self) -> None:
         """scripts/step 與 scripts/inspect 各有一個頂層 cli.py;常駐行程裡不能互相拿錯。"""
         for name in ("tool_a", "tool_b"):

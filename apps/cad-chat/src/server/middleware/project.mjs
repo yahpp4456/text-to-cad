@@ -285,9 +285,11 @@ async function handleOpenProject(body, res, ctx = {}) {
   let step;
   let val = null;
   try {
-    step = await runStep(session, name, { signal: ac.signal });
+    // reuse:專案帶著建置憑證(上次儲存時的),輸入與環境沒變就沿用存檔裡的產物與驗證結果。
+    // cadpy 或 kernel 版本變了、產生器或匯入件被改過、帶參數/規格覆寫開啟 → 憑證對不上,照常重建。
+    step = await runStep(session, name, { signal: ac.signal, reuse: true });
     if (step.ok) {
-      val = await runValidate(session, name, { signal: ac.signal });
+      val = await runValidate(session, name, { signal: ac.signal, reuse: true });
       if (val.partCount > 0) session.lastPartCount = val.partCount;
     }
   } finally {
@@ -340,6 +342,8 @@ async function handleOpenProject(body, res, ctx = {}) {
     values: paramValuesFromGenerator(session, name), // PARAMS 現值(表單回填/回聲用)
     motion: val?.motion || null,
     validateOk: val ? val.ok : null,
+    // 這次有沒有沿用存檔裡的產物/驗證結果(建置憑證命中);false = 真的重建/重驗了。
+    reused: { build: step.reused === true, validate: val?.reused === true },
     warnings: presentWarnings(events),
   });
 }
@@ -410,11 +414,15 @@ async function handleRevertVersion(body, res, ctx = {}) {
     // 快照複回頂層;單件版要清掉頂層殘留的 asm.json,type 才不會誤判成組合件。
     // .flat.step.glb + .flat.lines.json:攤平預覽 GLB 與折彎線也複回(回退版要能用)。
     // .sweep.json:掃出路徑 overlay 同理——快照沒有就刪頂層殘留(防 stale overlay)。
-    for (const f of [`${name}.py`, `${name}.step`, `.${name}.step.glb`, `.${name}.flat.step.glb`, `.${name}.flat.lines.json`, `.${name}.sweep.json`, `${name}.asm.json`, `.${name}.step.js`]) {
+    // .step.meta.json / .build.json / .validate.json:build 收割、建置憑證、驗證快取。快照有就複回
+    // (下面的 runStep/runValidate 才可能沿用);快照沒有(較舊的快照)就刪掉頂層殘留——
+    // 那是別的版本留下的,不屬於正要還原的這一版。
+    const SIDECARS = [`.${name}.step.meta.json`, `.${name}.build.json`, `.${name}.validate.json`];
+    for (const f of [`${name}.py`, `${name}.step`, `.${name}.step.glb`, `.${name}.flat.step.glb`, `.${name}.flat.lines.json`, `.${name}.sweep.json`, `${name}.asm.json`, `.${name}.step.js`, ...SIDECARS]) {
       const src = path.join(snapDir, f);
       const dst = path.join(session.workdir, f);
       if (fs.existsSync(src)) fs.copyFileSync(src, dst);
-      else if ((f === `${name}.asm.json` || f === `.${name}.flat.step.glb` || f === `.${name}.flat.lines.json` || f === `.${name}.sweep.json`) && fs.existsSync(dst)) fs.rmSync(dst);
+      else if ((f === `${name}.asm.json` || f === `.${name}.flat.step.glb` || f === `.${name}.flat.lines.json` || f === `.${name}.sweep.json` || SIDECARS.includes(f)) && fs.existsSync(dst)) fs.rmSync(dst);
     }
     session.lastName = name;
     if (Number(meta.partCount) > 0) session.lastPartCount = Number(meta.partCount);
@@ -426,9 +434,10 @@ async function handleRevertVersion(body, res, ctx = {}) {
     let step;
     let val = null;
     try {
-      step = await runStep(session, name, { signal: ac.signal });
+      // reuse:快照帶著建置憑證,輸入與環境沒變就沿用快照的產物與驗證結果(不重建)。
+      step = await runStep(session, name, { signal: ac.signal, reuse: true });
       if (step.ok) {
-        val = await runValidate(session, name, { signal: ac.signal });
+        val = await runValidate(session, name, { signal: ac.signal, reuse: true });
         if (val.partCount > 0) session.lastPartCount = val.partCount;
       }
     } finally {
@@ -460,6 +469,8 @@ async function handleRevertVersion(body, res, ctx = {}) {
       params: paramDefsFromGenerator(session, name),
       motion: val?.motion || null,
       validateOk: val ? val.ok : null,
+      // 這次有沒有沿用快照裡的產物/驗證結果(建置憑證命中);false = 真的重建/重驗了。
+      reused: { build: step.reused === true, validate: val?.reused === true },
       warnings: presentWarnings(events), // 快照失敗等警告(SSE 路徑有 error 卡,JSON 路徑靠這裡)
     });
   } finally {

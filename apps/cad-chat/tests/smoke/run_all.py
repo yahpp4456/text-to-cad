@@ -31,6 +31,7 @@ ORDER = [
     # smoke_open_dedupe 退場:option C(專案目錄整列一鍵開)移除了它測的「唯讀瀏覽專案
     # 檔去重」工作流;同 glbUrl 保留 status 由 chatStore.test.js 單元測覆蓋。
     "smoke_open_project.py",
+    "smoke_build_reuse.py",  # 建置憑證:輸入沒變就沿用產物(開專案/回退);兩種 worker 設定都要綠
     "smoke_flat_toggle.py",
     "smoke_sweep_overlay.py",
     "smoke_sweep_window.py",

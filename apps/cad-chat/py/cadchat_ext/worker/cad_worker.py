@@ -7,8 +7,10 @@ Node 伺服器(``src/server/cad/workerPool.mjs``)啟動本行程一次,之後每
 協定(``frames.py``):stdin 進、原本的 stdout 出,一行 JSON + 可選位元組。
 
     -> {"id": 1, "op": "run", "script": "<絕對路徑>", "argv": [...], "cwd": "<絕對路徑>"}
-    <- {"id": 1, "done": true, "code": 0, "ms": 812, "rssMb": 512.3, "outBytes": 120, "bytes": 340}
+    <- {"id": 1, "done": true, "code": 0, "ms": 812, "rssMb": 512.3, "outBytes": 120,
+        "reads": ["models/x/x.py", ...], "bytes": 340}
        其後 340 個位元組 = stdout(前 120)+ stderr(其餘)
+       reads = 請求期間以「讀」開啟、且位於 cwd 之下的檔案(相對 cwd)
     -> {"id": 2, "op": "ping"}
     <- {"id": 2, "done": true, "rssMb": 512.3}
     -> {"op": "exit"}      # 或 stdin EOF:自行結束
@@ -270,7 +272,32 @@ def _prewarm() -> tuple[str | None, list[str], dict[str, str | None]]:
         versions["ocp"] = getattr(OCP, "__version__", None)
     except Exception:  # noqa: BLE001
         versions["ocp"] = None
+    # 實際載入的那份 cadpy 的內容摘要:開發時是 vendored 複本、打包後是 site-packages 裡的
+    # wheel,位置不同,所以由載入它的行程自己算最準。cadpy 一改,舊的建置憑證全部失效。
+    versions["cadpy"] = _package_digest("cadpy")
     return None, warnings, versions
+
+
+def _package_digest(name: str) -> str | None:
+    """已載入套件的原始碼與資料檔內容摘要(sha256 前 16 位);算不出來回 None。"""
+    import hashlib
+
+    module = sys.modules.get(name)
+    file = getattr(module, "__file__", None)
+    if not file:
+        return None
+    root = Path(file).resolve().parent
+    digest = hashlib.sha256()
+    try:
+        files = sorted(p for p in root.rglob("*") if p.suffix in (".py", ".json") and "__pycache__" not in p.parts)
+        for path in files:
+            digest.update(path.relative_to(root).as_posix().encode())
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+    except OSError:
+        return None
+    return digest.hexdigest()[:16]
 
 
 def _watch_dirs() -> list[str]:
@@ -282,6 +309,57 @@ def _watch_dirs() -> list[str]:
         if file:
             dirs.append(str(Path(file).resolve().parent))
     return dirs
+
+
+# ---------------------------------------------------------------------------
+# 讀檔紀錄:請求期間 Python 層以「讀」開啟的檔案,隨結果回傳給 Node。Node 用它判斷
+# 「這次 build 的輸入是哪些檔」,之後輸入沒變就不必重建(cad/closure.mjs)。
+# 只看得到 Python 層的 open(含 import 載入原始碼);OCCT 在 C++ 裡自己開的檔
+# (例如 import_step 讀 STEP)看不到,那一類由 Node 端另外補(整個 imported/ 都算輸入)。
+# ---------------------------------------------------------------------------
+_READS_CAP = 2000
+_reads: set[str] | None = None  # None = 目前不記錄
+_WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
+
+
+def _audit(event: str, args: tuple) -> None:
+    # 每個稽核事件都會進來,先擋掉不相干的再做事。
+    if event != "open" or _reads is None or len(_reads) >= _READS_CAP:
+        return
+    try:
+        path, mode, flags = args[0], args[1], args[2]
+        if isinstance(mode, str):
+            if any(ch in mode for ch in "wax+"):
+                return
+        elif isinstance(flags, int) and flags & _WRITE_FLAGS:
+            return
+        if isinstance(path, bytes):
+            path = os.fsdecode(path)
+        elif not isinstance(path, str):
+            path = os.fspath(path)  # 整數 fd 會在這裡丟 TypeError,下面接住
+        # 當下就轉成絕對路徑:相對路徑是相對「開檔那一刻」的工作目錄,請求結束後工作目錄
+        # 已經還原,到那時才解析會指到別的地方。
+        _reads.add(os.path.abspath(path))
+    except Exception:  # noqa: BLE001 - 稽核 hook 絕不能讓被稽核的操作失敗
+        return
+
+
+def _reads_under(root: str) -> list[str]:
+    """本次請求讀過、且位於 ``root`` 之下的檔案(相對 ``root``、正斜線、已排序)。"""
+    if not _reads:
+        return []
+    base = _norm(root)
+    found = set()
+    for raw in _reads:
+        try:
+            full = os.path.abspath(raw)
+            norm = os.path.normcase(full)
+        except (OSError, ValueError):
+            continue
+        if not norm.startswith(base + os.sep) or "__pycache__" in norm:
+            continue
+        found.add(os.path.relpath(full, root).replace(os.sep, "/"))
+    return sorted(found)
 
 
 def _exit_code(code: object) -> int:
@@ -371,6 +449,8 @@ def main() -> int:
         channels.close()
         return 3
 
+    sys.addaudithook(_audit)  # 裝一次(稽核 hook 無法移除);平常 _reads 是 None,幾乎零成本
+
     # 重模組載入完才關掉 .pyc:之後載入的都是產生器與工具腳本。滑桿在同一秒內重寫同長度
     # 的 .py 時,.pyc 以「秒級 mtime + 檔案大小」判斷新舊會拿到舊碼;冷啟動時每次間隔
     # 都超過一秒所以沒事,常駐後必須避開。指到空目錄 = 一律由原始碼編譯。
@@ -412,15 +492,20 @@ def main() -> int:
             if op == "ping":
                 channels.send({"id": request_id, "done": True, "rssMb": resident_mb()})
             elif op == "run":
+                global _reads
                 started = time.perf_counter()
+                request_cwd = message.get("cwd") or None
                 channels.begin()
+                _reads = set()
                 try:
                     code = run_script(
                         str(message["script"]),
                         [str(a) for a in message.get("argv") or []],
-                        message.get("cwd") or None,
+                        request_cwd,
                     )
                 finally:
+                    reads = _reads_under(request_cwd or os.getcwd())
+                    _reads = None
                     out, err = channels.end()
                 channels.send(
                     {
@@ -430,6 +515,7 @@ def main() -> int:
                         "ms": round((time.perf_counter() - started) * 1000),
                         "rssMb": resident_mb(),
                         "outBytes": len(out),
+                        "reads": reads,
                     },
                     out + err,
                 )

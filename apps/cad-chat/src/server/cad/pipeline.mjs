@@ -3,10 +3,12 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { BASE_PATH, resolveMaxSnapshots } from "../config.mjs";
+import { BASE_PATH, DATA_ROOT, resolveMaxSnapshots } from "../config.mjs";
 import { persistSession } from "../sessions.mjs";
+import { checkStamp, hashTree, makeStamp, readStamp, writeStamp } from "./closure.mjs";
 import { resolveInside, resolveModelRead } from "./paths.mjs";
-import { scrubPaths, spawnPython } from "./python.mjs";
+import { PYTHON_CODE_DIRS, pythonKernelVersions, scrubPaths, spawnPython } from "./python.mjs";
+import { pySourceFingerprint } from "./workerPool.mjs";
 
 const STEP_DIR = "skills/cad/scripts/step";
 const INSPECT_DIR = "skills/cad/scripts/inspect";
@@ -34,6 +36,92 @@ function flatGlbRel(session, name) {
 }
 export function glbUrlFor(session, name) {
   return `${BASE_PATH}/api/asset?file=${encodeURIComponent(glbRel(session, name))}`;
+}
+
+// ---------------------------------------------------------------------------
+// 建置憑證(cad/closure.mjs):build 成功後記下「用了哪些輸入、產出了什麼」,之後輸入與
+// 環境都沒變就直接沿用產物,不重建。只在明確要求 reuse 的呼叫點生效(開專案、回退版本
+// ——這兩條路的輸入通常原封不動,卻每次都要完整重建加驗證)。
+// 憑證與驗證快取是產物旁的隱藏檔,隨版本快照與專案儲存一起走:
+//   .<name>.build.json     輸入雜湊 + 環境 + 產物雜湊
+//   .<name>.validate.json  同一張憑證下的完整驗證結果
+// 只有 worker 路徑寫得出憑證(讀檔紀錄與 kernel 版本來自 worker);CADCHAT_WORKER=0
+// 或 worker 起不來時沒有憑證 = 每次重建,行為與以前相同。
+// ---------------------------------------------------------------------------
+const buildStampPath = (session, name) =>
+  path.join(session.workdir, `.${sanitizeName(name)}.build.json`);
+const validateCachePath = (session, name) =>
+  path.join(session.workdir, `.${sanitizeName(name)}.validate.json`);
+
+function rmQuiet(file) {
+  try {
+    fs.rmSync(file, { force: true });
+  } catch {
+    /* 刪不掉就留著:核對時內容對不上自然不會命中 */
+  }
+}
+
+// 入口腳本與 cad-chat 自己的 Python 的內容摘要。內容雜湊要讀不少檔,所以用「修改時間 +
+// 檔案數」當記憶鍵:沒人動過就不重算。
+let scriptsMemo = { fingerprint: null, digest: null };
+function scriptsDigest() {
+  const fingerprint = pySourceFingerprint(PYTHON_CODE_DIRS);
+  if (fingerprint !== scriptsMemo.fingerprint) {
+    scriptsMemo = { fingerprint, digest: hashTree(PYTHON_CODE_DIRS) };
+  }
+  return scriptsMemo.digest;
+}
+
+// 會影響建模結果的環境:kernel 版本、實際載入的 cadpy、入口腳本。worker 尚未就緒過回 null。
+function buildEnv(versions = pythonKernelVersions()) {
+  if (!versions) return null;
+  return {
+    python: versions.python,
+    build123d: versions.build123d,
+    ocp: versions.ocp,
+    cadpy: versions.cadpy,
+    scripts: scriptsDigest(),
+  };
+}
+
+function stampVerdict(session, name) {
+  try {
+    return checkStamp(readStamp(buildStampPath(session, name)), {
+      name: sanitizeName(name),
+      env: buildEnv(),
+      genDir: session.workdir,
+      dataRoot: DATA_ROOT,
+    });
+  } catch (err) {
+    return { hit: false, reason: `核對失敗:${err?.message || err}` };
+  }
+}
+
+// build 成功後寫憑證。任何一步不成立(沒有讀檔紀錄、產物不齊…)就不寫——不影響 build 結果。
+function writeBuildStamp(session, name, results) {
+  const n = sanitizeName(name);
+  const file = buildStampPath(session, name);
+  try {
+    const main = results[0];
+    if (!main || !Array.isArray(main.reads)) return;
+    const reads = results.flatMap((r) => (r && Array.isArray(r.reads) ? r.reads : []));
+    const outputs = [`${n}.step`, `.${n}.step.glb`, `.${n}.step.meta.json`];
+    for (const optional of [`.${n}.flat.step.glb`, `.${n}.flat.lines.json`]) {
+      if (fs.existsSync(path.join(session.workdir, optional))) outputs.push(optional);
+    }
+    const stamp = makeStamp({
+      name: n,
+      env: buildEnv(main.versions),
+      reads,
+      genDir: session.workdir,
+      dataRoot: DATA_ROOT,
+      outputs,
+    });
+    if (stamp) writeStamp(file, stamp);
+  } catch (err) {
+    rmQuiet(file);
+    console.warn(`[cad-chat] 建置憑證寫入失敗(不影響產物):${scrubPaths(String(err?.message || err))}`);
+  }
 }
 
 // 寫產生器原始碼到 session 工作區。
@@ -368,8 +456,32 @@ export function writeSweepSidecar(session, name, sweepPaths, sweepView = null) {
   return p;
 }
 
+// build 產物就位後的 session 簿記(真的建完、或沿用既有產物,兩條路共用)。
+function adoptBuild(session, name) {
+  const n = sanitizeName(name);
+  // sidecar → session(name 綁定):設計模式 cad_validate / 滑桿重生的零 spawn 來源。
+  // sidecar 缺失(舊 cadpy 未同步等)→ 存 null,消費端自動退回 --motion-only spawn。
+  const meta = readBuildMeta(session, name);
+  session.lastBuildMeta = meta ? { name: n, ...meta } : null;
+  // per-name 槽:派工模式多個子代理並行 build 不同名字,單槽 lastBuildMeta 會互相
+  // 清掉(cad_validate 退回 spawn);單人路徑行為不變(lastBuildMeta 照舊)。
+  (session.buildMeta ||= {})[n] = session.lastBuildMeta;
+  // 權威 partCount 同步(來自同一次 gen_step):build 後未 validate 就 present 的
+  // 回合,readTypeFor 的 fallback 與 badge 也拿到新鮮值。
+  if (meta && meta.partCount > 0) session.lastPartCount = meta.partCount;
+  // 掃出路徑預覽 sidecar 跟本次 build 的收割走(失敗 build 不動它:頂層殘檔只在
+  // 下次成功 present 前有效,快照裡的舊版 sidecar 才是舊版 overlay 的真相源)。
+  try {
+    writeSweepSidecar(session, name, meta?.sweepPaths, meta?.sweepView);
+  } catch {
+    /* overlay 是輔助資訊,寫失敗不擋 build */
+  }
+  return meta;
+}
+
 // 跑 scripts/step:產 STEP + 隱藏 GLB。回 {ok, log, stderr, stepRel, glbRel, ms}。
-export async function runStep(session, name, { onLog, signal } = {}) {
+// reuse:true → 先核對建置憑證,輸入與環境都沒變就沿用既有產物(回傳多一個 reused:true)。
+export async function runStep(session, name, { onLog, signal, reuse = false } = {}) {
   const t0 = Date.now();
   const n = sanitizeName(name);
   // 幾何重生中:舊驗證判定即刻作廢(versionStamp 的 verified 誠實反映「當前幾何
@@ -379,6 +491,27 @@ export async function runStep(session, name, { onLog, signal } = {}) {
   // 快照)。emitPresent 收斂回 false;精算(/api/validate)據此回 stale,前端不把
   // 「漂移幾何的驗證結果」誤標到舊快照版上。
   session._geomDirty = true;
+  if (reuse) {
+    const verdict = stampVerdict(session, name);
+    // 憑證命中 = 輸入、環境、產物都與上次建置相同。sidecar 讀不到就當沒命中(照常重建)。
+    if (verdict.hit && adoptBuild(session, name)) {
+      const flatAbsReused = path.join(session.workdir, `.${n}.flat.step.glb`);
+      return {
+        ok: true,
+        exitCode: 0,
+        log: "",
+        stderr: "",
+        stepRel: relTarget(session, name, ".step"),
+        glbRel: glbRel(session, name),
+        flatGlbRel: fs.existsSync(flatAbsReused) ? flatGlbRel(session, name) : null,
+        ms: Date.now() - t0,
+        reused: true,
+      };
+    }
+  }
+  // 要真的重建了:舊憑證與驗證快取描述的是即將被覆寫的產物,先作廢。
+  rmQuiet(buildStampPath(session, name));
+  rmQuiet(validateCachePath(session, name));
   const target = relTarget(session, name, ".py");
   // 鈑金件(產生器有 gen_flat):攤平預覽 GLB 與摺疊 build **併行**——兩者都只讀
   // 同一份 .py、寫不同 GLB(.step.glb vs .flat.step.glb),無檔案衝突;併行不拖長
@@ -386,11 +519,8 @@ export async function runStep(session, name, { onLog, signal } = {}) {
   const flatPromise = generatorHasFlat(session, name)
     ? spawnPython(FLAT_GLB_PY, [target, flatGlbRel(session, name)], { session, signal })
     : null;
-  const { code, stdout, stderr } = await spawnPython(
-    STEP_DIR,
-    [target, "--force"],
-    { session, onLog, signal },
-  );
+  const stepRes = await spawnPython(STEP_DIR, [target, "--force"], { session, onLog, signal });
+  const { code, stdout, stderr } = stepRes;
   const flatRes = flatPromise ? await flatPromise.catch(() => null) : null;
   const ok = code === 0;
   const stepAbs = path.join(session.workdir, `${name}.step`);
@@ -400,23 +530,9 @@ export async function runStep(session, name, { onLog, signal } = {}) {
   const flatRelVal =
     flatRes && flatRes.code === 0 && fs.existsSync(flatAbs) ? flatGlbRel(session, name) : null;
   if (artifactsOk) {
-    // sidecar → session(name 綁定):設計模式 cad_validate / 滑桿重生的零 spawn 來源。
-    // sidecar 缺失(舊 cadpy 未同步等)→ 存 null,消費端自動退回 --motion-only spawn。
-    const meta = readBuildMeta(session, name);
-    session.lastBuildMeta = meta ? { name: n, ...meta } : null;
-    // per-name 槽:派工模式多個子代理並行 build 不同名字,單槽 lastBuildMeta 會互相
-    // 清掉(cad_validate 退回 spawn);單人路徑行為不變(lastBuildMeta 照舊)。
-    (session.buildMeta ||= {})[n] = session.lastBuildMeta;
-    // 權威 partCount 同步(來自同一次 gen_step):build 後未 validate 就 present 的
-    // 回合,readTypeFor 的 fallback 與 badge 也拿到新鮮值。
-    if (meta && meta.partCount > 0) session.lastPartCount = meta.partCount;
-    // 掃出路徑預覽 sidecar 跟本次 build 的收割走(失敗 build 不動它:頂層殘檔只在
-    // 下次成功 present 前有效,快照裡的舊版 sidecar 才是舊版 overlay 的真相源)。
-    try {
-      writeSweepSidecar(session, name, meta?.sweepPaths, meta?.sweepView);
-    } catch {
-      /* overlay 是輔助資訊,寫失敗不擋 build */
-    }
+    const meta = adoptBuild(session, name);
+    // 有 sidecar 才寫憑證:沿用產物時要靠 sidecar 還原 session 的 build 資訊。
+    if (meta) writeBuildStamp(session, name, [stepRes, flatRes]);
   } else {
     // 失敗 build(Python 側已先 unlink sidecar):清掉記憶體 meta,雙保險防 stale。
     if (session.lastBuildMeta?.name === n) session.lastBuildMeta = null;
@@ -504,9 +620,64 @@ export function readTypeFor(session, name) {
   return { type: "part", partCount: session.lastPartCount || 0 };
 }
 
+// 同一張建置憑證下的完整驗證結果(.<name>.validate.json)。憑證命中 = 輸入、環境、產物都
+// 沒變,驗證是決定性的,結果必然相同。key 對不上、檔案壞掉、憑證不命中都回 null。
+function readValidateCache(session, name) {
+  const verdict = stampVerdict(session, name);
+  if (!verdict.hit) return null;
+  try {
+    const stamp = readStamp(buildStampPath(session, name));
+    const cached = JSON.parse(fs.readFileSync(validateCachePath(session, name), "utf8"));
+    if (!cached || cached.schema !== 1 || cached.key !== stamp.key) return null;
+    if (!Array.isArray(cached.checks) || cached.checks.length === 0) return null;
+    return cached;
+  } catch {
+    return null;
+  }
+}
+
+// 「逾時」的結果不是這份幾何的定論(換一台機器、機器閒一點就可能掃得完),不快取。
+const VALIDATE_NOT_FINAL_RE = /逾時/;
+
+function writeValidateCache(session, name, result) {
+  const file = validateCachePath(session, name);
+  try {
+    if (result.checks.some((c) => VALIDATE_NOT_FINAL_RE.test(String(c.note || "")))) return rmQuiet(file);
+    const verdict = stampVerdict(session, name);
+    if (!verdict.hit) return rmQuiet(file); // 沒有可對應的憑證(或驗證期間輸入又變了)
+    const stamp = readStamp(buildStampPath(session, name));
+    fs.writeFileSync(file, JSON.stringify({ schema: 1, key: stamp.key, ...result }), "utf8");
+  } catch {
+    rmQuiet(file);
+  }
+}
+
 // 跑 inspect(facts)+ validate.py(幾何檢查),合併成一份誠實清單。
-export async function runValidate(session, name, { signal, motionOnly = false } = {}) {
+// reuse:true → 同一張建置憑證下已有完整驗證結果就直接用(回傳多一個 reused:true)。
+export async function runValidate(session, name, { signal, motionOnly = false, reuse = false } = {}) {
   const t0 = Date.now();
+  if (reuse && !motionOnly) {
+    const cached = readValidateCache(session, name);
+    if (cached) {
+      const partCount = Number(cached.partCount) || 0;
+      const parts = Array.isArray(cached.parts) ? cached.parts.map(String) : [];
+      try {
+        writeAsmManifest(session, name, { partCount, parts });
+      } catch {
+        // 同下:manifest 寫失敗不影響驗證結果
+      }
+      session._lastValidate = { name: sanitizeName(name), full: true, ok: cached.ok === true };
+      return {
+        ok: cached.ok === true,
+        checks: cached.checks,
+        motion: cached.motion || null,
+        partCount,
+        parts,
+        ms: Date.now() - t0,
+        reused: true,
+      };
+    }
+  }
   const stepTarget = relTarget(session, name, ".step");
   const pyTarget = relTarget(session, name, ".py");
 
@@ -529,8 +700,10 @@ export async function runValidate(session, name, { signal, motionOnly = false } 
   let motion = null;
   let partCount = 0;
   let parts = [];
+  let conclusive = true; // 兩支腳本都正常回報(不是被中止、崩潰、輸出解析不了)才可快取
   try {
     const parsed = JSON.parse(validateRes.stdout.trim().split("\n").pop());
+    if (!Array.isArray(parsed.checks) || parsed.error) conclusive = false;
     if (Array.isArray(parsed.checks)) checks.push(...parsed.checks);
     geomOk = parsed.ok === true;
     motion = parsed.motion || null; // 產生器 MOTION 宣告(前端播放用,已解析數值)
@@ -540,6 +713,7 @@ export async function runValidate(session, name, { signal, motionOnly = false } 
       checks.push({ id: "generator", label: "產生器執行", ok: false, note: parsed.error });
     }
   } catch {
+    conclusive = false;
     checks.push({
       id: "generator",
       label: "幾何檢查",
@@ -564,6 +738,7 @@ export async function runValidate(session, name, { signal, motionOnly = false } 
       note: `bbox ${size} mm · faces=${faces}`,
     });
   } catch {
+    conclusive = false;
     checks.push({
       id: "facts",
       label: "拓撲 / 尺寸 topology",
@@ -573,6 +748,14 @@ export async function runValidate(session, name, { signal, motionOnly = false } 
   }
 
   const overall = checks.every((c) => c.skipped || c.ok);
+  // 完整驗證且兩支腳本都有定論、沒被中止 → 記在憑證旁,同樣的輸入下次免重跑。
+  if (!motionOnly) {
+    if (conclusive && !signal?.aborted && validateRes.code === 0 && inspectRes.code === 0) {
+      writeValidateCache(session, name, { ok: overall, checks, motion, partCount, parts });
+    } else {
+      rmQuiet(validateCachePath(session, name));
+    }
+  }
   // 幾何真的產出來了(partCount>0)才更新檔案類型 manifest
   try {
     writeAsmManifest(session, name, { partCount, parts });
@@ -880,7 +1063,9 @@ function snapshotVersion(session, name, verNum, { type, partCount }) {
   // .flat.step.glb + .flat.lines.json:鈑金攤平預覽 GLB 與折彎線 overlay,切舊版也要能
   // 切攤平/看折彎線 → 一併進快照(存在才複)。.sweep.json:掃出路徑預覽折線,
   // 同理跟版凍結(切舊版 overlay 要對舊幾何)。
-  for (const f of [`${n}.py`, `${n}.step`, `.${n}.step.glb`, `.${n}.flat.step.glb`, `.${n}.flat.lines.json`, `.${n}.sweep.json`, `${n}.asm.json`, `.${n}.step.js`]) {
+  // .step.meta.json / .build.json / .validate.json:build 收割、建置憑證、驗證快取——回退到
+  // 這一版時,輸入與環境沒變就能直接沿用這些產物,不必重建重驗(見檔頭「建置憑證」)。
+  for (const f of [`${n}.py`, `${n}.step`, `.${n}.step.glb`, `.${n}.flat.step.glb`, `.${n}.flat.lines.json`, `.${n}.sweep.json`, `${n}.asm.json`, `.${n}.step.js`, `.${n}.step.meta.json`, `.${n}.build.json`, `.${n}.validate.json`]) {
     const src = path.join(session.workdir, f);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(dir, f));
   }

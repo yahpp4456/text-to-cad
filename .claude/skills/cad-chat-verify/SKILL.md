@@ -87,6 +87,19 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
     `child.pid`。砍行程一律 `killTree`(`taskkill /T`),只砍 `child.pid` 會留下真正的直譯器。
   - **新入口腳本要不要走 worker**:看 `python.mjs` 的 `WORKER_SCRIPTS`。會崩潰帶走行程的
     (如 `drawing_pdf.py` 的精確 HLR)與不載入 OCP 的輕腳本維持 spawn。
+- **建置憑證(2026-11-25)**:開專案與回退會先核對 `.<name>.build.json`,輸入、環境、產物都沒變
+  就**不重建**(README「建置憑證」章;`cad/closure.mjs`)。動這條路要知道:
+  - **煙測裡「開專案後斷言產物是新產生的」不再恆真**:對存過檔的專案第二次開會沿用。要逼它
+    重建就改一下產生器(加一行註解即可),或看回應的 `reused: {build, validate}`。fixture
+    (`models/` 版控的)沒有憑證,第一次開仍然重建。
+  - **新增產物旁的 sidecar 要加三個地方**:`snapshotVersion`(pipeline.mjs)、回退複回
+    (project.mjs)、`OWNED_HIDDEN_SUFFIXES`(projectTree.mjs)。漏了快照那一處,回退就永遠
+    不會命中(不會壞,只是白等)。
+  - **改到「什麼算輸入」或核對邏輯** → L1 `cad/closure.test.js`(每種變動都必須未命中)+
+    `smoke_build_reuse.py` **兩種設定各跑一次**(`CADCHAT_WORKER=0` 時沒有憑證,它改斷
+    「一律重建」)。改 worker 的讀檔紀錄 → `tests/test_worker.py`。
+  - 懷疑沿用了不該沿用的東西:刪掉該目錄的 `.<name>.build.json` 就會重建;若因此結果不同,
+    那是憑證漏記了某個輸入——是 bug,要回報,不是刪了就算。
 - **回歸基準 `scripts/dev/regress_fixtures.py`(2026-11-24)**:把 `models/` 下全部產生器
   (31 個)建一次,記錄幾何(零件數/包絡/體積/面數)、`validate.py` 各檢查結果、管線產出,
   `--compare <基準>` 比對(幾何與檢查結果不同 = FAIL、面數不同 = WARN、耗時不比)。升級

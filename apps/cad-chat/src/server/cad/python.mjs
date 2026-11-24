@@ -187,6 +187,20 @@ export function pythonWorkerStats() {
   return pool ? pool.stats() : null;
 }
 
+// 目前 worker 的 kernel 版本({python, build123d, ocp});還沒有 worker 就緒過(或已停用)回 null。
+export function pythonKernelVersions() {
+  return pool ? pool.versions() : null;
+}
+
+// 會影響建模結果的第一方 Python 程式所在目錄(cadpy 複本、cad-chat 自己的 Python、入口腳本)。
+export const PYTHON_CODE_DIRS = [
+  ...WORKER_WATCH_DIRS,
+  path.resolve(RUNTIME_ROOT, "apps/cad-chat/src/server/cad"),
+  path.resolve(RUNTIME_ROOT, "skills/cad/scripts/step"),
+  path.resolve(RUNTIME_ROOT, "skills/cad/scripts/inspect"),
+  path.resolve(RUNTIME_ROOT, "skills/dxf/scripts/dxf"),
+];
+
 // scriptDir 為 RUNTIME_ROOT 相對路徑(如 "skills/cad/scripts/step"),以 `python <dir> ...`
 // 執行。腳本在這裡統一絕對化(唯讀程式資產根);cwd=DATA_ROOT(可寫資料根)是產物
 // 相對路徑的基準——打包後兩根分離,cwd 只能當產物基準,腳本必須走絕對路徑。
@@ -211,7 +225,9 @@ export async function spawnPython(scriptDir, args, { session, onLog, signal } = 
       const stderr = scrubPaths(result.stderr);
       if (stdout) onLog?.(stdout);
       if (stderr) onLog?.(stderr);
-      return { code: result.code, stdout, stderr };
+      // reads / versions 只有 worker 路徑有:腳本讀了哪些檔(相對 DATA_ROOT)與 kernel 版本,
+      // 給 cad/closure.mjs 判斷「輸入沒變就不重建」。直接 spawn 的結果沒有這兩欄。
+      return { code: result.code, stdout, stderr, reads: result.reads, versions: result.versions };
     }
     // null = 池目前無法服務(起不來 / 正在關閉)→ 照舊每次 spawn
   }

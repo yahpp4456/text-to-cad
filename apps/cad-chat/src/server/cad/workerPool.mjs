@@ -68,6 +68,7 @@ export function createWorkerPool({
   let disabledUntil = 0;
   let fpValue;
   let fpAt = -Infinity;
+  let lastVersions = null; // 最近一個就緒的 worker 回報的 kernel 版本
 
   // 砍 worker 並記下「這個行程已經沒救了」:砍行程是非同步的,行程真正消失前可能先
   // 收到它的 done frame;不標記的話它會回到閒置、被派到下一個請求後才死。
@@ -205,6 +206,8 @@ export function createWorkerPool({
         worker.state = "idle";
         worker.rssMb = message.rssMb ?? null;
         worker.capture = message.capture || null;
+        worker.versions = message.versions || null;
+        lastVersions = worker.versions || lastVersions;
         worker.pid = message.pid ?? worker.child.pid;
         worker.lastUsed = now();
         startFailures = 0;
@@ -227,6 +230,9 @@ export function createWorkerPool({
         code: Number.isInteger(message.code) ? message.code : -1,
         stdout: payload.subarray(0, outBytes).toString("utf8"),
         stderr: payload.subarray(outBytes).toString("utf8"),
+        // 以下兩項只有 worker 路徑有(直接 spawn 沒有):給「輸入沒變就不重建」用。
+        ...(Array.isArray(message.reads) ? { reads: message.reads } : {}),
+        ...(worker.versions ? { versions: worker.versions } : {}),
       });
     } else if (message.failed != null) {
       finish(worker, { code: -1, stdout: "", stderr: `[cad-worker] ${message.failed}` });
@@ -454,6 +460,9 @@ export function createWorkerPool({
     });
   }
 
+  // 最近一個就緒的 worker 回報的版本({python, build123d, ocp});還沒有 worker 就緒過回 null。
+  const versions = () => lastVersions;
+
   function stats() {
     return {
       closed,
@@ -470,7 +479,7 @@ export function createWorkerPool({
     };
   }
 
-  return { run, prewarm, dispose, stats };
+  return { run, prewarm, dispose, stats, versions };
 }
 
 // 目錄樹內所有 .py 的「最新修改時間 + 檔案數」,當作程式碼指紋。目錄不存在視為空。

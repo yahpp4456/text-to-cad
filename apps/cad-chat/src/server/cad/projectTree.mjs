@@ -67,6 +67,8 @@ const OWNED_HIDDEN_SUFFIXES = [
   ".flat.step.glb",
   ".flat.lines.json",
   ".sweep.json",
+  ".build.json", // 建置憑證(pipeline.mjs「建置憑證」)
+  ".validate.json", // 同一張憑證下的驗證結果
 ];
 
 export function generatorStems(dir) {

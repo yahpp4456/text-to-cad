@@ -297,6 +297,69 @@ worker 啟動約 5–6 秒、常駐約 350–400 MiB。常駐的 build 數字沒
   (幾何、驗證結果、管線產出),升級 kernel 或動建模管線前後各跑一次。
 - L3:全套煙測在 `CADCHAT_WORKER=0` 與預設(開)兩種設定下都要全過。
 
+## 建置憑證:輸入沒變就不重建(2026-11-25;藍圖 A6)
+
+開專案與回退版本原本一律「完整重建 + 完整驗證」,目的是防止存檔裡的 GLB 是舊版 `cadpy`
+產的。但這兩個動作的輸入通常原封不動,大型組合件卻每次都要等。現在 build 成功後在產物
+旁留一張**憑證**,下次核對得上就直接沿用。
+
+實測(`sheet_u_bracket`):第一次開 13.1 秒,存檔後再開 0.1 秒。
+
+### 憑證記什麼、怎麼核對
+
+`.<name>.build.json`(`cad/closure.mjs`):
+
+| 欄位 | 內容 | 核對 |
+|---|---|---|
+| `env` | Python / build123d / OCP 版本、實際載入的 `cadpy` 內容摘要、入口腳本內容摘要 | 逐欄相同 |
+| `inputs` | 輸入檔與其內容雜湊 | 逐檔重新雜湊,相同 |
+| `external` | 外部 CAD 檔的檔名清單(見下) | 沒有增減 |
+| `outputs` | STEP、GLB、build 收割 sidecar(及攤平 GLB)的雜湊 | 產物存在且相同 |
+
+全部成立才算命中;憑證不存在、讀不到、任何一項對不上,都照舊重建——**寧可多重建一次**。
+
+輸入檔的來源有兩個:
+
+- **worker 回報的讀檔紀錄**(`sys.addaudithook`):腳本在 Python 層讀過的檔——產生器、同目錄
+  模組、資料檔。
+- **外部 CAD 檔**:`import_step` 這類讀取是 OCCT 在 C++ 裡開檔,Python 層看不到。所以凡是
+  產生器可能這樣讀到的都算輸入:`imported/` 全部檔案,加上產生器目錄頂層與 `uploads/` 裡的
+  CAD 交換檔(STEP / IGES / BREP / STL / 3MF / DXF)。典型情況是組合件 `import_step` 同目錄
+  另一個零件的 STEP——那個零件一重建,組合件的憑證就對不上。
+
+產物(自己的 STEP、匯出檔)與隱藏 sidecar 不算輸入。
+
+同一張憑證下的完整驗證結果另存 `.<name>.validate.json`(以憑證的 `key` 對應)。含「逾時」的
+結果不存:那不是這份幾何的定論。
+
+### 哪裡會沿用
+
+只有 `/api/open-project` 與 `/api/revert-version`(`runStep` / `runValidate` 的 `reuse:true`)。
+其餘路徑(agent 的 `cad_build`、滑桿重生、精算、匯出閘)行為不變。兩個端點的回應多一個
+`reused: { build, validate }`,說明這次是否真的沿用。
+
+憑證與驗證快取是產物旁的隱藏檔,跟著三個地方一起走,**新增同類 sidecar 時三處都要加**:
+版本快照(`pipeline.mjs` `snapshotVersion`)、回退複回(`project.mjs` `handleRevertVersion`)、
+專案儲存的產生器家族(`projectTree.mjs` `OWNED_HIDDEN_SUFFIXES`)。
+
+### 邊界
+
+- **只有常駐 worker 路徑寫得出憑證**(讀檔紀錄與 kernel 版本來自 worker)。`CADCHAT_WORKER=0`
+  或 worker 起不來 = 沒有憑證 = 每次重建,行為與以前相同。
+- **伺服器剛啟動、worker 還沒就緒時**開專案會重建(當下不知道環境),不會誤用。
+- `models/` 裡版控的 fixture 沒有憑證,第一次開一定重建;存檔之後才有。
+- 改 `cadpy` 或入口腳本 → 摘要變了 → 所有舊憑證失效(這正是原本「一律重建」要防的事)。
+- 帶參數或規格覆寫開專案 → 產生器被改寫 → 輸入雜湊對不上 → 重建。
+- 憑證是使用者資料目錄裡的檔案,視為不可信:路徑越界、內容與 `key` 不符一律當未命中。
+- 輸入超過 400 個檔或 256 MiB 不寫憑證。
+
+### 驗證
+
+L1 `cad/closure.test.js`(每一種輸入、環境、產物變動都必須未命中;整個專案複製到別處仍
+命中)。Python `tests/test_worker.py`(讀檔紀錄:相對路徑、`os.open`、寫檔不算、請求之間不
+殘留)。L2 `smoke_build_reuse.py`(開 → 存 → 再開沿用且 GLB 逐位相同 → 改產生器重建 →
+換掉產物重建 → 回退沿用;伺服器開或關 worker 都要綠)。
+
 ## Kernel 版本:OCP 7.9 與 OCP 8 都能跑(2026-11-25)
 
 `cadpy` 與 cad-chat 的 Python 腳本在 **build123d 0.11 / OCP 7.9** 與
