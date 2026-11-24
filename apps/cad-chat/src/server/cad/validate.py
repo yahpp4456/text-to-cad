@@ -2,15 +2,26 @@
 """apps/cad-chat 幾何驗證 harness。
 
 import 產生器 .py -> 呼叫 gen_step() -> 用 cadpy.geometry_checks 跑真實檢查 ->
-輸出 JSON 清單到 stdout。只報「真的有跑」的檢查;pipeline 沒有的(自交/壁厚)標 skipped,
-不假裝 PASS(誠實原則,PRD §10.9)。
+輸出 JSON 清單到 stdout。只列「這支腳本會做」的檢查,每列帶 status:
 
-用法:  python apps/cad-chat/src/server/cad/validate.py <generator.py>
-輸出:  {"ok": bool, "checks": [{"id","label","ok","note","skipped"?}]}
+    ok              量過,通過
+    failed          量過,沒過(或宣告本身無效)
+    not_checked     該量而沒量到(掃掠逾時、設計模式略過)——**不算通過**
+    not_applicable  這個模型不需要這項(單一零件沒有干涉可查、沒宣告 MOTION)
+
+not_checked 與 not_applicable 的列同時標 skipped:true:既有的消費端(agent 的「非 skipped 且
+fail 才自修」、教訓庫)把它們當「沒有失敗」,不會把逾時誤認成幾何錯誤。但完整驗證的總判定
+(pipeline.mjs fullValidationOk、匯出閘)只認 ok 與 not_applicable:量不到不算通過。
+
+用法:  python apps/cad-chat/src/server/cad/validate.py <generator.py> [--motion-only]
+輸出:  {"ok": bool, "complete": bool, "checks": [{"id","label","ok","status","note","skipped"?}]}
+       ok = 沒有 failed;complete = 沒有 not_checked。
+環境:  CADCHAT_SWEEP_DEADLINE_S  掃掠的時間上限(秒,預設 75)
 exit:  0 一律(驗證判定在 JSON.ok);只有 import/執行產生器失敗才 exit 1。
 """
 import importlib.util
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -41,7 +52,16 @@ def _load_gen_step(script_path: Path):
 # ---------------------------------------------------------------------------
 _MOTION_MAX_PAIRS_PER_DOF = 12
 _MOTION_MAX_PAIR_FRAMES = 600      # Σ pairs×samples 預算
-_MOTION_SWEEP_DEADLINE_S = 75.0    # 掃掠中 wall-clock 深水閘
+def _sweep_deadline_s() -> float:
+    """掃掠中 wall-clock 深水閘(秒)。可用 CADCHAT_SWEEP_DEADLINE_S 覆寫;壞值用預設。"""
+    try:
+        value = float(os.environ.get("CADCHAT_SWEEP_DEADLINE_S", ""))
+    except ValueError:
+        return 75.0
+    return value if value >= 0 else 75.0
+
+
+_MOTION_SWEEP_DEADLINE_S = _sweep_deadline_s()
 _MOTION_AABB_MARGIN = 2.0          # 自動配對的 AABB 外擴 (mm)
 _MOTION_LABEL = "運動掃掠干涉 motion-sweep"
 
@@ -286,10 +306,19 @@ def _run_motion_sweep(named, motion):
                 "note": (f"{h0.where}: {h0.a}~{h0.b} 超出 +{h0.excess:.1f}mm³{pos};"
                          f"共 {len(all_hits)} pair-frame 穿透(掃 {stat})")}
     if state["timeout"]:
-        return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": True,
-                "note": f"已掃部分無穿透,掃掠未完成——逾時(掃 {stat})"}
+        # 沒掃完 = 沒量到。已掃的部分沒有穿透,但剩下的幀沒有任何證據,不能說通過。
+        return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": True, "skipped": True,
+                "status": "not_checked",
+                "note": f"未量測:掃掠逾時,只掃了一部分(已掃部分無穿透;掃 {stat})"}
     return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": True,
             "note": f"全程無穿透(掃 {stat})"}
+
+
+def _status_of(check: dict) -> str:
+    """沒有明確標 status 的列:skipped = 該量沒量(not_checked),否則看 ok。"""
+    if check.get("skipped"):
+        return "not_checked"
+    return "ok" if check.get("ok") else "failed"
 
 
 def main() -> int:
@@ -345,16 +374,7 @@ def main() -> int:
             "note": note,
         })
 
-    # 2) 自交 — 無獨立檢查;BRepCheck 已涵蓋基本有效性(誠實標 skipped)
-    checks.append({
-        "id": "self_intersection",
-        "label": "自交 self-intersection",
-        "ok": True,
-        "skipped": True,
-        "note": "未支援獨立檢查",
-    })
-
-    # 3) 零件干涉 — 只在多件組合時有意義。尊重產生器宣告的 INTENDED_CONTACT
+    # 2) 零件干涉 — 只在多件組合時有意義。尊重產生器宣告的 INTENDED_CONTACT
     # (與其 check_geometry gate 同一份 allow-list),但把 allowed 對數報出來,
     # 不靜默(L-5:黏方塊白名單必須可見)。
     if motion_only:
@@ -394,10 +414,11 @@ def main() -> int:
             "label": "零件干涉 interference",
             "ok": True,
             "skipped": True,
+            "status": "not_applicable",
             "note": "單一零件,無需檢查",
         })
 
-    # 4) 運動掃掠干涉 — 產生器宣告 MOTION 時真跑 cadpy sweep;未宣告誠實跳過
+    # 3) 運動掃掠干涉 — 產生器宣告 MOTION 時真跑 cadpy sweep;未宣告誠實跳過
     motion, motion_errs = _read_motion(gen_module, named)
     if motion_errs:
         # 宣告已知錯誤 = 真 fail(兩條路徑一致;--motion-only 也不偽裝成 skipped,
@@ -415,6 +436,7 @@ def main() -> int:
             "label": _MOTION_LABEL,
             "ok": True,
             "skipped": True,
+            "status": "not_applicable",
             "note": "未提供運動學",
         })
     elif motion_only:
@@ -428,18 +450,14 @@ def main() -> int:
     else:
         checks.append(_run_motion_sweep(named, motion))
 
-    # 5) 壁厚 — pipeline 目前無此檢查
-    checks.append({
-        "id": "wall_thickness",
-        "label": "壁厚 wall-thickness",
-        "ok": True,
-        "skipped": True,
-        "note": "pipeline 未支援",
-    })
+    # 自交、壁厚:這支腳本沒有這兩項檢查,所以不列(以前各佔一列、永遠 skipped)。
 
+    for check in checks:
+        check.setdefault("status", _status_of(check))
     overall = all(c["ok"] for c in checks if not c.get("skipped"))
+    complete = not any(c["status"] == "not_checked" for c in checks)
     # parts: 權威 label 清單(真跑 gen_step 後),伺服端據此寫組合件 manifest
-    out = {"ok": overall, "checks": checks, "partCount": len(named),
+    out = {"ok": overall, "complete": complete, "checks": checks, "partCount": len(named),
            "parts": [n for n, _ in named]}
     if motion is not None:
         # 前端播放用的宣告(數值已是 import 後的值,滑桿重生自動跟上);

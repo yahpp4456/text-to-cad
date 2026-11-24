@@ -280,6 +280,7 @@ export function buildCadchatServer({ session, emit, signal }) {
               color: c.color,
               note: c.noteText,
               skipped: !!c.skipped,
+              status: c.status,
             })),
           });
           // 一律發 motion(空 dofs = 清除舊宣告),防止重生成靜態件後播放鈕殘留
@@ -428,6 +429,7 @@ export function buildCadchatServer({ session, emit, signal }) {
                 color: c.color,
                 note: c.noteText,
                 skipped: !!c.skipped,
+                status: c.status,
               })),
             });
             if (!val.ok || signal?.aborted) {

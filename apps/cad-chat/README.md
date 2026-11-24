@@ -154,7 +154,11 @@ asar 非加密,寫死源碼同樣可抽,故不採)。
   stderr 仍是完整尾段。
 - 驗證只報「真的有跑」的檢查;產圖回合一律快路徑(checks 全 SKIP,誠實揭露),
   完整驗證(有效實體 BRepCheck / 干涉 / 運動掃掠 `cadpy.geometry_checks.sweep_interference`)
-  在「✓ 精算此版」與匯出閘執行;pipeline 沒有的自交、壁厚恆標 SKIP,不假裝通過。
+  在「✓ 精算此版」與匯出閘執行。每列檢查帶 `status`(`ok` / `failed` / `not_checked` /
+  `not_applicable`),**量不到不算通過**:完整驗證的總判定只認 `ok` 與 `not_applicable`,所以
+  掃掠逾時(`not_checked`)會擋匯出,驗證卡顯示「N 項未量測 · 尚未通過」而不是「偵測到問題」。
+  這條管線不做的檢查(自交、壁厚)不列。四種狀態的定義見 `AGENT_MECHANISM.md` 的驗證輸出契約;
+  掃掠時限可用 `CADCHAT_SWEEP_DEADLINE_S` 調整(預設 75 秒)。
 - 開發預覽:`?glb=/api/asset?file=<models 內的 .glb 相對路徑>&name=<n>[&motion=<json>]`
   可不經對話直接把既有 GLB 載入畫布(驗 3D / 運動播放用)。
 - 對話 scratch(`models/.cadchat/`)已被 `.gitignore` 忽略。**啟動時 GC** 會刪掉

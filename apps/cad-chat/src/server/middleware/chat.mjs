@@ -513,6 +513,7 @@ async function deterministicRegen(session, params, emit, signal) {
       color: c.color,
       note: c.noteText,
       skipped: !!c.skipped,
+      status: c.status,
     })),
   });
   // MOTION 的 travel 引用 PARAMS,重生後重新 import 的新值在這裡帶回(播放自動跟上)

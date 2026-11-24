@@ -23,6 +23,7 @@ ORDER = [
     "smoke_chat_markdown.py",
     "smoke_upload.py",
     "smoke_verify_gate.py",
+    "smoke_gate_unmeasured.py",  # 量不到不算通過:掃掠逾時 → 未量測 → 匯出被擋(自己起一個掃掠時限 0 的伺服器)
     "smoke_asm_ui.py",
     "smoke_occ_tree.py",
     "smoke_click_select.py",

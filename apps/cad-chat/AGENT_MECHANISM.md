@@ -348,17 +348,28 @@ def assert_motion_clear(poses, pairs, *, baseline=None, tol=0.05):
 **驗證輸出契約**（app 直接吃）：
 
 ```json
-{"ok": true, "partCount": 3, "parts": ["base","pin","block"],
+{"ok": true, "complete": false, "partCount": 3, "parts": ["base","pin","block"],
  "motion": {...},
  "checks": [
-   {"id": "valid_solid",   "label": "有效實體",   "ok": true},
-   {"id": "interference",  "label": "零件干涉",   "ok": true,  "note": "allowed: pin~block 12.3mm^3"},
-   {"id": "motion_sweep",  "label": "運動掃掠",   "ok": false, "note": "carriage~rail +4.1mm^3 at 0.5"},
-   {"id": "wall_thickness","label": "壁厚",       "ok": true,  "skipped": true, "note": "pipeline 未支援"}
+   {"id": "valid_solid",  "label": "有效實體", "ok": true, "status": "ok"},
+   {"id": "interference", "label": "零件干涉", "ok": true, "status": "ok", "note": "0 undeclared overlaps · 1 對宣告接觸(allowed)"},
+   {"id": "motion_sweep", "label": "運動掃掠", "ok": true, "status": "not_checked", "skipped": true, "note": "未量測:掃掠逾時,只掃了一部分…"}
  ]}
 ```
 
-`skipped:true` = 沒跑，UI 畫灰色，**不算通過也不算失敗**。這是「只報真的有跑」的程式化表達。
+頂層 `ok` = 沒有 `failed`；`complete` = 沒有 `not_checked`。每列的 `status` 有四種：
+
+| status | 意思 | `skipped` | 完整驗證算通過嗎 |
+|---|---|---|---|
+| `ok` | 量過，通過 | 否 | 是 |
+| `failed` | 量過，沒過（或宣告本身無效） | 否 | 否 |
+| `not_checked` | 該量而沒量到（掃掠逾時、設計模式略過） | 是 | **否** |
+| `not_applicable` | 這個模型不需要這項（單一零件沒有干涉可查、沒宣告 MOTION） | 是 | 是 |
+
+**量不到不算通過**：完整驗證（精算、匯出閘、開專案、回退）的總判定只認 `ok` 與
+`not_applicable`（`pipeline.mjs` `fullValidationOk`）。`not_checked` 同時標 `skipped:true`，
+所以 agent 的「非 skipped 且 fail 才自修」與教訓庫不會把逾時當成幾何錯誤——但它擋匯出。
+這條管線不做的檢查（自交、壁厚）不列，不佔一列永遠略過的位置。
 
 ### 3.4 查詢 CLI：給 LLM 的唯讀量測 API
 

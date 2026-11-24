@@ -87,6 +87,25 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
     `child.pid`。砍行程一律 `killTree`(`taskkill /T`),只砍 `child.pid` 會留下真正的直譯器。
   - **新入口腳本要不要走 worker**:看 `python.mjs` 的 `WORKER_SCRIPTS`。會崩潰帶走行程的
     (如 `drawing_pdf.py` 的精確 HLR)與不載入 OCP 的輕腳本維持 spawn。
+- **檢查列的四種狀態 / 量不到不算通過(2026-11-25)**:每列帶 `status`——`ok` / `failed` /
+  `not_checked`(該量而沒量到:掃掠逾時、設計模式略過)/ `not_applicable`(這個模型不需要:
+  單一零件的干涉、沒宣告 MOTION)。完整驗證的總判定只認 `ok` 與 `not_applicable`
+  (`pipeline.mjs` `fullValidationOk`);`not_checked` 同時是 `skipped:true`,所以 agent 自修
+  條件與教訓庫不會把逾時當幾何錯誤,但它**擋匯出**。動這條路要知道:
+  - 狀態的定義有三處要一致:`validate.py`(來源)、`pipeline.mjs` `checkStatus` /
+    `designChecksFromMeta` / `decorateChecks`、前端 `lib/validateVerdict.js` `checkStatusOf`。
+    沒標 `status` 的略過列一律**從嚴**當 `not_checked`。
+  - 檢查列的對外映射有五處(`tools.mjs` ×2、`chat.mjs`、`project.mjs` ×2:
+    `skipped: !!c.skipped` 的下一行 `status: c.status`)。新增欄位要五處一起加,漏一處就是
+    「L1 全綠、畫面卻沒有」那種 bug。
+  - 自交、壁厚兩列已移除(這條管線不做這兩項檢查)。斷言列數/列名的測試要用現在的四列:
+    `valid_solid` / `interference` / `motion_sweep` / `facts`(`validate.py` 自己輸出前三列)。
+  - 必跑:L1 `pipeline.design.test.js` + `validateVerdict.test.js`;Python
+    `tests/test_validate_motion.py`(`FlipGripperIntegration` 兩條新測試);
+    `smoke_gate_unmeasured.py`(端到端;**它自己起一個掃掠時限 0 的伺服器**在 8897 埠,
+    `CADCHAT_SMOKE_AUX_PORT` 可改)+ `smoke_verify_gate.py`。
+  - 要手動重現逾時:`CADCHAT_SWEEP_DEADLINE_S=0` 起伺服器(或直接對 `validate.py` 設這個
+    環境變數)。
 - **建置憑證(2026-11-25)**:開專案與回退會先核對 `.<name>.build.json`,輸入、環境、產物都沒變
   就**不重建**(README「建置憑證」章;`cad/closure.mjs`)。動這條路要知道:
   - **煙測裡「開專案後斷言產物是新產生的」不再恆真**:對存過檔的專案第二次開會沿用。要逼它

@@ -7,7 +7,10 @@ import path from "node:path";
 import { test } from "node:test";
 
 import {
+  checkStatus,
+  decorateChecks,
   designChecksFromMeta,
+  fullValidationOk,
   emitPresent,
   readBuildMeta,
   runValidateDesign,
@@ -77,30 +80,72 @@ test("readBuildMeta:缺檔 / 壞 JSON / schema 不符 → null(fallback 訊號)"
 // 改 validate.py 文案必同步 pipeline.mjs 與此測試)
 // ---------------------------------------------------------------------------
 
-test("designChecksFromMeta:六列全 skipped、文案對齊 validate.py", () => {
+test("designChecksFromMeta:四列全 skipped(該量而沒量 = not_checked)、文案對齊 validate.py", () => {
   const checks = designChecksFromMeta({ ...META });
-  assert.equal(checks.length, 6);
+  // 自交、壁厚以前各佔一列且永遠 skipped:它們不是這條管線會做的檢查,已不列。
+  assert.deepEqual(
+    checks.map((c) => c.id),
+    ["valid_solid", "interference", "motion_sweep", "facts"],
+  );
   for (const c of checks) {
     assert.equal(c.ok, true);
     assert.equal(c.skipped, true);
+    assert.equal(c.status, "not_checked");
   }
   const by = Object.fromEntries(checks.map((c) => [c.id, c]));
   assert.equal(by.valid_solid.label, "封閉性 / 有效實體 (watertight)");
   assert.equal(by.valid_solid.note, "設計模式:略過驗證(未驗證)");
-  assert.equal(by.self_intersection.note, "未支援獨立檢查");
   assert.equal(by.interference.note, "設計模式:略過驗證(未驗證)"); // partCount 3
   assert.equal(by.motion_sweep.label, "運動掃掠干涉 motion-sweep");
   assert.equal(by.motion_sweep.note, "設計模式:略過掃掠(未驗證)");
-  assert.equal(by.wall_thickness.note, "pipeline 未支援");
   assert.equal(by.facts.label, "拓撲 / 尺寸 topology");
   assert.equal(by.facts.note, "設計模式:略過檢查(未驗證)");
+});
+
+test("checkStatus / fullValidationOk:量不到不算通過", () => {
+  const ok = { ok: true, status: "ok" };
+  const na = { ok: true, skipped: true, status: "not_applicable" };
+  const timedOut = { ok: true, skipped: true, status: "not_checked" };
+  const failed = { ok: false, status: "failed" };
+  assert.equal(fullValidationOk([ok, ok]), true);
+  assert.equal(fullValidationOk([ok, na, na]), true, "不適用的列不擋");
+  assert.equal(fullValidationOk([ok, timedOut]), false, "逾時沒量到:不算通過");
+  assert.equal(fullValidationOk([ok, failed]), false);
+  assert.equal(fullValidationOk([]), false, "一列都沒有不是通過");
+  assert.equal(fullValidationOk(null), false);
+  // 沒標 status 的舊資料:skipped 從嚴當 not_checked
+  assert.equal(checkStatus({ ok: true, skipped: true }), "not_checked");
+  assert.equal(checkStatus({ ok: true }), "ok");
+  assert.equal(checkStatus({ ok: false }), "failed");
+  assert.equal(fullValidationOk([{ ok: true }, { ok: true, skipped: true }]), false);
+  // 設計模式的列(全是 not_checked / not_applicable)當然不是完整驗證通過
+  assert.equal(fullValidationOk(designChecksFromMeta({ ...META })), false);
+});
+
+test("decorateChecks:四種狀態各有自己的圖示;未量測不與不適用長得一樣", () => {
+  const rows = decorateChecks([
+    { id: "a", ok: true, status: "ok" },
+    { id: "b", ok: false, status: "failed", note: "3 處未宣告干涉" },
+    { id: "c", ok: true, skipped: true, status: "not_checked", note: "未量測:掃掠逾時" },
+    { id: "d", ok: true, skipped: true, status: "not_applicable", note: "單一零件,無需檢查" },
+    { id: "e", ok: true, skipped: true }, // 舊資料
+  ]);
+  assert.deepEqual(
+    rows.map((r) => [r.status, r.icon]),
+    [["ok", "✓"], ["failed", "✗"], ["not_checked", "?"], ["not_applicable", "–"], ["not_checked", "?"]],
+  );
+  assert.notEqual(rows[2].color, rows[3].color);
+  assert.equal(rows[1].noteText, "3 處未宣告干涉");
+  assert.equal(rows[4].noteText, "未量測");
 });
 
 test("designChecksFromMeta:單件 / 無 MOTION / MOTION 錯誤三分支", () => {
   const single = designChecksFromMeta({ ...META, parts: ["p"], partCount: 1, motion: null });
   const by1 = Object.fromEntries(single.map((c) => [c.id, c]));
   assert.equal(by1.interference.note, "單一零件,無需檢查");
+  assert.equal(by1.interference.status, "not_applicable");
   assert.equal(by1.motion_sweep.note, "未提供運動學");
+  assert.equal(by1.motion_sweep.status, "not_applicable");
 
   // motionErrs 取前 2 條,且是**真 fail**(非 skipped)——agent 自修 MOTION 的回饋
   // 通道靠「非 skipped 且 fail」觸發;偽裝成 skipped 就永遠不修(審查 F2)。
@@ -112,7 +157,7 @@ test("designChecksFromMeta:單件 / 無 MOTION / MOTION 錯誤三分支", () => 
   assert.equal(by2.motion_sweep.ok, false);
   assert.equal(by2.motion_sweep.skipped, false);
   assert.equal(by2.motion_sweep.label, "運動掃掠干涉 motion-sweep");
-  // 其餘五列仍是 skipped(宣告錯誤不牽連別的檢查)
+  // 其餘三列仍是 skipped(宣告錯誤不牽連別的檢查)
   assert.ok(errs.filter((c) => c.id !== "motion_sweep").every((c) => c.skipped && c.ok));
 });
 
@@ -133,7 +178,7 @@ test("runValidateDesign:零 spawn 組結果 + 寫 asm manifest + _lastValidate �
     assert.equal(val.partCount, 3);
     assert.deepEqual(val.parts, ["body", "arm", "hub"]);
     assert.equal(val.motion.dofs[0].id, "flip");
-    assert.equal(val.checks.length, 6);
+    assert.equal(val.checks.length, 4);
     assert.ok(val.checks.every((c) => c.skipped));
     // 拆件匯出依賴的 manifest 有寫(partCount>=2)
     const manifest = JSON.parse(

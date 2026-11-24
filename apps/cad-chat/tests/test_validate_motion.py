@@ -240,8 +240,8 @@ class ClosedChainProfileIntegration(unittest.TestCase):
 FLIP = REPO / "models" / "flip_gripper" / "flip_gripper.py"
 
 
-def _run(*extra):
-    env = {**os.environ, "PYTHONUTF8": "1"}
+def _run(*extra, env_extra=None):
+    env = {**os.environ, "PYTHONUTF8": "1", **(env_extra or {})}
     r = subprocess.run(
         [sys.executable, str(CAD_DIR / "validate.py"), str(FLIP), *extra],
         capture_output=True, text=True, timeout=180, env=env,
@@ -259,6 +259,35 @@ class FlipGripperIntegration(unittest.TestCase):
     @staticmethod
     def _by_id(out):
         return {c["id"]: c for c in out["checks"]}
+
+    def test_every_row_has_a_status_and_placeholders_are_gone(self):
+        """每列帶 status;永遠 skipped 的自交/壁厚兩列不是這支腳本會做的檢查,已不列。"""
+        for out in (self.full, self.mo):
+            ids = [c["id"] for c in out["checks"]]
+            self.assertEqual(ids, ["valid_solid", "interference", "motion_sweep"])
+            for c in out["checks"]:
+                self.assertIn(c["status"], ("ok", "failed", "not_checked", "not_applicable"), c)
+                # skipped 與 status 一致:略過的列不是 ok 也不是 failed
+                self.assertEqual(bool(c.get("skipped")), c["status"] in ("not_checked", "not_applicable"), c)
+        self.assertEqual({c["status"] for c in self.full["checks"]}, {"ok"})
+        self.assertIs(self.full["complete"], True)
+        # 設計模式略過的是「該量而沒量」,不是「不適用」
+        self.assertEqual({c["status"] for c in self.mo["checks"]}, {"not_checked"})
+        self.assertIs(self.mo["complete"], False)
+
+    def test_sweep_timeout_is_not_checked_not_a_pass(self):
+        """量不到不算通過:掃掠逾時以前回報 ok(註記「逾時」),現在是 not_checked。"""
+        out = _run(env_extra={"CADCHAT_SWEEP_DEADLINE_S": "0"})
+        sweep = self._by_id(out)["motion_sweep"]
+        self.assertEqual(sweep["status"], "not_checked", sweep)
+        self.assertIs(sweep["skipped"], True)  # 不是 failed:agent 不該把逾時當幾何錯誤去修
+        self.assertIn("未量測", sweep["note"])
+        self.assertIn("逾時", sweep["note"])
+        self.assertIs(out["complete"], False)
+        self.assertIs(out["ok"], True)  # ok = 沒有 failed;通不通過由 complete 與 ok 一起看
+        # 其餘檢查照常有定論
+        self.assertEqual(self._by_id(out)["valid_solid"]["status"], "ok")
+        self.assertEqual(self._by_id(out)["interference"]["status"], "ok")
 
     @staticmethod
     def _dofs(out):

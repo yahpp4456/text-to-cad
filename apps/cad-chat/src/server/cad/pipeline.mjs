@@ -620,6 +620,30 @@ export function readTypeFor(session, name) {
   return { type: "part", partCount: session.lastPartCount || 0 };
 }
 
+// ---------------------------------------------------------------------------
+// 檢查列的狀態(validate.py 檔頭有完整說明):
+//   ok / failed / not_checked(該量而沒量到)/ not_applicable(這個模型不需要這項)
+// 「量不到不算通過」:完整驗證的總判定只認 ok 與 not_applicable。not_checked 的列同時是
+// skipped:true,所以 agent 的自修條件與教訓庫不會把它當成幾何錯誤——但它擋匯出。
+// ---------------------------------------------------------------------------
+export function checkStatus(check) {
+  if (check?.status) return check.status;
+  if (check?.skipped) return "not_checked"; // 沒標狀態的略過列:從嚴,當作沒量到
+  return check?.ok ? "ok" : "failed";
+}
+
+// 完整驗證是否通過:至少有一列,且每一列不是通過就是不適用。
+export function fullValidationOk(checks) {
+  return (
+    Array.isArray(checks) &&
+    checks.length > 0 &&
+    checks.every((c) => {
+      const status = checkStatus(c);
+      return status === "ok" || status === "not_applicable";
+    })
+  );
+}
+
 // 同一張建置憑證下的完整驗證結果(.<name>.validate.json)。憑證命中 = 輸入、環境、產物都
 // 沒變,驗證是決定性的,結果必然相同。key 對不上、檔案壞掉、憑證不命中都回 null。
 function readValidateCache(session, name) {
@@ -642,7 +666,10 @@ const VALIDATE_NOT_FINAL_RE = /逾時/;
 function writeValidateCache(session, name, result) {
   const file = validateCachePath(session, name);
   try {
-    if (result.checks.some((c) => VALIDATE_NOT_FINAL_RE.test(String(c.note || "")))) return rmQuiet(file);
+    // 有 not_checked 的結果不是定論(換一台機器、機器閒一點就可能量得完),不快取。
+    if (result.checks.some((c) => checkStatus(c) === "not_checked" || VALIDATE_NOT_FINAL_RE.test(String(c.note || "")))) {
+      return rmQuiet(file);
+    }
     const verdict = stampVerdict(session, name);
     if (!verdict.hit) return rmQuiet(file); // 沒有可對應的憑證(或驗證期間輸入又變了)
     const stamp = readStamp(buildStampPath(session, name));
@@ -735,6 +762,7 @@ export async function runValidate(session, name, { signal, motionOnly = false, r
       id: "facts",
       label: "拓撲 / 尺寸 topology",
       ok: json.ok === true,
+      status: json.ok === true ? "ok" : "failed",
       note: `bbox ${size} mm · faces=${faces}`,
     });
   } catch {
@@ -747,7 +775,9 @@ export async function runValidate(session, name, { signal, motionOnly = false, r
     });
   }
 
-  const overall = checks.every((c) => c.skipped || c.ok);
+  // 完整驗證:量不到不算通過(not_checked 的列讓總判定為 false,匯出閘因此擋下)。
+  // --motion-only 是設計模式的退路,本來就不宣稱驗證過,維持「沒有失敗就算過」。
+  const overall = motionOnly ? checks.every((c) => c.skipped || c.ok) : fullValidationOk(checks);
   // 完整驗證且兩支腳本都有定論、沒被中止 → 記在憑證旁,同樣的輸入下次免重跑。
   if (!motionOnly) {
     if (conclusive && !signal?.aborted && validateRes.code === 0 && inspectRes.code === 0) {
@@ -774,13 +804,14 @@ export async function runValidate(session, name, { signal, motionOnly = false, r
 // validate.py --motion-only spawn。實際模式/精算一律走上面的 runValidate。
 // ---------------------------------------------------------------------------
 
-// 六列 checks(正常全 skipped)。文案逐字對齊 validate.py --motion-only 的輸出
+// 四列 checks(正常全 skipped)。文案逐字對齊 validate.py --motion-only 的輸出
 // (validate.py 的 _check_* 各分支;pipeline.design.test.js 釘死,改一邊必改另一邊)
 // ——motion_sweep 列在 motionErrs 非空時是**真 fail**(非 skipped):「宣告已知錯誤」
 // 與「尚未做掃掠」是兩件事,前者要觸發 agent 的自修條件(prompt 只對非 skipped 的
 // fail 自修;審查 F2)。note 前綴與 validate.py full 模式、lessons signature 同字。
 export function designChecksFromMeta(meta) {
-  const skip = (id, label, note) => ({ id, label, ok: true, skipped: true, note });
+  // 設計模式略過的列是 not_checked(該量而沒量);模型本來就不需要的是 not_applicable。
+  const skip = (id, label, note, status = "not_checked") => ({ id, label, ok: true, skipped: true, status, note });
   const MOTION_LABEL = "運動掃掠干涉 motion-sweep";
   let motionRow;
   if (meta.motionErrs.length) {
@@ -789,23 +820,20 @@ export function designChecksFromMeta(meta) {
       label: MOTION_LABEL,
       ok: false,
       skipped: false,
+      status: "failed",
       note: "MOTION 宣告無效: " + meta.motionErrs.slice(0, 2).join("; "),
     };
   } else if (!meta.motion) {
-    motionRow = skip("motion_sweep", MOTION_LABEL, "未提供運動學");
+    motionRow = skip("motion_sweep", MOTION_LABEL, "未提供運動學", "not_applicable");
   } else {
     motionRow = skip("motion_sweep", MOTION_LABEL, "設計模式:略過掃掠(未驗證)");
   }
   return [
     skip("valid_solid", "封閉性 / 有效實體 (watertight)", "設計模式:略過驗證(未驗證)"),
-    skip("self_intersection", "自交 self-intersection", "未支援獨立檢查"),
-    skip(
-      "interference",
-      "零件干涉 interference",
-      meta.partCount >= 2 ? "設計模式:略過驗證(未驗證)" : "單一零件,無需檢查",
-    ),
+    meta.partCount >= 2
+      ? skip("interference", "零件干涉 interference", "設計模式:略過驗證(未驗證)")
+      : skip("interference", "零件干涉 interference", "單一零件,無需檢查", "not_applicable"),
     motionRow,
-    skip("wall_thickness", "壁厚 wall-thickness", "pipeline 未支援"),
     // 零 spawn 後沒有 inspect 的 bbox/faceCount:誠實標 SKIP(精算此版會補真值)
     skip("facts", "拓撲 / 尺寸 topology", "設計模式:略過檢查(未驗證)"),
   ];
@@ -880,7 +908,7 @@ export async function validateSnapshotFull(session, ver, name, { signal } = {}) 
       note: r.stderr.slice(-200) || "validate.py 無輸出",
     });
   }
-  const overall = checks.length > 0 && checks.every((c) => c.skipped || c.ok);
+  const overall = fullValidationOk(checks);
   return { ok: overall, checks, partCount, ms: Date.now() - t0 };
 }
 
@@ -1206,11 +1234,15 @@ export function emitPresent(session, name, emit) {
 }
 
 // 把 validate.py 的 {id,ok,skipped,note} 映射成前端 ValidateCard 需要的 icon/color。
+// 每列一律帶 status(見 checkStatus)。not_checked 用問號 + 琥珀色:它不是通過,也不是
+// 「這項不需要」,不能跟 not_applicable 的灰色橫線長得一樣。
 export function decorateChecks(checks) {
   return checks.map((c) => {
-    if (c.skipped) return { ...c, icon: "–", color: "#a3acba", noteText: c.note || "SKIP" };
-    return c.ok
-      ? { ...c, icon: "✓", color: "#34ab86", noteText: c.note || "PASS" }
-      : { ...c, icon: "✗", color: "#d64848", noteText: c.note || "FAIL" };
+    const status = checkStatus(c);
+    if (status === "not_applicable") return { ...c, status, icon: "–", color: "#a3acba", noteText: c.note || "不適用" };
+    if (status === "not_checked") return { ...c, status, icon: "?", color: "#c98a1b", noteText: c.note || "未量測" };
+    return status === "ok"
+      ? { ...c, status, icon: "✓", color: "#34ab86", noteText: c.note || "PASS" }
+      : { ...c, status, icon: "✗", color: "#d64848", noteText: c.note || "FAIL" };
   });
 }

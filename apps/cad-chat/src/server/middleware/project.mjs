@@ -638,6 +638,7 @@ async function ensureVerifiedForExport(session, base, rawVer) {
       color: c.color,
       note: c.noteText,
       skipped: !!c.skipped,
+      status: c.status,
     })),
   };
 }
@@ -1036,6 +1037,7 @@ async function handleValidate(body, res, ctx = {}) {
         color: c.color,
         note: c.noteText,
         skipped: !!c.skipped,
+        status: c.status,
       })),
       motion: val.motion || null,
     });
