@@ -371,5 +371,103 @@ class MotionSweepTests(unittest.TestCase):
         self.assertEqual(len(sweep_interference(small, [("A", "B")], tol={("A", "B"): 20.0})), 1)
 
 
+class MotionSweepBroadPhaseTests(unittest.TestCase):
+    """The sweep's AABB broad phase must be pure speed-up: it spares the exact
+    distance query for pair-frames whose boxes are apart and changes no verdict.
+    Found by measurement: a 61-part gantry spent 22 of its 36 s gate on exact
+    distances for pairs that never came near each other."""
+
+    @staticmethod
+    def _frame(bx, cz=100.0):
+        from build123d import Box, Pos
+
+        return [
+            ("A", Box(10, 10, 10)),
+            ("B", Pos(bx, 0, 0) * Box(10, 10, 10)),
+            ("C", Pos(0, 0, cz) * Box(10, 10, 10)),  # tracked against A, always far away
+        ]
+
+    @staticmethod
+    def _counting(module):
+        """Patch the exact kernel queries with counting pass-throughs."""
+        from unittest import mock
+
+        calls = {"min_gap": 0, "overlap_volume": 0}
+
+        def wrap(name):
+            original = getattr(module, name)
+
+            def counted(a, b):
+                calls[name] += 1
+                return original(a, b)
+
+            return mock.patch.object(module, name, counted)
+
+        return calls, wrap("min_gap"), wrap("overlap_volume")
+
+    def test_separated_pair_frames_skip_the_exact_distance(self) -> None:
+        from cadpy import geometry_checks
+
+        poses = [(x, self._frame(x)) for x in (60, 40, 20, 5, 20, 40)]  # only x=5 meets A
+        calls, gap_patch, volume_patch = self._counting(geometry_checks)
+        with gap_patch, volume_patch:
+            hits = sweep_interference(poses, [("A", "B"), ("A", "C")])
+        self.assertEqual([(h.where, h.a, h.b) for h in hits], [(5, "A", "B")])
+        self.assertAlmostEqual(hits[0].overlap, 500.0, places=1)
+        # 12 pair-frames, one whose boxes meet: one distance query, one boolean.
+        self.assertEqual(calls, {"min_gap": 1, "overlap_volume": 1})
+
+    def test_boxes_that_meet_still_get_the_exact_distance(self) -> None:
+        # Boxes overlap but the shapes do not: a sphere beside a box corner. The broad
+        # phase cannot decide this one, so the exact distance must still be asked.
+        from build123d import Box, Pos, Sphere
+
+        from cadpy import geometry_checks
+
+        frame = [("A", Box(10, 10, 10)), ("S", Pos(9, 9, 9) * Sphere(5))]
+        self.assertGreater(min_gap(frame[0][1], frame[1][1]), 1.0)
+        calls, gap_patch, volume_patch = self._counting(geometry_checks)
+        with gap_patch, volume_patch:
+            self.assertEqual(sweep_interference([(0, frame)], [("A", "S")]), [])
+        self.assertEqual(calls, {"min_gap": 1, "overlap_volume": 0})
+
+    def test_coincident_faces_are_not_filtered_out(self) -> None:
+        # Face-on-face contact has box separation 0: it must reach the boolean and
+        # come back as zero volume, exactly as before -- never be skipped as "apart".
+        from cadpy import geometry_checks
+
+        calls, gap_patch, volume_patch = self._counting(geometry_checks)
+        with gap_patch, volume_patch:
+            self.assertEqual(sweep_interference([(0, self._frame(10))], [("A", "B")]), [])
+        self.assertEqual(calls, {"min_gap": 1, "overlap_volume": 1})
+
+    def test_reference_pose_baseline_uses_the_broad_phase_too(self) -> None:
+        from cadpy import geometry_checks
+
+        seated = self._frame(40)
+        calls, gap_patch, volume_patch = self._counting(geometry_checks)
+        with gap_patch, volume_patch:
+            hits = sweep_interference([(0, self._frame(40))], [("A", "B"), ("A", "C")], baseline=seated)
+        self.assertEqual(hits, [])
+        self.assertEqual(calls, {"min_gap": 0, "overlap_volume": 0})
+
+    def test_verdicts_match_the_exact_only_path(self) -> None:
+        # Same sweep with the broad phase disabled (every box "meets"): identical hits.
+        from unittest import mock
+
+        from cadpy import geometry_checks
+
+        poses = lambda: [(x, self._frame(x, cz=cz)) for x, cz in ((30, 100), (9, 100), (0, 12), (9.5, 8), (30, 100))]  # noqa: E731
+        pairs = [("A", "B"), ("A", "C"), ("B", "C")]
+        fast = sweep_interference(poses(), pairs, baseline=self._frame(9))
+        with mock.patch.object(geometry_checks, "_aabb_separation", return_value=0.0):
+            exact = sweep_interference(poses(), pairs, baseline=self._frame(9))
+        self.assertTrue(exact)  # the scenario really has hits to compare
+        self.assertEqual(
+            [(h.where, h.a, h.b, round(h.overlap, 3), round(h.excess, 3)) for h in fast],
+            [(h.where, h.a, h.b, round(h.overlap, 3), round(h.excess, 3)) for h in exact],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

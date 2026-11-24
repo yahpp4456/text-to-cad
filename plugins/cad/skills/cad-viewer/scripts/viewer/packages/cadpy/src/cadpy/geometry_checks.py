@@ -471,13 +471,37 @@ def _name_map(parts: Any) -> dict[str, Any]:
     raise TypeError("sweep frame must be a {name: shape} dict, a sequence of (name, shape), or a labeled Compound")
 
 
-def _pair_volume(parts_map: dict[str, Any], a: str, b: str, overlap_tol: float) -> float:
-    """Penetration volume (mm^3) of a pair in one posed frame; a cheap distance
-    pre-check skips the boolean for separated parts."""
-    gap = min_gap(parts_map[a], parts_map[b])
+def _pair_volume(
+    parts_map: dict[str, Any],
+    a: str,
+    b: str,
+    overlap_tol: float,
+    boxes: dict[str, Any] | None = None,
+) -> float:
+    """Penetration volume (mm^3) of a pair in one posed frame.
+
+    Two filters keep the boolean for pairs that actually touch, cheapest first:
+    the same AABB broad phase as :func:`enumerate_interferences` (boxes contain
+    their shapes, so boxes apart means shapes apart), then the exact distance.
+    The broad phase changes no verdict -- it only spares the distance query, which
+    on a clean sweep is nearly the whole cost: a mechanism's tracked pairs are
+    mostly well apart for most of the travel.
+
+    ``boxes`` caches each part's box for the frame (``{name: aabb}``), so a part
+    tracked in several pairs is boxed once.
+    """
+    sa, sb = parts_map[a], parts_map[b]
+    if boxes is None:
+        boxes = {}
+    for name, shape in ((a, sa), (b, sb)):
+        if name not in boxes:
+            boxes[name] = _shape_aabb(shape)
+    if _aabb_separation(boxes[a], boxes[b]) > _TOUCH_EPS:
+        return 0.0
+    gap = min_gap(sa, sb)
     if gap > _TOUCH_EPS:
         return 0.0
-    ov = overlap_volume(parts_map[a], parts_map[b])
+    ov = overlap_volume(sa, sb)
     return ov if ov > overlap_tol else 0.0
 
 
@@ -490,8 +514,9 @@ def _resolve_baseline(baseline, pairs, overlap_tol):
             out[frozenset(p)] = float(baseline.get(tuple(p), baseline.get((p[1], p[0]), 0.0)))
         return out
     ref = _name_map(baseline)  # a reference pose -> its pair overlaps are allowed
+    boxes: dict[str, Any] = {}
     for a, b in pairs:
-        out[frozenset((a, b))] = _pair_volume(ref, a, b, overlap_tol)
+        out[frozenset((a, b))] = _pair_volume(ref, a, b, overlap_tol, boxes)
     return out
 
 
@@ -532,8 +557,9 @@ def sweep_interference(
         Excess (mm^3) above which a frame is a hit: a float (uniform) or a
         ``{(a, b): float}`` dict (per pair, with key ``None`` as the fallback).
 
-    Cost is O(pairs x frames) exact kernel queries; intended for the small
-    assemblies and modest sample counts this skill produces.
+    Cost is O(pairs x frames) bounding-box comparisons, plus an exact kernel
+    query for each pair-frame whose boxes meet; intended for the small assemblies
+    and modest sample counts this skill produces.
     """
     pairs = [tuple(p) for p in pairs]
     base = _resolve_baseline(baseline, pairs, overlap_tol)
@@ -541,9 +567,10 @@ def sweep_interference(
     hits: list[SweepHit] = []
     for where, parts in poses:
         pmap = _name_map(parts)
+        boxes: dict[str, Any] = {}  # this frame's part boxes, filled as pairs ask
         for a, b in pairs:
             key = frozenset((a, b))
-            ov = _pair_volume(pmap, a, b, overlap_tol)
+            ov = _pair_volume(pmap, a, b, overlap_tol, boxes)
             excess = ov - base[key]
             if excess > tols[key]:
                 hits.append(SweepHit(where, a, b, ov, excess))

@@ -562,7 +562,7 @@ class _DirectXcafAssemblyWriter:
 
         explorer = TopExp_Explorer(shape, TopAbs_FACE)
         while explorer.More():
-            face = TopoDS.Face_s(explorer.Current())
+            face = TopoDS.Face(explorer.Current())
             color = face_colors.get(_shape_hash(face))
             if color is not None:
                 face_label = self.shape_tool.AddSubShape(shape_label, face)

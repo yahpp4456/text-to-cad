@@ -43,6 +43,11 @@ with sync_playwright() as p:
     page.wait_for_selector(".hdr-btn")
     page.locator(".hdr-btn", has_text="開啟檔案").click()
     page.wait_for_selector(".fb-list")
+    # 清單容器先出現、內容由 /api/files 非同步填入:要等列真的出來再數。只等容器的話,
+    # 伺服器第一次列 models/(每個目錄讀檔判斷是不是專案)較慢時會數到 0——同一實例
+    # 連跑三次只有第一次紅(2026-11-25 實測)。
+    page.wait_for_selector(".fb-projrow")
+    page.wait_for_function("document.querySelectorAll('.fb-projrow').length >= 10", timeout=10000)
     c.check("A: 專案目錄列是整列可點(fb-projrow)", page.locator(".fb-projrow").count() >= 10)
     c.check("A: 專案列標「可編輯專案」", page.locator(".fb-projtag").first.inner_text().find("可編輯專案") >= 0)
     # sheet_u_bracket 列不再有獨立「開啟專案」按鈕(整列即開)

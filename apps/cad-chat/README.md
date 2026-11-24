@@ -249,6 +249,26 @@ worker 啟動一次約 7–9 秒、常駐約 410 MiB。
 `cad_measure`、`cad_align`、匯入元件都受益。`test_step_target_resolution.py` 釘住「結果與
 全樹掃描相同」。
 
+### 連帶修掉的:行程掃掠對相距很遠的零件也做精確距離
+
+「先量再做」量出來的第二件事(暖行程內把一次 build 拆開計時):
+
+- STEP 寫入不是瓶頸(各案例都在 1 秒內),所以藍圖 A5 的「中間 build 不寫 STEP」**不做**。
+- 61 件的 `xyz_pickplace_gantry` 一次 build 62 秒,其中 58 秒是產生器自己的
+  `check_geometry`;產生幾何只要 0.4 秒。再往下拆:三段行程掃掠各 7–8 秒,全部花在
+  `min_gap`(每對每幀約 60 ms 的精確最短距離),而結果是「沒有任何一對接觸」。
+
+`cadpy.geometry_checks.sweep_interference` 原本對每個 pair-frame 都直接算精確距離;靜態的
+`enumerate_interferences` 有包絡箱預篩,掃掠沒有。現在兩者一致:箱子分開就不必問精確
+距離(箱子包住形狀,所以箱子分開代表形狀分開,**判定不變**)。同一幀內每個零件的箱子
+只算一次。
+
+實測同一個龍門架:三段掃掠合計 22 秒 → 1 秒。`validate.py` 的掃掠與各產生器的
+`assert_motion_clear` 都走這條路。`test_geometry_checks.MotionSweepBroadPhaseTests` 直接比對
+「開預篩」與「關預篩」的命中清單相同。
+
+剩下的大頭是產生器自己每一幀重擺全部零件(該龍門架每段約 2 秒),屬於產生器寫法。
+
 ### 驗證
 
 - L1:`cad/frames.test.js`、`cad/workerPool.test.js`(用 `cad/fakeWorker.fixture.mjs`,真的
@@ -257,6 +277,27 @@ worker 啟動一次約 7–9 秒、常駐約 410 MiB。
 - 回歸:`scripts/dev/regress_fixtures.py`——把 `models/` 下全部產生器建一次並與基準比對
   (幾何、驗證結果、管線產出),升級 kernel 或動建模管線前後各跑一次。
 - L3:全套煙測在 `CADCHAT_WORKER=0` 與預設(開)兩種設定下都要全過。
+
+## Kernel 版本:OCP 7.9 與 OCP 8 都能跑(2026-11-25)
+
+`cadpy` 與 cad-chat 的 Python 腳本在 **build123d 0.11 / OCP 7.9** 與
+**build123d 0.13 / OCP 8** 上都通過同一套測試:31 個 fixture 的幾何、驗證結果、管線產出
+逐項相同(`regress_fixtures.py`:0 FAIL、0 WARN),`cadpy` 單元測試與全套煙測也一致。
+
+兩個 kernel 之間實際碰到的差異只有三類,都收在 `cadpy/kernel/ocp_compat.py`:
+
+| 差異 | OCP 7.9 | OCP 8 | 寫法 |
+|---|---|---|---|
+| 集合類別的名稱與位置 | `OCP.TopTools.TopTools_IndexedMapOfShape`、`OCP.TDF.TDF_LabelSequence` | `OCP.collections.IndexedMap_…`、`Sequence_TDF_Label` | 從 `ocp_compat` import `IndexedMapOfShape`、`LabelSequence`、`ListOfShape` |
+| `Bnd_Box.Get()` | 回六個數 | 綁成 pybind 轉不出來的結構,呼叫即 `TypeError` | `ocp_compat.bnd_box_limits(box)` |
+| 向下轉型 | `TopoDS.Face_s(x)` 與 `TopoDS.Face(x)` 都有 | 只有 `TopoDS.Face(x)` | 一律寫無 `_s` 的 |
+
+寫新的 OCP 程式碼時照最右欄。要確認沒有用到某一版才有的名稱,兩支靜態掃描放在
+`scripts/dev/`(`ocp-names.py` 查 import、`ocp-attrs.py` 查類別屬性),用目標環境的直譯器跑。
+
+為什麼要兩版都能跑:開發環境、Electron 內嵌 runtime(`build-runtime/python`)、Linux VM
+部署是三個各自安裝的 Python,不會同時升級。實測 0.13 / OCP 8 的 `import build123d` 約
+3.9 秒(0.11 / 7.9 約 6 秒),31 個 fixture 的回歸總耗時少約四分之一。
 
 ## per-user 資料隔離(2026-07-15;VM 部署啟用,dev 零回歸)
 

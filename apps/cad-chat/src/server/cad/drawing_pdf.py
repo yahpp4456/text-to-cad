@@ -68,7 +68,7 @@ def _edges_to_polylines(compound):
         return polys
     exp = TopExp_Explorer(compound, TopAbs_EDGE)
     while exp.More():
-        edge = TopoDS.Edge_s(exp.Current())
+        edge = TopoDS.Edge(exp.Current())
         exp.Next()
         try:
             curve = BRepAdaptor_Curve(edge)

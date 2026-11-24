@@ -277,7 +277,7 @@ class ThreeMfExportTests(unittest.TestCase):
             face_hashes: list[int] = []
             explorer = TopExp_Explorer(shape, TopAbs_FACE)
             while explorer.More():
-                face_hashes.append(_shape_hash(TopoDS.Face_s(explorer.Current())))
+                face_hashes.append(_shape_hash(TopoDS.Face(explorer.Current())))
                 explorer.Next()
             scene, prototype_key = _single_leaf_scene(
                 shape,

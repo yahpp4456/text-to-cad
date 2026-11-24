@@ -2,13 +2,16 @@
 # 逐組跑 Python 測試:不因某一組失敗而中止,每組印一行 PASS/FAIL 摘要(完整 log 在 tmp/pysuite-*.log)。
 # scripts/test/test-python.sh 用 set -e,在 Windows 會停在 bambu-labs 的既有失敗,後面的組跑不到。
 # 用法(repo 根,Git Bash):bash scripts/dev/run-python-suites.sh
+# 換直譯器(例如試另一個 venv):PYTHON_BIN=/abs/path/python.exe bash scripts/dev/run-python-suites.sh
+# log 檔名前綴可用 PYSUITE_TAG 區分(預設空)。
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." && mkdir -p tmp
+requested_python="${PYTHON_BIN:-}"  # common.sh 在沒指定時會把它設成 python3,先記下使用者給的值
 source scripts/test/common.sh
-export PYTHONUTF8=1 PYTHON_BIN="$REPO_ROOT/.venv/Scripts/python.exe"
+export PYTHONUTF8=1 PYTHON_BIN="${requested_python:-$REPO_ROOT/.venv/Scripts/python.exe}"
 cd "$REPO_ROOT"
 run() { # name dir paths...
   local name="$1"; shift
-  local log="tmp/pysuite-$(echo "$name" | tr ' /' '__').log"
+  local log="tmp/pysuite-${PYSUITE_TAG:-}$(echo "$name" | tr ' /' '__').log"
   if run_python_unittest "$name" "$@" > "$log" 2>&1; then status=PASS; else status=FAIL; fi
   echo "$status  $name  :: $(grep -E '^Ran |^OK|^FAILED' "$log" | tr '\n' ' ')"
 }
@@ -21,7 +24,7 @@ for skill in cad dxf gcode sdf srdf urdf; do
 done
 run "global" tests/python/global packages/cadpy/src
 for t in apps/cad-chat/tests/test_build_meta.py apps/cad-chat/tests/test_validate_motion.py apps/cad-chat/tests/test_validate_sibling_import.py apps/cad-chat/tests/test_worker.py; do
-  log="tmp/pysuite-$(basename "$t" .py).log"
+  log="tmp/pysuite-${PYSUITE_TAG:-}$(basename "$t" .py).log"
   if "$PYTHON_BIN" "$t" > "$log" 2>&1; then status=PASS; else status=FAIL; fi
   echo "$status  $t  :: $(grep -E '^Ran |^OK|^FAILED' "$log" | tr '\n' ' ')"
 done

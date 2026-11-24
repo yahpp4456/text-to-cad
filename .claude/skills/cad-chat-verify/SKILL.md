@@ -94,6 +94,19 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `PYTHONUTF8=1 .venv/Scripts/python.exe scripts/dev/regress_fixtures.py --pipeline --jobs 6 --out tmp/regress/<名>.json [--compare tmp/regress/<基準>.json]`
   (~15 分;`--python` 可指定另一個 venv 的直譯器)。**`smc_cg1_cylinder` 與
   `smc_cq2_cylinder` 的 validate 原本就不通過**,不是你弄壞的。
+- **OCP 7.9 與 OCP 8 都要能跑(2026-11-25)**:開發環境、Electron 內嵌 runtime、Linux VM 是
+  三個各自安裝的 Python,不會同時升級。寫 OCP 程式碼的三條規矩(README「Kernel 版本」章):
+  集合類別從 `cadpy.kernel.ocp_compat` import(不要直接 `from OCP.TopTools import TopTools_…`);
+  包絡箱界限用 `ocp_compat.bnd_box_limits(box)`(OCP 8 的 `Bnd_Box.Get()` 呼叫即 TypeError);
+  向下轉型寫 `TopoDS.Face(x)`(OCP 8 沒有 `Face_s`)。**測試檔也算**——2026-11-25 產品碼改完
+  後,多出來的失敗全是測試自己用了舊寫法。動到 OCP 呼叫後:目標環境的 python 跑
+  `scripts/dev/ocp-names.py` 與 `ocp-attrs.py`(靜態掃描,秒級;`ocp_compat.py` 的命中是預期的),
+  再跑 `regress_fixtures.py --python <另一個環境>`。靜態掃描查不到實例方法,那一類只有回歸
+  與測試抓得到。換直譯器跑 Python 測試:`PYTHON_BIN=<abs>/python.exe PYSUITE_TAG=<名>- bash scripts/dev/run-python-suites.sh`;
+  整個 cad-chat 換直譯器:`CADCHAT_PYTHON_EXE=<abs>/python.exe npm run dev`。
+- **`smoke_open_project` / 回灌類斷言的偶發(2026-11-25 再確認)**:同一實例連跑三次只有第一次
+  紅、或整套裡紅一次而單跑三次全綠——先重跑該支,不要急著改產品。`smoke_open_project` A 段
+  「數 `.fb-projrow`」已補上等待(清單內容非同步載入);`smoke_library_mode` E 段回灌仍可能偶發。
 - **`scripts/test/test-python.sh` 在 Windows 要帶 `PYTHON_BIN=$PWD/.venv/Scripts/python.exe`**
   (它預設找 `.venv/bin/python`),而且用 `set -e`:bambu-labs skill 有 2 個既有 ERROR
   (Windows 跑不了測試用的假腳本),腳本到那裡就停,後面的 cad/dxf/… 測試不會跑。要全跑

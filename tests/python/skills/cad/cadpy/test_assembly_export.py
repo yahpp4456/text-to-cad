@@ -408,7 +408,7 @@ class AssemblyExportTests(unittest.TestCase):
 
         explorer = TopExp_Explorer(shape, TopAbs_FACE)
         while explorer.More():
-            face_hashes.append(_shape_hash(TopoDS.Face_s(explorer.Current())))
+            face_hashes.append(_shape_hash(TopoDS.Face(explorer.Current())))
             explorer.Next()
 
         writer._set_shape_face_colors(shape_label, shape, {face_hashes[0]: (0.0, 0.0, 1.0, 1.0)})
