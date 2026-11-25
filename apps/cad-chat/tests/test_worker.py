@@ -319,6 +319,14 @@ class WorkerProtocolTests(unittest.TestCase):
         digest = self.worker.ready["versions"]["cadpy"]
         self.assertRegex(digest, r"^[0-9a-f]{16}$")
 
+    def test_ready_frame_reports_determinism_is_on(self) -> None:
+        """建置順序可重現(cadpy.kernel.determinism)在預熱時就裝好,而且是「全部裝上」。
+
+        狀態進 versions → 進建置憑證的環境:開與關之下同一份輸入的面號可能不同,不能互相沿用。
+        只裝上一部分(build123d 改版後某個模組讓開了)會是 "partial" 並帶警告,這條就會紅。
+        """
+        self.assertEqual(self.worker.ready["versions"]["determinism"], "on", self.worker.ready.get("warnings"))
+
     def test_tools_with_same_module_name_do_not_collide(self) -> None:
         """scripts/step 與 scripts/inspect 各有一個頂層 cli.py;常駐行程裡不能互相拿錯。"""
         for name in ("tool_a", "tool_b"):

@@ -714,6 +714,11 @@ def _load_generator_module(script_path: Path) -> object:
     if module_spec is None or module_spec.loader is None:
         raise RuntimeError(f"Failed to load generator module from {_display_path(resolved_script_path)}")
 
+    # Same model, same face/edge/vertex order on every run (selection tokens are
+    # positional). Must be in place before the generator builds anything.
+    from cadpy.kernel.determinism import ensure_installed
+
+    ensure_installed()
     module = importlib.util.module_from_spec(module_spec)
     original_sys_path = list(sys.path)
     search_paths = [

@@ -56,14 +56,22 @@ the name shown in :class:`InterferenceReport` / the failure message.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Sequence
 
+from OCP.BRep import BRep_Tool
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
 from OCP.BRepCheck import BRepCheck_Analyzer
+from OCP.BRepClass3d import BRepClass3d_SolidClassifier
 from OCP.BRepExtrema import BRepExtrema_DistShapeShape
 from OCP.BRepGProp import BRepGProp
+from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.GProp import GProp_GProps
+from OCP.TopAbs import TopAbs_ShapeEnum, TopAbs_State
+from OCP.TopExp import TopExp_Explorer
+from OCP.TopLoc import TopLoc_Location
+from OCP.TopoDS import TopoDS
 
 # Two solids are considered "touching" when the precise kernel gap is at or
 # below this (mm). Below it we look at the actual penetration volume to tell a
@@ -197,7 +205,9 @@ class PairResult:
     b: str
     gap: float
     overlap_volume: float
-    kind: str  # "overlap" | "near" | "clear"
+    # "overlap" | "near" | "clear" | "allowed" (declared intended contact) |
+    # "unmeasured" (the time budget ran out before this pair's exact query)
+    kind: str
 
 
 @dataclass(frozen=True)
@@ -225,11 +235,25 @@ class InterferenceReport:
         """
         return tuple(p for p in self.pairs if p.kind == "allowed")
 
+    @property
+    def unmeasured(self) -> tuple[PairResult, ...]:
+        """Pairs whose boxes meet but whose exact query never ran (time budget).
+
+        Not a pass and not a failure: nothing is known about them. A caller that
+        reports a verdict must not call the assembly clear while this is non-empty.
+        """
+        return tuple(p for p in self.pairs if p.kind == "unmeasured")
+
     def summary(self) -> str:
         if not self.pairs:
             return "no part pairs to check"
         ov, nr = self.overlaps, self.near
         out = [f"{len(self.pairs)} pair(s) checked"]
+        if self.unmeasured:
+            out.append(
+                "unmeasured: " + ", ".join(f"{p.a}~{p.b}" for p in self.unmeasured[:6])
+                + (f" (+{len(self.unmeasured) - 6} more)" if len(self.unmeasured) > 6 else "")
+            )
         if ov:
             out.append(
                 "overlap: " + ", ".join(f"{p.a}~{p.b}({p.overlap_volume:.1f}mm^3)" for p in ov)
@@ -349,12 +373,127 @@ def _aabb_separation(a, b) -> float:
     return math.sqrt(total)
 
 
+def _aabb_inside(inner, outer, margin: float = 1e-6) -> bool:
+    """True when box ``inner`` lies within box ``outer`` (a necessary condition
+    for the inner shape to be wholly inside the outer one)."""
+    return all(
+        inner[0][k] >= outer[0][k] - margin and inner[1][k] <= outer[1][k] + margin for k in range(3)
+    )
+
+
+def _first_vertex_point(shape: Any):
+    """A point ON the shape: its first vertex (``None`` when it has none)."""
+    explorer = TopExp_Explorer(shape, TopAbs_ShapeEnum.TopAbs_VERTEX)
+    if not explorer.More():
+        return None
+    # OCP 8 downcasts with ``TopoDS.Vertex``; OCP 7.9 only has ``Vertex_s``.
+    downcast = getattr(TopoDS, "Vertex_s", None) or TopoDS.Vertex
+    return BRep_Tool.Pnt_s(downcast(explorer.Current()))
+
+
+def _wholly_inside(inner: Any, outer: Any) -> bool:
+    """True when ``inner`` sits inside the MATERIAL of ``outer``.
+
+    Only meaningful once the two surfaces are known to be apart: then ``inner``
+    is entirely on one side of ``outer``'s boundary, so classifying a single
+    point of it decides the whole shape. A part in a bore, a cavity or the
+    hollow of a channel classifies as outside -- that is air, not material.
+
+    The exact distance query cannot see this case: it measures surface to
+    surface, so a pin buried in a block with no hole reads as a comfortable
+    positive gap. Without this test such a pair passed as clear.
+    """
+    ti, to = _topods(inner), _topods(outer)
+    if ti is None or to is None:
+        return False
+    point = _first_vertex_point(ti)
+    if point is None:
+        return False
+    classifier = BRepClass3d_SolidClassifier(to, point, 1e-7)
+    return classifier.State() == TopAbs_State.TopAbs_IN
+
+
+def _containment_overlap(sa: Any, sb: Any, box_a, box_b) -> float:
+    """Overlap volume when one part is wholly inside the other, else 0.0.
+
+    Called for a pair whose surfaces are apart. The boxes gate the classifier:
+    a shape can only be inside another if its box is inside the other's.
+    """
+    if (_aabb_inside(box_a, box_b) and _wholly_inside(sa, sb)) or (
+        _aabb_inside(box_b, box_a) and _wholly_inside(sb, sa)
+    ):
+        return overlap_volume(sa, sb)
+    return 0.0
+
+
+# Mesh prefilter (opt-in, see ``enumerate_interferences(mesh_prefilter=True)``).
+# The mesh may sit up to the deflection away from the true surface on each part,
+# so two surfaces that touch have meshes within twice that. The proximity test is
+# run at a tolerance comfortably above it; "no triangle within tolerance" then
+# means the true surfaces are apart.
+#
+# 0.05 mm is display-mesh fineness. Measured on a 23-part nested cable assembly
+# (2026-11-25): at 0.02 mm the meshing and the test themselves took 51 s, at
+# 0.05 mm 17 s, with the same 63 of 85 pairs proven apart either way.
+_PREFILTER_DEFLECTION = 0.05
+_PREFILTER_TOLERANCE = 2 * _PREFILTER_DEFLECTION + 0.06
+
+
+def _mesh_for_prefilter(shape: Any) -> bool:
+    """Tessellate ``shape`` for the proximity test; True when every face got a mesh.
+
+    A face left without triangles would be invisible to the proximity test, and
+    an invisible face reads as "nothing near" -- so one missing mesh disqualifies
+    the whole part from the prefilter (the caller falls back to the exact query).
+    """
+    topods = _topods(shape)
+    if topods is None:
+        return False
+    try:
+        BRepMesh_IncrementalMesh(topods, _PREFILTER_DEFLECTION, False, 0.5, True)
+        explorer = TopExp_Explorer(topods, TopAbs_ShapeEnum.TopAbs_FACE)
+        downcast = getattr(TopoDS, "Face_s", None) or TopoDS.Face
+        faces = 0
+        while explorer.More():
+            faces += 1
+            if BRep_Tool.Triangulation_s(downcast(explorer.Current()), TopLoc_Location()) is None:
+                return False
+            explorer.Next()
+        return faces > 0
+    except Exception:  # noqa: BLE001 - any kernel hiccup means "not usable", never "apart"
+        return False
+
+
+def _surfaces_apart(sa: Any, sb: Any) -> bool:
+    """True only when the mesh proximity test PROVES the two surfaces are apart.
+
+    Every other outcome -- triangles within tolerance, a kernel that does not
+    support the query (OCP 7.9 binds the class but not its results), an empty
+    triangle set, any exception -- returns False, which sends the pair to the
+    exact query. The prefilter can therefore only ever save time; it cannot turn
+    a pair the exact query would flag into a clear one, short of an overlap
+    thinner than the mesh tolerance (hundredths of a millimetre).
+    """
+    try:
+        from OCP.BRepExtrema import BRepExtrema_ShapeProximity
+
+        proximity = BRepExtrema_ShapeProximity(_topods(sa), _topods(sb), _PREFILTER_TOLERANCE)
+        if proximity.ElementSet1().Size() <= 0 or proximity.ElementSet2().Size() <= 0:
+            return False  # nothing was loaded: no evidence either way
+        proximity.Perform()
+        return proximity.OverlapSubShapes1().Size() == 0 and proximity.OverlapSubShapes2().Size() == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def enumerate_interferences(
     parts: Any,
     *,
     clearance: float = 0.0,
     overlap_tol: float = 1e-3,
     allow: Iterable[Sequence[str]] | None = (),
+    time_budget_s: float | None = None,
+    mesh_prefilter: bool = False,
 ) -> InterferenceReport:
     """Sweep every unordered part pair and classify it (detect, never raise).
 
@@ -382,24 +521,57 @@ def enumerate_interferences(
         Iterable of ``(name_a, name_b)`` pairs that MAY interpenetrate
         (intended contact: bore/shaft, press fit, gear mesh). Names must match
         the (disambiguated) part names; these pairs are skipped entirely.
+    time_budget_s:
+        Wall-clock budget (seconds) for the exact kernel queries; ``None`` (the
+        default) means no limit and is what a generator's own gate uses. Once
+        it is spent, every remaining pair whose boxes meet is reported as
+        ``unmeasured`` instead of being queried: a kernel call cannot be
+        interrupted, so the budget is checked BETWEEN pairs and one slow pair
+        can still overrun it. Pairs the broad phase clears cost nothing and are
+        always classified. Declared-contact pairs are measured last (they never
+        block), and one left unmeasured keeps kind ``allowed`` with a NaN
+        ``overlap_volume``. ``pairs`` keeps the same order either way.
+    mesh_prefilter:
+        Off by default. When on (and ``clearance`` is 0), a pair whose boxes
+        meet is first put to a mesh proximity test; if that proves the surfaces
+        apart, the exact distance query is skipped and the pair is ``clear``
+        with the proximity tolerance margin as its gap lower bound. Long nested
+        shapes -- swept channels inside one another -- spend seconds each in the
+        exact query only to learn they are millimetres apart; this answers the
+        only question that matters there in a fraction of the time. It
+        tessellates the parts in place (finer than a display mesh), so turn it
+        on only where no artifact is exported from the same shapes afterwards.
+
+    A part wholly inside another's material is an overlap even though their
+    surfaces never meet; every pair found apart is checked for it.
     """
     named = _as_named_parts(parts)
     allow_set = _normalize_allow(allow)
-    results: list[PairResult] = []
     # Broad-phase: one conservative AABB per part, computed once up front.
     boxes = [_shape_aabb(s) for _, s in named]
+    deadline = None if time_budget_s is None else time.monotonic() + max(0.0, float(time_budget_s))
+
+    def out_of_time() -> bool:
+        return deadline is not None and time.monotonic() > deadline
+
+    slots: dict[tuple[int, int], PairResult] = {}
+    declared: list[tuple[int, int]] = []
+    # Meshes for the prefilter are made on first use, once per part.
+    meshed: dict[int, bool] = {}
+
+    def prefilter_ready(index: int) -> bool:
+        if index not in meshed:
+            meshed[index] = _mesh_for_prefilter(named[index][1])
+        return meshed[index]
+
+    use_prefilter = bool(mesh_prefilter) and clearance <= 0
 
     for i in range(len(named)):
         na, sa = named[i]
         for j in range(i + 1, len(named)):
             nb, sb = named[j]
             if frozenset((na, nb)) in allow_set:
-                # declared intended contact: still MEASURE it (so its magnitude is
-                # reviewable -- a gross declared overlap is the glued-block smell),
-                # but classify as "allowed" so it never blocks.
-                gap = min_gap(sa, sb)
-                ov = overlap_volume(sa, sb) if gap <= _TOUCH_EPS else 0.0
-                results.append(PairResult(na, nb, gap, ov, "allowed"))
+                declared.append((i, j))  # measured after the pairs that can block
                 continue
 
             # Broad-phase skip: box separation is a lower bound on the exact
@@ -408,7 +580,20 @@ def enumerate_interferences(
             # its gap is the box separation, an honest lower bound.
             sep = _aabb_separation(boxes[i], boxes[j])
             if sep > clearance and sep > _TOUCH_EPS:
-                results.append(PairResult(na, nb, sep, 0.0, "clear"))
+                slots[(i, j)] = PairResult(na, nb, sep, 0.0, "clear")
+                continue
+
+            if out_of_time():
+                slots[(i, j)] = PairResult(na, nb, sep, 0.0, "unmeasured")
+                continue
+
+            if use_prefilter and prefilter_ready(i) and prefilter_ready(j) and _surfaces_apart(sa, sb):
+                # Surfaces proven apart without the exact query. One part may
+                # still be buried whole inside the other.
+                ov = _containment_overlap(sa, sb, boxes[i], boxes[j])
+                margin = _PREFILTER_TOLERANCE - 2 * _PREFILTER_DEFLECTION
+                kind = "overlap" if ov > overlap_tol else "clear"
+                slots[(i, j)] = PairResult(na, nb, 0.0 if kind == "overlap" else margin, ov, kind)
                 continue
 
             gap = min_gap(sa, sb)
@@ -421,12 +606,32 @@ def enumerate_interferences(
                     kind = "near"  # touching faces, but a positive gap was required
                 else:
                     kind = "clear"  # coincident faces are acceptable by default
-            elif clearance > 0 and gap < clearance:
-                kind = "near"
             else:
-                kind = "clear"
-            results.append(PairResult(na, nb, gap, ov, kind))
+                # Surfaces apart -- but the distance is surface to surface, so a
+                # part buried whole inside another reads as a positive gap.
+                ov = _containment_overlap(sa, sb, boxes[i], boxes[j])
+                if ov > overlap_tol:
+                    gap, kind = 0.0, "overlap"
+                elif clearance > 0 and gap < clearance:
+                    kind = "near"
+                else:
+                    kind = "clear"
+            slots[(i, j)] = PairResult(na, nb, gap, ov, kind)
 
+    for i, j in declared:
+        (na, sa), (nb, sb) = named[i], named[j]
+        if out_of_time():
+            slots[(i, j)] = PairResult(na, nb, _aabb_separation(boxes[i], boxes[j]), math.nan, "allowed")
+            continue
+        # declared intended contact: still MEASURE it (so its magnitude is
+        # reviewable -- a gross declared overlap is the glued-block smell),
+        # but classify as "allowed" so it never blocks.
+        gap = min_gap(sa, sb)
+        # a declared pair that is one part inside the other still reports its overlap
+        ov = overlap_volume(sa, sb) if gap <= _TOUCH_EPS else _containment_overlap(sa, sb, boxes[i], boxes[j])
+        slots[(i, j)] = PairResult(na, nb, gap, ov, "allowed")
+
+    results = [slots[(i, j)] for i in range(len(named)) for j in range(i + 1, len(named))]
     return InterferenceReport(tuple(results), clearance)
 
 

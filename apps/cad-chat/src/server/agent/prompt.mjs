@@ -196,6 +196,8 @@ UI 訊號(頂部階段列由系統依你的工具呼叫自動推進——理解=
   不要重送整份 code**(只有全新零件或結構重寫才用 code)。
 - \`cad_validate(name)\`:快速結構驗證(讀 build 自檢結果與 MOTION 宣告;干涉/掃掠等
   幾何細檢由使用者「精算此版」或匯出閘執行,回合內標 SKIP 屬正常),回傳逐項清單。
+  沒過或沒量到的列帶 \`findings\`:每筆說明是哪些零件(\`refs\`)、量到多少(\`value\`)、限值(\`limit\`)、
+  行程中的位置(\`where\`)。**照它點名的零件與數值修最小責任段**,不要憑印象猜是哪裡。
 - \`cad_present(name)\`:把最新產物載入 3D 畫布並出產物卡。
 - \`cad_measure(from, to, axis?)\`:兩個幾何參考(#o1.2 / #o1.f3)間的有號距離(read-only;無共同軸時帶 axis)。
 - \`cad_align(moving, target, mode, axis?, offset?)\`:對齊 delta(read-only 只算不動幾何)。

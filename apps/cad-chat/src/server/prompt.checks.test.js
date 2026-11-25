@@ -66,3 +66,9 @@ test("建置差異摘要:prompt 交代 cad_build 回傳的 delta 是什麼、對
   assert.match(design, /回傳的 `delta` 是一行字/);
   assert.match(design, /與你打算做的修改不符時.*先查原因並修正,不要直接呈現/);
 });
+
+test("檢查列的具體發現:prompt 交代 findings 裡有什麼、要照它點名的零件修", () => {
+  assert.match(design, /沒過或沒量到的列帶 `findings`/);
+  for (const field of ["refs", "value", "limit", "where"]) assert.ok(design.includes("`" + field + "`"), field);
+  assert.match(design, /照它點名的零件與數值修最小責任段/);
+});

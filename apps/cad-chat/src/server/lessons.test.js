@@ -123,6 +123,39 @@ test("signatureForBuild:例外類/模組名/fallback,且決定性", () => {
 
 // ── signature:validate check ──
 
+// golden:既有教訓庫的案例都是用下面這些字串歸類的。檢查列現在帶 findings(規則代號),
+// signature 改讀規則代號——結果必須與「比對備註文字」的舊路徑逐字相同,否則同一類失敗會分裂成兩組。
+test("signatureForCheck:帶 findings 的檢查列與舊的備註比對,signature 逐字相同", () => {
+  const cases = [
+    ["validate:motion_sweep:declaration", "MOTION 宣告無效: travel 缺", "motion.declaration"],
+    ["validate:motion_sweep:sweep-error", "掃掠失敗: RuntimeError: x", "motion.sweep_error"],
+    ["validate:motion_sweep:penetration", "x@u=0.5: rod~rail 超出 +3.2mm³", "motion.penetration"],
+  ];
+  for (const [expected, note, rule] of cases) {
+    const legacy = signatureForCheck({ id: "motion_sweep", note }).signature;
+    const withFindings = signatureForCheck({
+      id: "motion_sweep",
+      note: "(備註措辭改了也不影響)",
+      findings: [{ rule, status: "failed", message: note }],
+    }).signature;
+    assert.equal(legacy, expected);
+    assert.equal(withFindings, expected);
+  }
+  // 沒有子分類的檢查:findings 不改變 signature
+  for (const id of ["interference", "valid_solid"]) {
+    assert.equal(
+      signatureForCheck({ id, note: "x", findings: [{ rule: "interference.overlap", status: "failed", message: "a 與 b 重疊" }] }).signature,
+      `validate:${id}`,
+    );
+  }
+  // findings 裡沒有認得的規則 → 退回備註比對(不因為多了欄位就變成別的分類)
+  assert.equal(
+    signatureForCheck({ id: "motion_sweep", note: "MOTION 宣告無效: x", findings: [{ rule: "motion.unmeasured" }] }).signature,
+    "validate:motion_sweep:declaration",
+  );
+  assert.equal(signatureForCheck({ id: "motion_sweep", note: "掃掠失敗: x", findings: "壞資料" }).signature, "validate:motion_sweep:sweep-error");
+});
+
 test("signatureForCheck:check id + note 前綴分型", () => {
   assert.equal(signatureForCheck({ id: "interference", note: "2 處未宣告干涉" }).signature, "validate:interference");
   assert.equal(signatureForCheck({ id: "valid_solid", note: "無效: rod" }).signature, "validate:valid_solid");

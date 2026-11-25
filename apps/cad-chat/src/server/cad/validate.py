@@ -14,9 +14,16 @@ fail 才自修」、教訓庫)把它們當「沒有失敗」,不會把逾時誤�
 (pipeline.mjs fullValidationOk、匯出閘)只認 ok 與 not_applicable:量不到不算通過。
 
 用法:  python apps/cad-chat/src/server/cad/validate.py <generator.py> [--motion-only]
-輸出:  {"ok": bool, "complete": bool, "checks": [{"id","label","ok","status","note","skipped"?}]}
+輸出:  {"ok": bool, "complete": bool, "checks": [{"id","label","ok","status","note","skipped"?,"findings"?}]}
        ok = 沒有 failed;complete = 沒有 not_checked。
-環境:  CADCHAT_SWEEP_DEADLINE_S  掃掠的時間上限(秒,預設 75)
+       findings = 這一列的具體發現(cadpy.findings):每筆有 rule / status / message,以及量得到時的
+       value / limit / unit / refs(涉及的零件)/ where(行程位置)。note 是給人看的一句摘要,
+       findings 是它的明細——哪兩個零件重疊、重疊多少、在行程的哪裡。最多 20 筆,嚴重的在前。
+環境:  CADCHAT_SWEEP_DEADLINE_S         掃掠的時間上限(秒,預設 75)
+       CADCHAT_INTERFERENCE_DEADLINE_S  靜態干涉精算的時間上限(秒,預設 60);超過後剩下的配對
+                                        標為未量測,整列是 not_checked(不算通過)
+       CADCHAT_INTERFERENCE_PREFILTER   設 0 關掉網格鄰近度快篩(每一對包絡箱相交的零件都走精確距離);
+                                        預設開。快篩只在能證明兩件表面分開時跳過精確查詢
 exit:  0 一律(驗證判定在 JSON.ok);只有 import/執行產生器失敗才 exit 1。
 """
 import importlib.util
@@ -39,6 +46,10 @@ def _load_gen_step(script_path: Path):
     gen_dir = str(Path(script_path).resolve().parent)
     if gen_dir not in sys.path:
         sys.path.insert(0, gen_dir)
+    # 與 build 路徑同一套排序規則(cadpy.kernel.determinism):驗證看到的零件順序與建置時一致
+    from cadpy.kernel.determinism import ensure_installed
+
+    ensure_installed()
     spec.loader.exec_module(module)
     fn = getattr(module, "gen_step", None)
     if not callable(fn):
@@ -62,6 +73,31 @@ def _sweep_deadline_s() -> float:
 
 
 _MOTION_SWEEP_DEADLINE_S = _sweep_deadline_s()
+
+
+def _interference_deadline_s() -> float:
+    """靜態干涉精算的 wall-clock 上限(秒)。CADCHAT_INTERFERENCE_DEADLINE_S 覆寫;壞值用預設。"""
+    try:
+        value = float(os.environ.get("CADCHAT_INTERFERENCE_DEADLINE_S", ""))
+    except ValueError:
+        return 60.0
+    return value if value >= 0 else 60.0
+
+
+def _interference_prefilter() -> bool:
+    """網格鄰近度快篩(cadpy.geometry_checks 的 mesh_prefilter):預設開,CADCHAT_INTERFERENCE_PREFILTER=0 關。
+
+    這支腳本自己跑 gen_step、量完就結束,不會拿同一批形狀去輸出 STEP/GLB,所以可以放心讓快篩把零件
+    網格化。長而巢套的掃出件(護套一層套一層)彼此相隔幾毫米,精確距離每一對要算好幾秒;快篩把
+    「有沒有碰到」這個問題在零點幾秒內答掉。
+    """
+    return os.environ.get("CADCHAT_INTERFERENCE_PREFILTER", "").strip() != "0"
+
+
+def _pair_list(pairs, fmt, limit=3):
+    """「a~b(12.3 mm³), c~d(…) 等 N 對」:備註裡點名前幾對,其餘只給總數。"""
+    shown = ", ".join(fmt(p) for p in pairs[:limit])
+    return shown + (f" 等 {len(pairs)} 對" if len(pairs) > limit else "")
 _MOTION_AABB_MARGIN = 2.0          # 自動配對的 AABB 外擴 (mm)
 _MOTION_LABEL = "運動掃掠干涉 motion-sweep"
 
@@ -149,6 +185,7 @@ def _run_motion_sweep(named, motion):
     嚙合傳動因此被「真的滾動」掃掠:跨成員的 pair(如 rack~pinion)保留,
     只有兩端在群內吃到的 dof 完全相同的 pair 才剔除(相對位姿不變)。
     """
+    from cadpy.findings import Finding, sweep_findings, to_dicts
     from cadpy.geometry_checks import sweep_interference
 
     base_map = dict(named)
@@ -269,8 +306,9 @@ def _run_motion_sweep(named, motion):
         try:
             hits = sweep_interference(poses(), g["pairs"], baseline=baseline, tol=0.05)
         except Exception as exc:  # noqa: BLE001
-            return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": False,
-                    "note": f"掃掠失敗: {type(exc).__name__}: {exc}"}
+            message = f"掃掠失敗: {type(exc).__name__}: {exc}"
+            return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": False, "note": message,
+                    "findings": to_dicts([Finding("motion.sweep_error", "failed", message)])}
         all_hits.extend(
             (g["owner"].get(tuple(sorted((h.a, h.b)))) or g["members"][0], h)
             for h in hits
@@ -304,12 +342,17 @@ def _run_motion_sweep(named, motion):
             pass
         return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": False,
                 "note": (f"{h0.where}: {h0.a}~{h0.b} 超出 +{h0.excess:.1f}mm³{pos};"
-                         f"共 {len(all_hits)} pair-frame 穿透(掃 {stat})")}
+                         f"共 {len(all_hits)} pair-frame 穿透(掃 {stat})"),
+                # 每一對零件一筆(取穿透最深的那一幀),不是每一幀一筆
+                "findings": to_dicts(sweep_findings([h for _, h in all_hits], tol=0.05))}
     if state["timeout"]:
         # 沒掃完 = 沒量到。已掃的部分沒有穿透,但剩下的幀沒有任何證據,不能說通過。
         return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": True, "skipped": True,
                 "status": "not_checked",
-                "note": f"未量測:掃掠逾時,只掃了一部分(已掃部分無穿透;掃 {stat})"}
+                "note": f"未量測:掃掠逾時,只掃了一部分(已掃部分無穿透;掃 {stat})",
+                "findings": to_dicts([Finding(
+                    "motion.unmeasured", "not_checked",
+                    f"行程掃掠逾時,只掃了 {state['done']}/{frames_total} 幀")])}
     return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": True,
             "note": f"全程無穿透(掃 {stat})"}
 
@@ -339,6 +382,7 @@ def main() -> int:
         ))
         return 1
 
+    from cadpy.findings import Finding, interference_findings, invalid_solid_findings, to_dicts
     from cadpy.geometry_checks import enumerate_interferences, invalid_solid_detail, is_valid_solid
 
     try:
@@ -360,6 +404,7 @@ def main() -> int:
             "note": "設計模式:略過驗證(未驗證)",
         })
     else:
+        solid_findings = []
         try:
             bad = [(n, s) for n, s in named if not is_valid_solid(s)]
             ok = len(bad) == 0
@@ -367,14 +412,13 @@ def main() -> int:
                 note = "BRepCheck valid"
             else:
                 # 每個壞件附上叫得出名字的問題(哪個殼沒封閉、哪個面的線框自交…;面號 = 點選
-                # token 的 fN)。叫不出名字的就只列件名——仍然是無效。只展開前 3 件,避免洗版。
-                def describe(name, shape):
-                    detail = invalid_solid_detail(shape)
-                    return f"{name}({detail})" if detail else name
-
+                # token 的 fN)。叫不出名字的就只列件名——仍然是無效。備註只展開前 3 件,避免洗版;
+                # findings 則每個壞件一筆(最多 20)。
+                details = [(n, invalid_solid_detail(s) if i < 20 else "") for i, (n, s) in enumerate(bad)]
                 note = "無效: " + ", ".join(
-                    describe(n, s) if i < 3 else n for i, (n, s) in enumerate(bad)
+                    (f"{n}({d})" if d and i < 3 else n) for i, (n, d) in enumerate(details)
                 )
+                solid_findings = to_dicts(invalid_solid_findings(details))
         except Exception as exc:  # noqa: BLE001
             ok, note = False, f"檢查失敗: {exc}"
         checks.append({
@@ -382,6 +426,7 @@ def main() -> int:
             "label": "封閉性 / 有效實體 (watertight)",
             "ok": ok,
             "note": note,
+            **({"findings": solid_findings} if solid_findings else {}),
         })
 
     # 2) 零件干涉 — 只在多件組合時有意義。尊重產生器宣告的 INTENDED_CONTACT
@@ -398,19 +443,41 @@ def main() -> int:
     elif len(named) >= 2:
         try:
             allow = getattr(gen_module, "INTENDED_CONTACT", ()) or ()
-            report = enumerate_interferences(payload, allow=allow)
-            n_over = len(report.overlaps)
+            overlap_tol = 1e-3
+            report = enumerate_interferences(
+                payload, allow=allow, overlap_tol=overlap_tol,
+                time_budget_s=_interference_deadline_s(), mesh_prefilter=_interference_prefilter(),
+            )
+            overlaps = sorted(report.overlaps, key=lambda p: p.overlap_volume, reverse=True)
+            unmeasured = list(report.unmeasured)
             n_allowed = len(report.allowed)
-            ok = n_over == 0
-            note = "0 undeclared overlaps" if ok else f"{n_over} 處未宣告干涉"
+            ok = len(overlaps) == 0
+            if not ok:
+                # 點名重疊最多的幾對:只說「N 處」修不了,要知道是哪兩件、重疊多少
+                note = f"{len(overlaps)} 處未宣告干涉: " + _pair_list(
+                    overlaps, lambda p: f"{p.a}~{p.b}({p.overlap_volume:.1f}mm³)")
+            elif unmeasured:
+                note = f"未量測:干涉精算逾時,{len(unmeasured)} 對沒量到(" + _pair_list(
+                    unmeasured, lambda p: f"{p.a}~{p.b}") + ";已量的部分無未宣告干涉)"
+            else:
+                note = "0 undeclared overlaps"
+            if overlaps and unmeasured:
+                note += f" · 另 {len(unmeasured)} 對逾時未量"
             if n_allowed:
                 note += f" · {n_allowed} 對宣告接觸(allowed)"
-            checks.append({
+            row = {
                 "id": "interference",
                 "label": "零件干涉 interference",
                 "ok": ok,
                 "note": note,
-            })
+            }
+            if ok and unmeasured:
+                # 量到的都沒問題,但有幾對沒量到:不是失敗,也不能說通過
+                row.update({"skipped": True, "status": "not_checked"})
+            found = to_dicts(interference_findings(report, overlap_tol=overlap_tol))
+            if found:
+                row["findings"] = found
+            checks.append(row)
         except Exception as exc:  # noqa: BLE001
             checks.append({
                 "id": "interference",
@@ -439,6 +506,7 @@ def main() -> int:
             "label": _MOTION_LABEL,
             "ok": False,
             "note": "MOTION 宣告無效: " + "; ".join(motion_errs[: 2 if motion_only else 3]),
+            "findings": to_dicts([Finding("motion.declaration", "failed", str(e)) for e in motion_errs]),
         })
     elif motion is None:
         checks.append({

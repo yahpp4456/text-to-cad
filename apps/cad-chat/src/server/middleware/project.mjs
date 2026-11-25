@@ -27,6 +27,7 @@ import {
 } from "../sessions.mjs";
 import { condenseTraceback, scrubPaths, spawnPython } from "../cad/python.mjs";
 import {
+  checkView,
   decorateChecks,
   emitPresent,
   importStepIntoSession,
@@ -49,7 +50,10 @@ import { emitSketchPresent, sketchFileName } from "../sketch/present.mjs";
 
 const REBUILD_TIMEOUT_MS = 300_000; // 開專案同步重建上限(大組合件 tessellation 較久)
 const FACTS_TIMEOUT_MS = 30_000;
-const VALIDATE_TIMEOUT_MS = 120_000; // 「精算此版」完整驗證含運動掃掠(75s 閘)+ 餘裕
+// 「精算此版」完整驗證的整體上限。腳本內部有兩個各自的時間預算:靜態干涉 60 秒、運動掃掠 75 秒
+// (超過的部分標為未量測,不是失敗);這裡要比兩者相加再多留產生器執行與啟動的時間,否則腳本還
+// 來不及回報「哪幾對沒量到」就被整個砍掉。
+const VALIDATE_TIMEOUT_MS = 170_000;
 
 async function handleImport(body, res, ctx = {}) {
   // 先驗來源檔再取 session:getOrCreateSession 會 mint 目錄,壞檔的失敗請求
@@ -632,14 +636,7 @@ async function ensureVerifiedForExport(session, base, rawVer) {
     stale: drifted || undefined,
     ver: ver || null,
     partCount: val.partCount,
-    checks: decorateChecks(val.checks || []).map((c) => ({
-      label: c.label,
-      icon: c.icon,
-      color: c.color,
-      note: c.noteText,
-      skipped: !!c.skipped,
-      status: c.status,
-    })),
+    checks: decorateChecks(val.checks || []).map(checkView),
   };
 }
 
@@ -1031,14 +1028,7 @@ async function handleValidate(body, res, ctx = {}) {
       // 前端不得把它標到最新版本快照上(不 MARK_VERSION_VERIFIED、不掛 motion)。
       stale: !!session._geomDirty,
       partCount: val.partCount,
-      checks: decorated.map((c) => ({
-        label: c.label,
-        icon: c.icon,
-        color: c.color,
-        note: c.noteText,
-        skipped: !!c.skipped,
-        status: c.status,
-      })),
+      checks: decorated.map(checkView),
       motion: val.motion || null,
     });
   } catch (err) {

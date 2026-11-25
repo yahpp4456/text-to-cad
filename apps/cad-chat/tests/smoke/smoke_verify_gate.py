@@ -156,6 +156,14 @@ try:
             g_gate.get("ran") is True
             and any(ck.get("icon") == "✗" for ck in g_gate.get("checks") or []),
             str(g_gate)[:250])
+    # 具體發現(藍圖 B2):被擋下時不只說「掃掠沒過」,還說是哪兩個零件、超出多少、在行程的哪裡
+    g_found = [f for ck in g_gate.get("checks") or [] for f in ck.get("findings") or []]
+    g_pen = [f for f in g_found if f.get("rule") == "motion.penetration"]
+    c.check("C: 掃掠列帶 findings:點名穿透的兩個零件、超出量、行程位置",
+            len(g_pen) >= 1 and len(g_pen[0].get("refs") or []) == 2
+            and (g_pen[0].get("value") or 0) > 0 and "@u=" in str(g_pen[0].get("where"))
+            and all(r in g_pen[0].get("message", "") for r in g_pen[0].get("refs")),
+            str(g_pen[:1])[:300])
     gvv = json.loads(post("/api/validate-ver", {"sessionId": g_sid, "ver": "v1"}, timeout=300))
     c.check("C: validate-ver 同樣擋(verified=false)",
             gvv.get("ok") is True and gvv.get("verified") is False, str(gvv)[:200])
@@ -315,6 +323,29 @@ with sync_playwright() as p:
     c.check("D: 4 過 + 2 略過 → 標題「4 項通過 · 2 項未驗證」",
             page.locator(".validate-verdict").last.inner_text().strip() == "4 項通過 · 2 項未驗證",
             page.locator(".validate-verdict").last.inner_text())
+    # 驗證卡顯示具體發現(藍圖 B2):沒過與沒量到的各列在該列下方;通過的明細(宣告接觸)不佔版面;
+    # 超過 3 筆只列前 3 筆並說還有幾筆。
+    page.evaluate(
+        "() => { const f = (a, b, v) => ({ rule: 'interference.overlap', status: 'failed', message: `${a} 與 ${b} 重疊 ${v}.0 mm³`,"
+        " value: v, limit: 0.001, unit: 'mm^3', refs: [a, b] });"
+        " window.__cadDispatch({ type: 'ADD_ITEM', item: { type: 'validate', ok: false, attempt: 1, ms: 9, partCount: 6, checks: ["
+        " { label: '零件干涉 interference', icon: '✗', color: '#d04848', note: '5 處未宣告干涉', skipped: false, status: 'failed',"
+        "   findings: [f('rail','carriage',120), f('base','motor',40), f('base','rail',12), f('pin','hole',3), f('nut','screw',1),"
+        "     { rule: 'interference.declared_contact', status: 'ok', message: 'shaft 與 bearing 為宣告接觸,重疊 8.0 mm³' }], findingCount: 6 },"
+        " { label: '運動掃掠干涉 motion-sweep', icon: '?', color: '#c98a1b', note: '未量測:掃掠逾時', skipped: true, status: 'not_checked',"
+        "   findings: [{ rule: 'motion.unmeasured', status: 'not_checked', message: '行程掃掠逾時,只掃了 3/12 幀' }], findingCount: 1 },"
+        " { label: '有效實體', icon: '✓', color: '#34ab86', note: 'BRepCheck valid', skipped: false, status: 'ok' } ] } }); }"
+    )
+    page.wait_for_function("() => document.querySelectorAll('.validate-verdict').length >= 3", timeout=5000)
+    last_card = page.locator(".validate-list").last
+    lists = last_card.locator("[data-testid='check-findings']")
+    c.check("D: 驗證卡有兩列帶具體發現(干涉、掃掠);沒問題的那一列沒有", lists.count() == 2, f"n={lists.count()}")
+    first_items = [t.strip() for t in lists.nth(0).locator("li").all_inner_texts()]
+    c.check("D: 干涉列點名前 3 對並說還有 2 筆;宣告接觸(通過)不列",
+            first_items == ["rail 與 carriage 重疊 120.0 mm³", "base 與 motor 重疊 40.0 mm³", "base 與 rail 重疊 12.0 mm³", "另 2 筆"],
+            str(first_items))
+    c.check("D: 掃掠列說明只掃了幾幀",
+            [t.strip() for t in lists.nth(1).locator("li").all_inner_texts()] == ["行程掃掠逾時,只掃了 3/12 幀"])
 
     c.check("D 頁無 JS 錯誤", not errs_d, "; ".join(errs_d[:3]))
     page.screenshot(path=out_path("smoke_verify_gate_ui.png"))

@@ -219,6 +219,9 @@ def _run_assembly_generator(assembly_path: Path) -> object:
     if module_spec is None or module_spec.loader is None:
         raise AssemblySpecError(f"Failed to load assembly generator: {_display_path(assembly_path)}")
 
+    from cadpy.kernel.determinism import ensure_installed
+
+    ensure_installed()  # see generation._load_generator_module
     module = importlib.util.module_from_spec(module_spec)
     original_sys_path = list(sys.path)
     search_paths = [

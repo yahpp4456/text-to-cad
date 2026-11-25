@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import {
   applyEdits,
+  checkView,
   decorateChecks,
   emitPresent,
   generatorHasDxf,
@@ -281,14 +282,7 @@ export function buildCadchatServer({ session, emit, signal }) {
             partCount,
             name: part,
             ...subTag(extra),
-            checks: decorated.map((c) => ({
-              label: c.label,
-              icon: c.icon,
-              color: c.color,
-              note: c.noteText,
-              skipped: !!c.skipped,
-              status: c.status,
-            })),
+            checks: decorated.map(checkView),
           });
           // 一律發 motion(空 dofs = 清除舊宣告),防止重生成靜態件後播放鈕殘留
           emit("motion", { name: part, schemaVersion: 1, dofs: motion?.dofs || [] });
@@ -430,14 +424,7 @@ export function buildCadchatServer({ session, emit, signal }) {
               attempt: session._valAttempt || 1,
               ms: val.ms,
               partCount: val.partCount,
-              checks: dec.map((c) => ({
-                label: c.label,
-                icon: c.icon,
-                color: c.color,
-                note: c.noteText,
-                skipped: !!c.skipped,
-                status: c.status,
-              })),
+              checks: dec.map(checkView),
             });
             if (!val.ok || signal?.aborted) {
               emit("tool", { id, status: "error", note: "匯出已擋下:完整驗證未過(見驗證卡)。" });

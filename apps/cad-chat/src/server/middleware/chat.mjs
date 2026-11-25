@@ -22,6 +22,7 @@ import { openSse } from "../sse.mjs";
 import { runTurn } from "../agent/runner.mjs";
 import {
   buildOrRollback,
+  checkView,
   decorateChecks,
   emitPresent,
   paramValuesFromGenerator,
@@ -507,14 +508,7 @@ async function deterministicRegen(session, params, emit, signal) {
     attempt: 1,
     ms: val.ms,
     partCount: val.partCount,
-    checks: dec.map((c) => ({
-      label: c.label,
-      icon: c.icon,
-      color: c.color,
-      note: c.noteText,
-      skipped: !!c.skipped,
-      status: c.status,
-    })),
+    checks: dec.map(checkView),
   });
   // MOTION 的 travel 引用 PARAMS,重生後重新 import 的新值在這裡帶回(播放自動跟上)
   emit("motion", { name, schemaVersion: 1, dofs: val.motion?.dofs || [] });

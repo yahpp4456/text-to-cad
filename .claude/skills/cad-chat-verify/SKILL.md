@@ -134,6 +134,29 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `PYTHONUTF8=1 .venv/Scripts/python.exe scripts/dev/regress_fixtures.py --pipeline --jobs 6 --out tmp/regress/<名>.json [--compare tmp/regress/<基準>.json]`
   (~15 分;`--python` 可指定另一個 venv 的直譯器)。**`smc_cg1_cylinder` 與
   `smc_cq2_cylinder` 的 validate 原本就不通過**,不是你弄壞的。
+- **建置可重現(2026-11-25,藍圖 A8)**:`cadpy/kernel/determinism.py` 讓同一份產生器每次建出相同的面/邊/
+  頂點順序(點選 token 是位置編號)。**新增「會執行產生器」的入口腳本時,要在產生器模組執行前呼叫
+  `cadpy.kernel.determinism.ensure_installed()`**(現有:`generation._load_generator_module`、
+  `assembly_spec`、`validate.py`、`flat_glb.py`、worker 預熱),否則那條路建出來的順序會和別條路不同。
+  動它或升級 build123d → `test_determinism.py`(兩個 kernel)+ `apps/cad-chat/tests/test_build_determinism.py`
+  + `test_worker.py`(就緒訊框要是 `on`;`partial` 代表 build123d 改版後某個模組沒裝上)。要判斷「兩次建置
+  是否相同」比 STEP 的 DATA 區,不要比整個檔案或 GLB:STEP 檔頭有時間戳,GLB 裡記了每次的耗時統計。
+  量測腳本 `tmp/determinism_probe.py run [模型名…]`(不進版控)會把每個模型在開、關之下各建兩次比順序。
+- **檢查列的具體發現 findings(2026-11-25,藍圖 B2)**:規則與轉換在 `cadpy/findings.py`,`validate.py`
+  每列產生,`pipeline.mjs` 的 `checkView` 是送到前端的**唯一**映射(五個出口共用;要多帶欄位只改這裡)。
+  動 findings 的規則或訊息 → 先 sync-vendored,再 `test_findings.py` + `tests/test_validate_motion.py`;
+  快路徑的宣告錯誤列在 `designChecksFromMeta` 另外組,規則代號要與 validate.py 相同
+  (`pipeline.findings.test.js`)。**教訓庫的歸類字串不可變**:`lessons.mjs` 的 `RULE_SUB` 把規則代號對到
+  舊的子分類,`lessons.test.js` 的 golden 釘住——新增 `motion.*` 規則時想清楚它該歸哪一組。動驗證卡的
+  顯示 → `smoke_verify_gate.py` D 段。干涉的時間預算 `CADCHAT_INTERFERENCE_DEADLINE_S=0` 可以在任何
+  多件模型上重現「逐對未量測」。
+- **靜態干涉的三道關(2026-11-25,藍圖 B4)**:包絡箱 → (驗證腳本才有的)網格鄰近度快篩 → 精確距離,
+  表面分開的配對最後再判「完全內含」。動 `enumerate_interferences` → 先 sync-vendored,再
+  `test_geometry_checks.py`(**兩個 kernel 都跑**:`.venv` 與 `.venv-ocp79`;舊 kernel 上快篩自動失效,
+  判定必須相同)+ `scripts/dev/regress_fixtures.py --compare` 全部範例模型。**效能結論不要只看一個模型**:
+  方塊類的龍門架量不出快篩的效益,巢套的電纜範本差了 45 秒——`tmp/profile_interf.py <模型名>` 會列出每一對
+  花多少時間。A/B 對照:`CADCHAT_INTERFERENCE_PREFILTER=0`。內含檢查對產生器自己的閘也生效:既有模型若
+  有零件整顆埋在另一件的實心裡,現在建置會被擋下,那是真的干涉(要嘛開孔,要嘛宣告接觸)。
 - **建置差異摘要(2026-11-25,藍圖 B3)**:量測在 `cadpy/build_delta.py`(build 收割寫進 sidecar 的
   `summary`),比對與成句在 `src/lib/buildDelta.js`,接線在 `pipeline.mjs`(`buildDeltaText`、
   `versionDeltaText`)。動量測 → 先 sync-vendored,再 `test_build_delta.py` + `tests/test_build_meta.py`;

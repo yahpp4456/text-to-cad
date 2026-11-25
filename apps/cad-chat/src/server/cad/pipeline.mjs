@@ -867,6 +867,8 @@ export function designChecksFromMeta(meta) {
       skipped: false,
       status: "failed",
       note: "MOTION 宣告無效: " + meta.motionErrs.slice(0, 2).join("; "),
+      // 與 validate.py 同形:每條宣告錯誤一筆 finding(教訓庫依 rule 歸類)
+      findings: meta.motionErrs.slice(0, 20).map((message) => ({ rule: "motion.declaration", status: "failed", message: String(message) })),
     };
   } else if (!meta.motion) {
     motionRow = skip("motion_sweep", MOTION_LABEL, "未提供運動學", "not_applicable");
@@ -1277,6 +1279,25 @@ export function emitPresent(session, name, emit) {
   emit("present", { ver, name, code: name, file: stepRel, glbUrl: gUrl, type, flatGlbUrl, flatLinesUrl, sweepPathsUrl });
   persistSession(session); // version/lastName 剛變動 → 落盤(重整/重啟後計數不歸零)
   return { ver, glbUrl: gUrl };
+}
+
+// 送到前端的一列檢查(decorateChecks 之後):圖示、顏色、備註、狀態,以及這一列的具體發現。
+// findings 來自 cadpy.findings(validate.py 每列最多 20 筆,嚴重的在前);前端只顯示前幾筆,
+// 這裡再截到 8 筆並附總數,避免大型組合件把事件撐大。
+const FINDINGS_PER_ROW = 8;
+export function checkView(c) {
+  const findings = Array.isArray(c.findings) ? c.findings : [];
+  return {
+    label: c.label,
+    icon: c.icon,
+    color: c.color,
+    note: c.noteText,
+    skipped: !!c.skipped,
+    status: c.status,
+    ...(findings.length
+      ? { findings: findings.slice(0, FINDINGS_PER_ROW), findingCount: findings.length }
+      : {}),
+  };
 }
 
 // 把 validate.py 的 {id,ok,skipped,note} 映射成前端 ValidateCard 需要的 icon/color。

@@ -154,6 +154,19 @@ class CoupledSweepIntegration(unittest.TestCase):
         check = validate._run_motion_sweep(self.named, self._motion(travel_scale=0.7))
         self.assertFalse(check["ok"], check)
         self.assertIn("穿透", check["note"])
+        # 具體發現:一對零件一筆(不是每一幀一筆),說得出是哪兩件、超出多少、在行程的哪裡
+        findings = check["findings"]
+        self.assertEqual(len(findings), 1, findings)
+        f = findings[0]
+        self.assertEqual((f["rule"], f["status"], f["unit"]), ("motion.penetration", "failed", "mm^3"))
+        self.assertEqual(sorted(f["refs"]), ["pinion", "rack"])
+        self.assertGreater(f["value"], f["limit"])
+        self.assertIn("@u=", f["where"])
+        self.assertIn("穿透", f["message"])
+
+    def test_clean_sweep_has_no_findings(self):
+        check = validate._run_motion_sweep(self.named, self._motion())
+        self.assertNotIn("findings", check)
 
 
 class ClosedChainProfileIntegration(unittest.TestCase):
@@ -283,11 +296,36 @@ class FlipGripperIntegration(unittest.TestCase):
         self.assertIs(sweep["skipped"], True)  # 不是 failed:agent 不該把逾時當幾何錯誤去修
         self.assertIn("未量測", sweep["note"])
         self.assertIn("逾時", sweep["note"])
+        self.assertEqual([(f["rule"], f["status"]) for f in sweep["findings"]], [("motion.unmeasured", "not_checked")])
         self.assertIs(out["complete"], False)
         self.assertIs(out["ok"], True)  # ok = 沒有 failed;通不通過由 complete 與 ok 一起看
         # 其餘檢查照常有定論
         self.assertEqual(self._by_id(out)["valid_solid"]["status"], "ok")
         self.assertEqual(self._by_id(out)["interference"]["status"], "ok")
+
+    def test_interference_timeout_names_the_unmeasured_pairs(self):
+        """靜態干涉也一樣:時間預算用完,沒量到的配對逐一點名,整列是 not_checked。"""
+        out = _run(env_extra={"CADCHAT_INTERFERENCE_DEADLINE_S": "0"})
+        row = self._by_id(out)["interference"]
+        self.assertEqual(row["status"], "not_checked", row)
+        self.assertIs(row["skipped"], True)
+        self.assertIn("未量測:干涉精算逾時", row["note"])
+        unmeasured = [f for f in row["findings"] if f["rule"] == "interference.unmeasured"]
+        self.assertGreater(len(unmeasured), 0)
+        for f in unmeasured:
+            self.assertEqual(f["status"], "not_checked")
+            self.assertEqual(len(f["refs"]), 2)
+        self.assertIs(out["complete"], False)
+        self.assertIs(out["ok"], True)  # 沒有 failed;通不通過要連 complete 一起看
+
+    def test_declared_contacts_report_their_measured_overlap(self):
+        """宣告為接觸的配對不擋,但實際重疊量看得到(「黏方塊」要可見)。"""
+        row = self._by_id(self.full)["interference"]
+        self.assertEqual(row["status"], "ok")
+        declared = [f for f in row.get("findings", []) if f["rule"] == "interference.declared_contact"]
+        for f in declared:
+            self.assertEqual(f["status"], "ok")
+            self.assertGreater(f["value"], 0)
 
     @staticmethod
     def _dofs(out):

@@ -159,12 +159,23 @@ export function signatureForBuild({ exitCode, stderr } = {}) {
   return { signature: `build:exit${Number(exitCode)}`, note: cap(tail, 300) };
 }
 
+// 檢查列的 finding 規則代號 → signature 的子分類。字串必須與下面「比對備註文字」的舊路徑
+// 完全相同:既有教訓庫的案例都是用舊字串歸類的,改了就會分裂成兩組(golden 測試釘住)。
+const RULE_SUB = {
+  "motion.declaration": "declaration",
+  "motion.sweep_error": "sweep-error",
+  "motion.penetration": "penetration",
+};
+
 export function signatureForCheck(check = {}) {
   const id = String(check.id || "unknown");
   const note = String(check.note || "");
   let sub = null;
   if (id === "motion_sweep") {
-    if (/^MOTION 宣告無效/.test(note)) sub = "declaration"; // validate.py 宣告驗證
+    // 新的檢查列帶 findings:直接讀規則代號,不必猜備註的措辭。
+    const rule = (Array.isArray(check.findings) ? check.findings : []).map((f) => f?.rule).find((r) => RULE_SUB[r]);
+    if (rule) sub = RULE_SUB[rule];
+    else if (/^MOTION 宣告無效/.test(note)) sub = "declaration"; // 舊資料/沒有 findings:validate.py 宣告驗證
     else if (/掃掠失敗/.test(note)) sub = "sweep-error"; // 掃掠本身炸掉
     else sub = "penetration"; // 行程中真穿透
   } else if (id === "generator") {

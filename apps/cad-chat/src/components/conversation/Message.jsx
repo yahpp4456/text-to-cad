@@ -185,17 +185,33 @@ function ValidateCard({ it }) {
         </span>
       </div>
       <div className="validate-list">
-        {it.checks.map((ck, i) => (
-          <div className="validate-row" key={i}>
-            <span className="check-icon" style={{ background: ck.color }}>
-              {ck.icon}
-            </span>
-            <span className="check-label">{ck.label}</span>
-            <span className="check-note" style={{ color: ck.color }}>
-              {ck.note}
-            </span>
-          </div>
-        ))}
+        {it.checks.map((ck, i) => {
+          // 這一列的具體發現:哪兩個零件、多少。只列沒過與沒量到的(通過的明細不佔版面),最多 3 筆。
+          const issues = (ck.findings || []).filter((f) => f.status !== "ok");
+          return (
+            <React.Fragment key={i}>
+              <div className="validate-row" data-has-findings={issues.length > 0 || undefined}>
+                <span className="check-icon" style={{ background: ck.color }}>
+                  {ck.icon}
+                </span>
+                <span className="check-label">{ck.label}</span>
+                <span className="check-note" style={{ color: ck.color }}>
+                  {ck.note}
+                </span>
+              </div>
+              {issues.length > 0 && (
+                <ul className="check-findings" data-testid="check-findings">
+                  {issues.slice(0, 3).map((f, j) => (
+                    <li key={j} data-status={f.status}>
+                      {f.message}
+                    </li>
+                  ))}
+                  {issues.length > 3 && <li className="check-findings-more">另 {issues.length - 3} 筆</li>}
+                </ul>
+              )}
+            </React.Fragment>
+          );
+        })}
       </div>
     </div>
   );

@@ -986,6 +986,31 @@
   font-family: var(--font-eyebrow);
   letter-spacing: 0.5px;
 }
+/* 檢查列的具體發現(哪兩個零件、多少):接在該列下方,縮排對齊列標題 */
+.validate-row[data-has-findings] {
+  border-bottom: none;
+  padding-bottom: 2px;
+}
+.check-findings {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 7px 27px;
+  border-bottom: 1px solid #f3f5f9;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.check-findings li {
+  font-size: 11px;
+  line-height: 1.45;
+  color: #5b6577;
+}
+.check-findings li[data-status="failed"] {
+  color: var(--danger, #c0392b);
+}
+.check-findings-more {
+  color: #9aa3b0;
+}
 
 /* retry */
 .retry-card {

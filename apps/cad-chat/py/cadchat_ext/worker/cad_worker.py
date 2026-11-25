@@ -261,6 +261,20 @@ def _prewarm() -> tuple[str | None, list[str], dict[str, str | None]]:
 
     versions: dict[str, str | None] = {"python": sys.version.split()[0]}
     try:
+        # 建置順序可重現(cadpy.kernel.determinism):在任何產生器執行前裝好。狀態進 versions,
+        # 所以開關它會讓建置憑證失效——同一份輸入在開與關之下,面的編號可能不同。
+        from cadpy.kernel import determinism
+
+        determinism.ensure_installed()
+        state = determinism.installed()
+        full = state["installed"] and state["vertexHash"] and len(state["modules"]) == len(determinism._SHADOWED_MODULES)
+        versions["determinism"] = "on" if full else ("partial" if state["installed"] else "off")
+        if versions["determinism"] == "partial":
+            warnings.append(f"determinism: 只裝上一部分 {state}")
+    except Exception as exc:  # noqa: BLE001
+        versions["determinism"] = "off"
+        warnings.append(f"determinism: {type(exc).__name__}: {exc}")
+    try:
         from importlib import metadata
 
         versions["build123d"] = metadata.version("build123d")

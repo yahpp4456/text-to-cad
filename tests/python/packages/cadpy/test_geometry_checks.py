@@ -268,6 +268,186 @@ class InterferenceTests(unittest.TestCase):
         self.assertIn("overlap:", report.summary())
 
 
+class ContainmentTests(unittest.TestCase):
+    """一個零件整顆埋在另一個零件的實心裡:表面沒碰到,但這是干涉。
+
+    精確距離量的是表面到表面,所以埋在裡面的零件會讀到一個正的間隙;以前這種配對被判為沒事。
+    """
+
+    def test_part_buried_in_solid_material_is_an_overlap(self) -> None:
+        from build123d import Box
+
+        block, pin = ("block", Box(30, 30, 30)), ("pin", Box(4, 4, 4))
+        self.assertGreater(min_gap(block[1], pin[1]), 10.0)  # 表面相距 13 mm:距離查詢看不出來
+        report = enumerate_interferences([block, pin])
+        self.assertEqual([(p.a, p.b, p.kind) for p in report.pairs], [("block", "pin", "overlap")])
+        self.assertAlmostEqual(report.pairs[0].overlap_volume, 64.0, places=3)
+        with self.assertRaises(AssertionError):
+            assert_no_interference([block, pin])
+        # 順序反過來也一樣
+        self.assertEqual(enumerate_interferences([pin, block]).pairs[0].kind, "overlap")
+
+    def test_part_in_a_bore_or_cavity_is_air_not_material(self) -> None:
+        from build123d import Box, Cylinder, Sphere
+
+        tube = Cylinder(10, 40) - Cylinder(8, 40)
+        self.assertEqual(enumerate_interferences([("tube", tube), ("ball", Sphere(3))]).pairs[0].kind, "clear")
+        shell = Box(30, 30, 30) - Box(20, 20, 20)  # 封閉空腔
+        self.assertEqual(enumerate_interferences([("shell", shell), ("core", Box(6, 6, 6))]).pairs[0].kind, "clear")
+
+    def test_declared_contact_reports_the_buried_volume(self) -> None:
+        from build123d import Box
+
+        report = enumerate_interferences([("block", Box(30, 30, 30)), ("pin", Box(4, 4, 4))], allow=[("block", "pin")])
+        self.assertEqual(report.overlaps, ())
+        self.assertAlmostEqual(report.allowed[0].overlap_volume, 64.0, places=3)
+
+    def test_separate_parts_with_nested_boxes_stay_clear(self) -> None:
+        from build123d import Box, Pos
+
+        # L 形件的包絡箱包住小方塊,但小方塊在 L 的缺角(空氣)裡
+        ell = Box(30, 30, 10) - (Pos(7.5, 7.5, 0) * Box(15, 15, 10))
+        report = enumerate_interferences([("ell", ell), ("cube", Pos(8, 8, 0) * Box(6, 6, 6))])
+        self.assertEqual(report.pairs[0].kind, "clear")
+
+
+class MeshPrefilterTests(unittest.TestCase):
+    """網格鄰近度快篩只能省時間:判定必須與精確查詢相同(支援的 kernel 上才會真的跳過)。"""
+
+    def _cases(self):
+        from build123d import Axis, Box, Cylinder, Pos, Sphere
+
+        tube = Cylinder(10, 40) - Cylinder(5, 40)
+        return {
+            "重疊 5 mm": [("a", Box(10, 10, 10)), ("b", Pos(5, 0, 0) * Box(10, 10, 10))],
+            "面貼面": [("a", Box(10, 10, 10)), ("b", Pos(10, 0, 0) * Box(10, 10, 10))],
+            "相距 0.05(小於快篩容差)": [("a", Box(10, 10, 10)), ("b", Pos(10.05, 0, 0) * Box(10, 10, 10))],
+            "相距 0.3": [("a", Box(40, 40, 2)), ("b", Pos(0, 0, 2.3) * Box(10, 10, 2))],
+            "孔內留 0.5 間隙的軸": [("tube", tube), ("rod", Cylinder(4.5, 40))],
+            "過盈 0.1 的軸": [("tube", tube), ("rod", Cylinder(5.1, 40))],
+            "十字交叉的圓柱": [("a", Cylinder(3, 40)), ("b", Cylinder(3, 40).rotate(Axis.X, 90))],
+            "管內的球(四周是空氣)": [("tube", Cylinder(10, 40) - Cylinder(8, 40)), ("ball", Sphere(3))],
+            "整顆埋在實心裡": [("block", Box(30, 30, 30)), ("pin", Box(4, 4, 4))],
+            "巢套的槽形件(相隔 3 mm)": [
+                ("outer", Box(40, 20, 100) - (Pos(0, 3, 0) * Box(34, 20, 100))),
+                ("inner", Pos(0, 3, 0) * (Box(28, 12, 100) - (Pos(0, 3, 0) * Box(22, 12, 100)))),
+            ],
+        }
+
+    def test_verdicts_match_the_exact_query(self) -> None:
+        for label, parts in self._cases().items():
+            with self.subTest(case=label):
+                exact = enumerate_interferences(parts)
+                fast = enumerate_interferences(parts, mesh_prefilter=True)
+                self.assertEqual([(p.a, p.b, p.kind) for p in fast.pairs], [(p.a, p.b, p.kind) for p in exact.pairs])
+                for f, e in zip(fast.pairs, exact.pairs):
+                    self.assertAlmostEqual(f.overlap_volume, e.overlap_volume, places=3)
+
+    def test_prefilter_is_ignored_when_a_clearance_is_required(self) -> None:
+        from build123d import Box, Pos
+
+        parts = [("a", Box(10, 10, 10)), ("b", Pos(11, 0, 0) * Box(10, 10, 10))]  # 間隙 1 < 要求 2
+        report = enumerate_interferences(parts, clearance=2.0, mesh_prefilter=True)
+        self.assertEqual(len(report.near), 1)
+        self.assertAlmostEqual(report.near[0].gap, 1.0, places=6)  # 走的是精確查詢
+
+    def test_a_part_that_cannot_be_meshed_falls_back_to_the_exact_query(self) -> None:
+        from unittest import mock
+
+        from build123d import Box, Pos
+
+        from cadpy import geometry_checks
+
+        parts = [("a", Box(10, 10, 10)), ("b", Pos(5, 0, 0) * Box(10, 10, 10))]
+        refuse = mock.patch.object(geometry_checks, "_mesh_for_prefilter", return_value=False)
+        trap = mock.patch.object(geometry_checks, "_surfaces_apart", side_effect=AssertionError("不該被呼叫"))
+        with refuse, trap:
+            report = enumerate_interferences(parts, mesh_prefilter=True)
+        self.assertEqual(report.pairs[0].kind, "overlap")
+
+    def test_unproven_means_exact(self) -> None:
+        """快篩答不出來(kernel 不支援、例外、沒載入三角面)一律當成「沒證明分開」。"""
+        from unittest import mock
+
+        from build123d import Cylinder, Sphere
+
+        from cadpy import geometry_checks
+
+        # 包絡箱相交(球在管子的孔裡),所以過得了包絡箱那一關、輪到快篩
+        far = [("tube", Cylinder(10, 40) - Cylinder(8, 40)), ("ball", Sphere(3))]
+        calls = []
+        real = geometry_checks.min_gap
+
+        def counting(a, b):
+            calls.append(1)
+            return real(a, b)
+
+        unproven = mock.patch.object(geometry_checks, "_surfaces_apart", return_value=False)
+        counted = mock.patch.object(geometry_checks, "min_gap", side_effect=counting)
+        with unproven, counted:
+            report = enumerate_interferences(far, mesh_prefilter=True)
+        self.assertEqual(report.pairs[0].kind, "clear")
+        self.assertEqual(len(calls), 1)  # 沒被證明分開 → 走了精確查詢
+
+
+class InterferenceTimeBudgetTests(unittest.TestCase):
+    """時間預算用完時,沒量到的配對逐一標 unmeasured——不是通過,也不是失敗。"""
+
+    def _parts(self):
+        from build123d import Box, Pos
+
+        return [
+            ("a", Box(10, 10, 10)),
+            ("b", Pos(5, 0, 0) * Box(10, 10, 10)),    # a~b 重疊 500 mm^3
+            ("c", Pos(30, 0, 0) * Box(10, 10, 10)),   # 遠:包絡箱就分得開
+            ("pin", Pos(-3, 0, 4) * Box(2, 2, 10)),   # 與 a 重疊(宣告為接觸),碰不到 b
+        ]
+
+    def test_no_budget_is_the_old_behaviour(self) -> None:
+        report = enumerate_interferences(self._parts(), allow=[("a", "pin")])
+        self.assertEqual(report.unmeasured, ())
+        self.assertEqual([(p.a, p.b) for p in report.overlaps], [("a", "b")])
+        self.assertEqual(len(report.allowed), 1)
+        self.assertGreater(report.allowed[0].overlap_volume, 0)
+
+    def test_spent_budget_marks_touching_pairs_unmeasured_and_keeps_far_pairs_clear(self) -> None:
+        import math
+
+        full = enumerate_interferences(self._parts(), allow=[("a", "pin")])
+        spent = enumerate_interferences(self._parts(), allow=[("a", "pin")], time_budget_s=0)
+        # 配對的順序與數量不變(下游以位置對照)
+        self.assertEqual([(p.a, p.b) for p in spent.pairs], [(p.a, p.b) for p in full.pairs])
+        kinds = {frozenset((p.a, p.b)): p.kind for p in spent.pairs}
+        self.assertEqual(kinds[frozenset(("a", "b"))], "unmeasured")   # 箱相交、沒時間量
+        self.assertEqual(kinds[frozenset(("a", "c"))], "clear")        # 箱分得開:不花時間,照樣判定
+        self.assertEqual(kinds[frozenset(("b", "pin"))], "clear")
+        # 沒量到的那幾對不可被當成重疊,也不可被當成沒事
+        self.assertEqual(spent.overlaps, ())
+        self.assertEqual({(p.a, p.b) for p in spent.unmeasured}, {("a", "b")})
+        self.assertIn("unmeasured: a~b", spent.summary())
+        # 宣告接觸的那一對沒量到:仍是 allowed,但重疊量是 NaN(未知),不是 0
+        allowed = spent.allowed[0]
+        self.assertEqual((allowed.a, allowed.b), ("a", "pin"))
+        self.assertTrue(math.isnan(allowed.overlap_volume))
+
+    def test_generous_budget_changes_nothing(self) -> None:
+        full = enumerate_interferences(self._parts(), allow=[("a", "pin")])
+        timed = enumerate_interferences(self._parts(), allow=[("a", "pin")], time_budget_s=600)
+        self.assertEqual([(p.a, p.b, p.kind) for p in timed.pairs], [(p.a, p.b, p.kind) for p in full.pairs])
+        for x, y in zip(timed.pairs, full.pairs):
+            self.assertAlmostEqual(x.overlap_volume, y.overlap_volume, places=6)
+
+    def test_gate_does_not_raise_on_unmeasured_alone(self) -> None:
+        # 產生器自己的閘不帶預算,行為不變;這裡只鎖「unmeasured 不是 overlap」這件事
+        from build123d import Box, Pos
+
+        report = enumerate_interferences(
+            [("a", Box(10, 10, 10)), ("b", Pos(5, 0, 0) * Box(10, 10, 10))], time_budget_s=0
+        )
+        self.assertEqual(len(report.unmeasured), 1)
+        self.assertEqual(report.overlaps, ())
+
+
 class BroadPhaseTests(unittest.TestCase):
     """AABB broad-phase 必須是純提速:配對數、判定、allowed 量測全不變。"""
 

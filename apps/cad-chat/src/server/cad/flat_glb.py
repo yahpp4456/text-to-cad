@@ -38,6 +38,10 @@ def main() -> int:
     spec = importlib.util.spec_from_file_location("_sheet_gen", str(gen_path))
     mod = importlib.util.module_from_spec(spec)
     try:
+        # 攤平件的面號也要每次相同(攤平態的面標記與量測用得到);與 build 路徑同一套規則
+        from cadpy.kernel.determinism import ensure_installed
+
+        ensure_installed()
         spec.loader.exec_module(mod)
     except Exception as exc:  # noqa: BLE001
         return _fail(f"產生器載入失敗:{type(exc).__name__}: {exc}")
