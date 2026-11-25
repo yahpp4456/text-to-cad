@@ -217,8 +217,7 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
     }
   }
   const model = resolveModelFor(demoCtx);
-  // packaged:釘死 SDK spawn 的 claude CLI(asar → .unpacked 改寫);dev 回 null
-  // → 不傳,SDK 內建解析(行為與舊版完全一致)。
+  // 設了 CADCHAT_CLAUDE_CLI 就釘死 SDK spawn 的 claude CLI;未設回 null → 不傳,SDK 內建解析。
   const claudeCli = resolveClaudeCliExe();
   const guard = makeToolGuard(orch ? [...allowed, "Agent", "Task"] : allowed, { mode, session });
   const q = query({

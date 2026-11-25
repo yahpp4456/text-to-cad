@@ -11,7 +11,7 @@ import { pathIsInside } from "../cad/paths.mjs";
 
 export const READ_TOOLS = new Set(["Read", "Glob", "Grep"]);
 
-// 知識庫相對 RUNTIME_ROOT 的位置(dev = repo 根下;打包版由 extraResources 放到同一相對路徑)。
+// 知識庫相對 RUNTIME_ROOT 的位置(dev 與服務部署都在 repo checkout 下的同一相對路徑)。
 export const KB_DIR_REL = "apps/cad-chat/kb";
 
 const GLOB_META = /[*?[\]{}]/;

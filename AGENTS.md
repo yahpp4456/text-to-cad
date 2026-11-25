@@ -7,7 +7,7 @@
 - 本 fork 的日常開發分支是 `開發`。在此分支工作，省略另開 feature branch 和送 PR 的步驟。`main` 保留作上游鏡像。
 - 預設將修改留在工作樹。只有使用者明確要求時才 commit；push 由 Sam 執行。
 - [CONTRIBUTING.md](CONTRIBUTING.md) 的 `develop`、symlink、release PR 與版本號流程屬於上游。保留 `plugins/cad/VERSION` 的上游版本；請勿觸發指向上游服務的 Release、Deploy 或 Upload Models 工作流程。
-- 本 fork 的桌面打包與服務部署各有入口。依任務查閱 [Electron 打包手冊](apps/cad-chat/PACKAGING.md) 或 [服務部署文件](apps/cad-chat/DEPLOY.md)。
+- 本 fork 的服務部署見 [服務部署文件](apps/cad-chat/DEPLOY.md)。Electron 桌面版已於 2026-11-25 移除。
 
 ## 修改 cad-chat
 

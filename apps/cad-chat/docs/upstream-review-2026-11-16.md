@@ -164,7 +164,7 @@
 | 1 地基 A1–A4 | ✅ 2026-11-24 | 見 README「常駐 CAD worker」。與藍圖的差異:① worker 是可互換的池而非每 session 一個(階段 1 的 worker 沒有狀態,部署又是多人共用);② A4 沒有另做逾時機制——呼叫端原本就用 `signal` 設逾時,池把「中止」實作成砍 worker 即可;③ 第一版以 `runpy` 執行既有入口腳本,協定只有 `run` 一種操作,結構化操作留給階段 2 |
 
 | 0 升級試驗 | ✅ 2026-11-25 | build123d 0.13.0 / OCP 8.0.1.1 在獨立環境通過:31 個 fixture 0 FAIL 0 WARN、`cadpy` 339 個測試、cad-chat Python 測試、全套煙測,失敗清單與 0.11 / 7.9 完全相同。`cadpy` 只需處理三類差異,已改成兩版通用(`cadpy/kernel/ocp_compat.py`;README「Kernel 版本」章)。第 5 節擔心的「升級會影響所有現有 fixtures」沒有發生 |
-| 0 環境切換 | ✅ 2026-11-25 | 開發 `.venv` 切到 0.13 / OCP 8(舊環境保留為 `.venv-ocp79`)。切換後:`cadpy` 346、cad-chat Python 測試、fixtures 回歸 31 個 0 FAIL 0 WARN、L1 550、全套煙測 29 支全過。Electron 內嵌 runtime 與 Linux VM 仍是 0.11 / 7.9,程式碼兩版通用 |
+| 0 環境切換 | ✅ 2026-11-25 | 開發 `.venv` 切到 0.13 / OCP 8(舊環境保留為 `.venv-ocp79`)。切換後:`cadpy` 346、cad-chat Python 測試、fixtures 回歸 31 個 0 FAIL 0 WARN、L1 550、全套煙測 29 支全過。Linux VM 仍是 0.11 / 7.9,程式碼兩版通用 |
 | 2 A5 | 部分不做 | 量測結果:STEP 寫入各案例都在 1 秒內,不是瓶頸,「中間 build 不寫 STEP」不做。真正的大頭是行程掃掠沒有包絡箱預篩(B4 設計點 ①),已提前做掉:61 件龍門架三段掃掠 22 秒 → 1 秒,判定不變 |
 
 | 2 A6 | ✅ 2026-11-25 | 建置憑證(README「建置憑證」章)。與藍圖的差異:① 憑證由 Node 端依 worker 回報的讀檔紀錄產生,不改 `cadpy`;② 只在開專案與回退啟用,其餘路徑不變;③ 多記了產物雜湊(輸入對得上但產物是別次建置留下的也不算命中);④ 驗證結果另外快取。實測 `sheet_u_bracket` 再開 13.1 秒 → 0.1 秒 |
@@ -176,6 +176,7 @@
 | 3 B7 / B9 | ✅ 2026-11-25 | 設計 prompt 加兩段:「使用者給的數字,在 check_geometry 裡對做出來的形狀驗」(量幾何再與 PARAMS 比,不重抄常數)與「改了什麼,用什麼檢查」對照表+三條原則。L1 `prompt.checks.test.js` 鎖文字;L4 實測(圓法蘭,給定外徑/厚度/孔數/孔心圓):agent 寫了 7 條斷言——包絡兩向、厚度、體積、每個螺栓孔的孔心半徑、孔數、中心孔存在——一次建置通過,收尾如實說明哪些量過、哪些等精算。鈑金真回合回歸 12/12。對照表依本專案的工具改寫(上游的 `cad model interference` / `dfm` 沒有對應物);草模、零件庫模式不帶 |
 | 3 B3 / B4 其餘 | 未做 | build 差異摘要、干涉的緊箱+分離軸篩選/pair 快取/輔助行程逐對逾時 |
 | 4–7 | 未做 | 機構(具名姿態、關節行程推算)、看圖(離屏渲染)、參照(穩定命名)、製造與圖面(鈑金/CNC DFM、工程圖標註移植) |
+| Electron 桌面版 | 已移除(2026-11-25,Sam 裁決:先不做桌面版) | `electron/`、`electron-builder.yml`、`PACKAGING.md`、bake 注入(`scripts/bake-auth.mjs`、`.env.baked` 載入)、`entry.child.mjs`、asar 的 CLI 路徑改寫與 `b-calm-swing.md` 都拿掉了;磁碟上的安裝檔(`dist-electron/`)、內嵌 Python(`build-runtime/`)與兩個 bake 憑證檔也一併刪除。雙根路徑機制(`CADCHAT_RUNTIME_ROOT` 等)留著,Linux VM 部署在用。原本掛在這裡的兩件待辦(打包版實測 worker、內嵌 runtime 升 OCP 8)隨之取消 |
 
 ## 5. 風險與未確認事項
 
@@ -190,7 +191,7 @@
 
 - 模組層狀態殘留:產生器腳本若在模組層保存狀態,熱行程內重跑會與冷啟動結果不同。上游的對策是每次 build 重新載入腳本與其第一方模組。
 - 記憶體:每個 session 一個 worker 加 standby,多開分頁時要有上限。
-- Electron 打包:worker 生命週期要併入現有的「關窗優雅退出零孤兒」機制。
+- (原列的 Electron 打包一項已不適用:桌面版於 2026-11-25 移除。)
 
 **本報告沒有做的事**
 

@@ -125,7 +125,7 @@ const WORKER_SCRIPTS = new Set([
   "apps/cad-chat/src/server/cad/flat_glb.py",
   "apps/cad-chat/src/server/cad/export_parts.py",
 ]);
-// 開發時這些目錄的 .py 改了,就把已載入舊模組的 worker 換掉(打包版程式碼不會變,不檢查)。
+// 開發時這些目錄的 .py 改了,就把已載入舊模組的 worker 換掉(雙根部署時程式碼不會變,不檢查)。
 const WORKER_WATCH_DIRS = [
   path.resolve(RUNTIME_ROOT, "skills/cad/scripts/packages"),
   path.resolve(RUNTIME_ROOT, "apps/cad-chat/py"),
@@ -203,7 +203,7 @@ export const PYTHON_CODE_DIRS = [
 
 // scriptDir 為 RUNTIME_ROOT 相對路徑(如 "skills/cad/scripts/step"),以 `python <dir> ...`
 // 執行。腳本在這裡統一絕對化(唯讀程式資產根);cwd=DATA_ROOT(可寫資料根)是產物
-// 相對路徑的基準——打包後兩根分離,cwd 只能當產物基準,腳本必須走絕對路徑。
+// 相對路徑的基準——雙根部署時兩根分離,cwd 只能當產物基準,腳本必須走絕對路徑。
 // 永不 reject;回 {code, stdout, stderr}。
 export async function spawnPython(scriptDir, args, { session, onLog, signal } = {}) {
   const scriptAbs = path.isAbsolute(scriptDir)

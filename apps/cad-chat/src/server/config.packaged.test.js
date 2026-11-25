@@ -1,4 +1,4 @@
-// 打包佈局(env 覆寫)單元測:CADCHAT_* 路徑 env 必須在 import config 前設好
+// 雙根部署(env 覆寫,DEPLOY.md 的 VM 佈局)單元測:CADCHAT_* 路徑 env 必須在 import config 前設好
 // (常數是 module-level 推導),故本檔不 static import config,全部走動態 import。
 // node --test 每檔獨立進程,這裡動 process.env 不會污染其他測試檔。
 import assert from "node:assert/strict";

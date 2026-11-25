@@ -272,7 +272,7 @@ def _prewarm() -> tuple[str | None, list[str], dict[str, str | None]]:
         versions["ocp"] = getattr(OCP, "__version__", None)
     except Exception:  # noqa: BLE001
         versions["ocp"] = None
-    # 實際載入的那份 cadpy 的內容摘要:開發時是 vendored 複本、打包後是 site-packages 裡的
+    # 實際載入的那份 cadpy 的內容摘要:開發時是 vendored 複本、非 editable 安裝時是 site-packages 裡的
     # wheel,位置不同,所以由載入它的行程自己算最準。cadpy 一改,舊的建置憑證全部失效。
     versions["cadpy"] = _package_digest("cadpy")
     return None, warnings, versions

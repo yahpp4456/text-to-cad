@@ -9,7 +9,6 @@
 - 代理遇到清單上的情境時用讀檔工具讀對應主題檔。主題檔的內容**不進**系統提示,加再多主題
   提示也只多一行。
 - 讀取範圍硬閘(`src/server/agent/readScope.mjs`)只放行這個目錄,不放行 `apps/` 其他地方。
-- 打包版由 `electron-builder.yml` 的 extraResources 帶到 `runtime/apps/cad-chat/kb`。
 
 ## 新增一個主題
 

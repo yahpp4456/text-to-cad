@@ -13,7 +13,7 @@
 
 把 `apps/cad-chat`(node:http server + React 前端 + Python CAD pipeline +
 Claude Agent SDK)以**伺服器端服務**跑在這台 GCP VM 上,同事用瀏覽器經 HTTPS +
-帳密使用。相對 Electron 內測版的關鍵差異:**API key 只存在 VM,不出貨**;
+帳密使用。**API key 只存在 VM,不出貨**;
 **教訓(lessons.json)集中累積在 VM 的資料根**(= Sam 的核心私有資產)。
 
 ```
@@ -27,7 +27,7 @@ Claude Agent SDK)以**伺服器端服務**跑在這台 GCP VM 上,同事用瀏�
 程式根 /opt/cadchat/repo(唯讀角色;更新=git pull)
 ```
 
-**認證/路徑機制(實碼錨點,已在 Windows 打包版驗證過同一套接線):**
+**認證/路徑機制(實碼錨點):**
 - `src/server/config.mjs:24-45`:`CADCHAT_RUNTIME_ROOT`/`CADCHAT_DATA_ROOT`/
   `CADCHAT_PYTHON_EXE` env 覆寫根路徑;設了 `CADCHAT_RUNTIME_ROOT` → `PACKAGED=true`
   → agent transcripts 隔離到 `DATA_ROOT/.claude`(config.mjs:31、188-190)。

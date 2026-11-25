@@ -39,7 +39,7 @@ export function loadKbIndex({ root = RUNTIME_ROOT, fresh = false } = {}) {
       fs.existsSync(path.join(dir, e.file)),
     );
   } catch {
-    entries = []; // 知識庫缺席(舊打包版等)→ 不出這一段,其餘照常
+    entries = []; // 知識庫缺席(部署時沒帶到等)→ 不出這一段,其餘照常
   }
   cached = { root, entries };
   return entries;

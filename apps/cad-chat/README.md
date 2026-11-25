@@ -63,44 +63,27 @@ effort 的模型有效,否則 SDK 靜默降級)、`CADCHAT_THINKING`(深度思�
 `off|disabled|adaptive|<正整數 budgetTokens>`,**預設 off**——不做可見深度思考、避免長
 停頓,深度由 effort 控)。三者只作用於主 agent(`runner.mjs`);教訓蒸餾 agent 用 SDK 預設。
 
-## 打包散布(Electron 內測版;操作手冊見 [PACKAGING.md](PACKAGING.md),計畫/驗證紀錄見 repo 根 `b-calm-swing.md`)
+## 雙根部署的路徑契約
 
-**日常打包/換 key = 編輯 `.env.bake` → `npm run dist`**(bake 驗證→vite build→electron-builder
-一條龍);細節、檢查清單、troubleshooting 全在 PACKAGING.md。以下是機制說明:
+服務部署(見 [DEPLOY.md](DEPLOY.md))把唯讀程式與可寫資料分成兩個根;本機開發不設任何路徑
+env,兩個根都是 repo 根。
 
-發給內部可信同事的 Windows 桌面版。**認證 = build 時注入 Sam 自備 API key(方案 B)**;
-key 明文躺產物內是已知並接受的風險(防線 = 可信對象 + 專屬 key + Console 花費上限;
-asar 非加密,寫死源碼同樣可抽,故不採)。
-
-- **單一貼入點**:build 機建 `apps/cad-chat/.env.bake`(gitignored)貼
-  `ANTHROPIC_API_KEY`(必填,`sk-ant-` 形狀檢查)+ 任何 `CADCHAT_*` 預設(選填,鍵白名單)。
-  `npm run bake-auth` 驗證後產 `.env.baked`(隨包散布);`npm run build:packaged` 一條龍。
-- **執行期載入**(`config.loadBakedEnv`):**fallback-only**——真 env / `.env.local` 已有
-  任一認證則整檔略過(`resolveAuth` 的 tie-break 是 apikey 一律勝 oauth,不加這道 guard,
-  dev 機殘留 `.env.baked` 會靜默改用 baked key 計費)。
-- **路徑契約**(`config.mjs`,env 優先 + `import.meta.url` fallback;dev 不設 = 恆等式零回歸):
+- **路徑**(`config.mjs`,env 優先 + `import.meta.url` fallback):
   `CADCHAT_RUNTIME_ROOT`(唯讀程式資產根)/`CADCHAT_DATA_ROOT`(可寫資料根)/
   `CADCHAT_PYTHON_EXE`/`CADCHAT_DIST_ROOT`/`CADCHAT_MODELS_FIXTURES_ROOT`。models 為
   雙層:可寫 `DATA_ROOT/models` 優先、唯讀 fixtures fallback(`cad/paths.mjs
   resolveModelRead`;寫入永遠只准可寫層)。`spawnPython` 腳本絕對化到 RUNTIME_ROOT、
   `cwd=DATA_ROOT`(產物相對基準);`scrubPaths` 雙根+HOME 全遮。
-- **可搬移 Python runtime**(`build-runtime/python/`,gitignored):python.org embeddable
-  3.13 + 白名單套件(build123d novtk 鏈 + ezdxf)+ **非-editable** cadpy wheel——無
-  `.pth` 絕對路徑、無 Store Python 依賴、無 vtk/playwright,約 556MB。重建腳本見
-  `b-calm-swing.md` P0-1。
-- **SDK CLI 釘死**:兩處 `query()`(runner + lessons.distill)在 packaged 下傳
-  `pathToClaudeCodeExecutable`(`resolveClaudeCliExe`:asar→`.unpacked` 改寫、
-  `CADCHAT_CLAUDE_CLI` 覆寫;dev 回 null 走 SDK 內建);`agentEnv` 恆刪
-  `ELECTRON_RUN_AS_NODE`,packaged 下設 `CLAUDE_CONFIG_DIR=DATA_ROOT/.claude` 隔離 transcript。
-- **Electron 殼(Phase 1)**:`npm run electron:dev` 起桌面殼(dev 模式,走 repo 恆等式+Vite)。
-  組裝鏈:`electron/main.cjs`(CJS,single-instance、BrowserWindow `contextIsolation+sandbox`
-  無 preload——渲染層=純瀏覽器,信任模型與網頁版相同)→ 動態 import `electron/launch.mjs`
-  (`computeRuntimeEnv` 依 `app.isPackaged` 算 `CADCHAT_*` 路徑 env,**只餵路徑不碰憑證**;
-  `CADCHAT_PORT=0`=OS 配臨時埠免競態)→ `utilityProcess.fork src/server/entry.child.mjs`
-  (`ready` IPC 回實際 port/url)→ `loadURL`。退出:`before-quit` → `taskkill /pid /T /F`
-  連根清 server 子樹(python.exe / claude.exe 孫程序)。server 組裝本體在
-  `src/server/start.mjs` 的 `startServer({dev,port})`(`server.mjs` 只是薄 CLI wrapper,
-  `npm run dev/serve` 介面不變)。
+- **設了 `CADCHAT_RUNTIME_ROOT` 之後多兩個行為**(程式裡的 `PACKAGED` 旗標):`agentEnv` 設
+  `CLAUDE_CONFIG_DIR=DATA_ROOT/.claude` 隔離 transcript;常駐 CAD worker 不做「程式碼改了就
+  換新」的檢查。
+- **SDK CLI**:兩處 `query()`(runner + lessons.distill)在設了 `CADCHAT_CLAUDE_CLI` 時傳
+  `pathToClaudeCodeExecutable`;未設走 SDK 內建解析。
+- server 組裝本體在 `src/server/start.mjs` 的 `startServer({dev,port})`(`server.mjs` 只是薄
+  CLI wrapper;`port:0` 由 OS 配臨時埠,測試用)。
+
+> Electron 桌面版(`electron/`、`electron-builder.yml`、`PACKAGING.md`、`.env.bake` 注入)
+> 已於 2026-11-25 移除,目前只有網頁版與服務部署。要找回來看 git 歷史。
 
 ## 架構
 
@@ -231,7 +214,7 @@ worker 啟動約 5–6 秒、常駐約 350–400 MiB。常駐的 build 數字沒
 
 ### 生命週期
 
-- **預熱**:伺服器進入點(`server.mjs`、Electron 的 `entry.child.mjs`)啟動後暖一個;每個
+- **預熱**:伺服器進入點(`server.mjs`)啟動後暖一個;每個
   非草模的對話回合開始時也呼叫一次(已有閒置 worker 時是 no-op)。刻意不放在
   `startServer()` 裡——L1 測試會反覆 `startServer({port:0})`。
 - **中止與逾時**:kernel 呼叫無法從行程內打斷,所以 `signal` 中止一律**砍掉 worker**,池再
@@ -263,7 +246,7 @@ worker 啟動約 5–6 秒、常駐約 350–400 MiB。常駐的 build 數字沒
 ### 連帶修掉的:`inspect` 每次掃整個資料根
 
 常駐之後才看得出來:`inspect` 在暖行程裡仍要 5–7 秒。原因是 `cadpy.step_targets` 為了
-解析**一個** STEP 目標,會把整個工作目錄走一遍(開發時是整個 repo,打包後是使用者資料
+解析**一個** STEP 目標,會把整個工作目錄走一遍(開發時是整個 repo,服務部署時是資料根
 目錄),對每個像產生器的 `.py` 做語法解析,而且一次呼叫走兩遍。成本隨累積的 session 與
 版本快照成長,任何一個不相干的壞產生器也會讓查找失敗。
 
@@ -381,8 +364,8 @@ L1 `cad/closure.test.js`(每一種輸入、環境、產物變動都必須未命�
 寫新的 OCP 程式碼時照最右欄。要確認沒有用到某一版才有的名稱,兩支靜態掃描放在
 `scripts/dev/`(`ocp-names.py` 查 import、`ocp-attrs.py` 查類別屬性),用目標環境的直譯器跑。
 
-為什麼要兩版都能跑:開發環境、Electron 內嵌 runtime(`build-runtime/python`)、Linux VM
-部署是三個各自安裝的 Python,不會同時升級。實測 0.13 / OCP 8 的 `import build123d` 約
+為什麼要兩版都能跑:開發環境與 Linux VM 部署是各自安裝的
+Python,不會同時升級。實測 0.13 / OCP 8 的 `import build123d` 約
 3.9 秒(0.11 / 7.9 約 6 秒),31 個 fixture 的回歸總耗時少約四分之一。
 
 ### 各環境目前的版本
@@ -391,7 +374,6 @@ L1 `cad/closure.test.js`(每一種輸入、環境、產物變動都必須未命�
 |---|---|---|
 | 開發 `.venv`(Sam 的 Windows 機) | build123d 0.13.0 / OCP 8.0.1.1 | 2026-11-25 切換;切換後整套驗證全過 |
 | 舊開發環境 `.venv-ocp79` | build123d 0.11.0 / OCP 7.9.3.1 | 保留作退路與對照;不進版控 |
-| Electron 內嵌 runtime | 0.11 / 7.9 | **尚未重建**;重建前打包版照舊跑 7.9 |
 | Linux VM 部署 | 0.11 / 7.9 | 未動 |
 
 退回舊環境:關掉 cad-chat,`mv .venv .venv-b13 && mv .venv-ocp79 .venv`。
@@ -977,7 +959,7 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
 
 - **怎麼被用到**:`agent/kb.mjs` 把 `kb/INDEX.md` 的清單(每主題一行)帶進系統提示;主題檔本身
   不進提示,代理遇到清單上的情境才 Read。讀取範圍硬閘只多放行 `apps/cad-chat/kb` 這一個目錄
-  (`apps/` 其他地方照拒)。打包版由 `electron-builder.yml` 帶到 `runtime/apps/cad-chat/kb`。
+  (`apps/` 其他地方照拒)。
 - **每個主題檔的固定章節**:適用情境 / 計算與選型 / 在本系統怎麼做 / 做不到與要講明的事 /
   來源與信心。「在本系統怎麼做」寫明選型工具的輸入該怎麼算——例如 `linear_guide` 的 load_N 是直接
   與額定動負荷比、不含安全係數;`ball_screw` 預設以 3000 rpm 反推導程,步進馬達要帶

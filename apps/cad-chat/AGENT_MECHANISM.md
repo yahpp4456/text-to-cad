@@ -521,7 +521,6 @@ export function agentEnv(env = process.env) {
   const { authMode } = resolveAuth(env);
   const e = { ...env };
   if (authMode === "apikey") delete e.CLAUDE_CODE_OAUTH_TOKEN; else delete e.ANTHROPIC_API_KEY;
-  delete e.ELECTRON_RUN_AS_NODE;
   return e;
 }
 // 給子程序的 env:兩種憑證一律刪(子程序會執行 LLM 寫的程式碼)
@@ -1557,7 +1556,7 @@ L4 要有**對照組**：例如「未指明驅動方式必問」vs「明說直�
 9. **程式閘門**：逐條把 prompt 的「必須/不得」問「程式能不能擋」（clarify 閘、出口閘、滑桿補發…）。
 10. **驗證金字塔**（§5）；跑一輪 L4 對照組。
 11. （進階）**教訓系統**（§4.13）：先做錄製 + 簽名分型，蒸餾與注入可後補。
-12. （進階）**多模式**（§4.14）、打包（Electron：CLI 在 asar 內無法 spawn，要 `pathToClaudeCodeExecutable` 指到 unpacked 路徑；transcript 用 `CLAUDE_CONFIG_DIR` 隔離）。
+12. （進階）**多模式**（§4.14）、服務部署（唯讀程式與可寫資料分成兩個根；transcript 用 `CLAUDE_CONFIG_DIR` 隔離到資料根）。
 
 ---
 
@@ -1619,10 +1618,10 @@ L4 要有**對照組**：例如「未指明驅動方式必問」vs「明說直�
 | `APP_EFFORT` | `low/medium/high/xhigh/max` | high |
 | `APP_PORT` | 伺服器埠 | 8788 |
 | `APP_PYTHON` | Python 直譯器 | `.venv/…/python` |
-| `APP_RUNTIME_ROOT` / `APP_DATA_ROOT` | 打包時分離唯讀程式資產與可寫資料（dev 恆等） | app 根 |
+| `APP_RUNTIME_ROOT` / `APP_DATA_ROOT` | 部署時分離唯讀程式資產與可寫資料（dev 恆等） | app 根 |
 | `APP_GC_DAYS` | 啟動時清掉幾天沒動的 session | 7 |
 | `APP_LESSONS` / `APP_LESSON_THRESHOLD` / `APP_LESSONS_MODEL` | 教訓系統開關 / 蒸餾門檻 / 蒸餾用模型 | 1 / 3 / 同 APP_MODEL |
-| `CLAUDE_CONFIG_DIR` | 打包時隔離 CLI transcript 到可寫資料根 | — |
+| `CLAUDE_CONFIG_DIR` | 部署時隔離 CLI transcript 到可寫資料根 | — |
 
 ## 附錄 C：名詞表
 

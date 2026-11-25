@@ -1,7 +1,6 @@
 // server 工廠:把原 server.mjs 的頂層副作用(env 載入/session GC/middleware 鏈/
-// Vite middlewareMode/listen)收進 startServer(),讓 CLI(server.mjs)與 Electron
-// (entry.child.mjs 被 utilityProcess.fork)共用同一份組裝。
-// port=0 → OS 配置臨時埠(Electron 殼免「先挑埠再綁」的競態);回傳實際埠。
+// Vite middlewareMode/listen)收進 startServer(),CLI(server.mjs)與測試共用同一份組裝。
+// port=0 → OS 配置臨時埠(測試免「先挑埠再綁」的競態);回傳實際埠。
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -11,7 +10,6 @@ import {
   DIST_ROOT,
   HOST,
   isKnownModelId,
-  loadBakedEnv,
   loadDotEnvLocal,
   demoAllowOauth,
   demoReady,
@@ -58,7 +56,6 @@ function devHtmlMiddleware(viteServer) {
 
 export async function startServer({ dev = false, port } = {}) {
   loadDotEnvLocal();
-  loadBakedEnv(); // 打包注入的預設(fallback-only:上行已載入任何認證則整檔不生效)
 
   const wantPort = Number.isFinite(port) ? port : resolvePort();
   const gcDays = resolveGcDays();

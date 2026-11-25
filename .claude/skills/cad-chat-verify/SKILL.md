@@ -134,8 +134,8 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `PYTHONUTF8=1 .venv/Scripts/python.exe scripts/dev/regress_fixtures.py --pipeline --jobs 6 --out tmp/regress/<名>.json [--compare tmp/regress/<基準>.json]`
   (~15 分;`--python` 可指定另一個 venv 的直譯器)。**`smc_cg1_cylinder` 與
   `smc_cq2_cylinder` 的 validate 原本就不通過**,不是你弄壞的。
-- **OCP 7.9 與 OCP 8 都要能跑(2026-11-25)**:開發環境、Electron 內嵌 runtime、Linux VM 是
-  三個各自安裝的 Python,不會同時升級。寫 OCP 程式碼的三條規矩(README「Kernel 版本」章):
+- **OCP 7.9 與 OCP 8 都要能跑(2026-11-25)**:開發環境與 Linux VM 是
+  各自安裝的 Python,不會同時升級。寫 OCP 程式碼的三條規矩(README「Kernel 版本」章):
   集合類別從 `cadpy.kernel.ocp_compat` import(不要直接 `from OCP.TopTools import TopTools_…`);
   包絡箱界限用 `ocp_compat.bnd_box_limits(box)`(OCP 8 的 `Bnd_Box.Get()` 呼叫即 TypeError);
   向下轉型寫 `TopoDS.Face(x)`(OCP 8 沒有 `Face_s`)。**測試檔也算**——2026-11-25 產品碼改完
@@ -231,8 +231,7 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   動 kb/ 任何檔、`kb.mjs`、readScope 的 allow → L1 `prompt.kb.test.js`(索引↔檔案雙向、必要章節、
   提示帶得到索引、`apps/` 其他路徑照拒、主題檔引用的 `models/` 路徑存在)。主題檔裡寫的選型工具
   行為(如 `ball_screw` 接受 `rated_rpm`、`linear_guide` 不含安全係數)改 `cadpy.parts.select` 時要
-  回頭對——沒有自動測試釘這層,手打 `select_part.py <family> '<json>'` 核對。新增打包資產要同步
-  `electron-builder.yml` extraResources(kb 已列)。代理會不會在對的時機讀、讀了有沒有照算 → 只有
+  回頭對——沒有自動測試釘這層,手打 `select_part.py <family> '<json>'` 核對。代理會不會在對的時機讀、讀了有沒有照算 → 只有
   L4 能驗(題目例:「水平搬 5 kg、行程 300、速度 100 mm/s 的滑台,其餘你決定」看是否讀
   linear-axis 並把質量/加速時間標 assumed)。
 - **教訓機制(2026-11-10 重構)**:雜訊判準 `lessons.curate.mjs` `isNoiseCase` 是錄製/合併/整理

@@ -117,7 +117,7 @@ async function defaultCallLlm(promptText) {
   timer.unref?.();
   try {
     const model = resolveLessonModel();
-    // packaged 釘 CLI 路徑(第二顆 claude.exe——蒸餾也 spawn CLI,與 runner 同規)
+    // 蒸餾也 spawn CLI,CLI 路徑與 runner 同規(CADCHAT_CLAUDE_CLI)
     const claudeCli = resolveClaudeCliExe();
     const q = query({
       prompt: promptText,

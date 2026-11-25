@@ -1,8 +1,4 @@
 node_modules/
 dist/
-dist-electron/
 .env.local
-.env.bake
-.env.baked
-build-runtime/
 tests/smoke/.out/
