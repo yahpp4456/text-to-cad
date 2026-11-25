@@ -3,6 +3,9 @@ import * as THREE from "three";
 
 import { useCadViewport } from "../../hooks/useCadViewport.js";
 import { createMotionPlayer } from "../../lib/cadMotion.js";
+import { sequencePose } from "../../lib/cadMotionMath.js";
+
+const SEQUENCE_STEP_S = 1.2; // 動作序列播放:相鄰兩個姿態之間走幾秒
 import { measureBetween } from "../../lib/measureFacts.js";
 import { buildTopologyModel } from "../../lib/cadTopology.js";
 import {
@@ -135,6 +138,10 @@ export default function Canvas3D({
   const playerRef = useRef(null);
   const playingRef = useRef(false);
   const motionRef = useRef(null);
+  // 具名姿態 / 動作序列:{ kind: "state", name } 定格在某個姿態;{ kind: "sequence", name, t0 } 正在
+  // 走一條序列(走完停在最後一個姿態)。null = 沒有。與往復示意(playing)互斥。
+  const poseRef = useRef(null);
+  const [pose, setPoseState] = useState(null); // 給 chip 的顯示用:{ kind, name } | null
   const [selParts, setSelParts] = useState([]); // partId(occurrenceId) 陣列(多選,上限 4)
   // 逐件顯示三態(物件樹眼睛):{occurrenceId: "ghost"|"hidden"},缺項=solid。
   // 透視外殼看內部機構用;隨新模型載入重置(ref 供 dev 鉤讀最新值)。
@@ -241,9 +248,11 @@ export default function Canvas3D({
   const selectView = (next) => {
     if (!flatUrl || next === view) return;
     // 切到攤平先停運動示意(展開態播放無意義)
-    if (next === "flat" && playingRef.current) {
+    if (next === "flat" && (playingRef.current || poseRef.current)) {
       playingRef.current = false;
       setPlaying(false);
+      poseRef.current = null;
+      setPoseState(null);
       playerRef.current?.reset?.();
     }
     setView(next);
@@ -371,6 +380,8 @@ export default function Canvas3D({
       playerRef.current = model ? createMotionPlayer(THREE, model, runtime) : null;
       selRef.current = [];
       playingRef.current = false;
+      poseRef.current = null;
+      setPoseState(null);
       setSelParts([]);
       setOrbit(false);
       setPlaying(false);
@@ -433,6 +444,22 @@ export default function Canvas3D({
       }
       if (playingRef.current && playerRef.current && motionRef.current) {
         playerRef.current.apply(motionRef.current, performance.now() / 1000);
+      } else if (poseRef.current && playerRef.current && motionRef.current) {
+        const m = motionRef.current;
+        const cur = poseRef.current;
+        if (cur.kind === "state") {
+          playerRef.current.applyPose(m, m.states?.[cur.name] || {});
+        } else {
+          // 序列:每一步 SEQUENCE_STEP_S 秒,走完停在最後一個姿態(chip 換成那個姿態)
+          const seq = m.sequences?.[cur.name] || [];
+          const phase = (performance.now() / 1000 - cur.t0) / SEQUENCE_STEP_S;
+          playerRef.current.applyPose(m, sequencePose(seq, m.states, phase));
+          if (seq.length && phase >= seq.length - 1) {
+            const last = seq[seq.length - 1];
+            poseRef.current = { kind: "state", name: last };
+            setPoseState({ kind: "state", name: last });
+          }
+        }
       }
     },
     onPickPart: (hit) => selectPart(hit?.partId || null, hit?.mode || "toggle"),
@@ -445,6 +472,12 @@ export default function Canvas3D({
     if (!motion && playingRef.current) {
       playingRef.current = false;
       setPlaying(false);
+      playerRef.current?.reset?.();
+    }
+    // 宣告換了(重生、切版):原本定格的姿態可能已不存在,一律回到建成姿態
+    if (poseRef.current) {
+      poseRef.current = null;
+      setPoseState(null);
       playerRef.current?.reset?.();
     }
   }, [motion]);
@@ -466,6 +499,22 @@ export default function Canvas3D({
           return true;
         },
         matrixFor: (label) => playerRef.current?.matrixFor?.(label) ?? null,
+        // 具名姿態 / 動作序列(全讀 ref):有哪些、目前定格在哪、直接擺到某個姿態或序列的某個位置
+        states: () => Object.keys(motionRef.current?.states || {}),
+        sequences: () => Object.keys(motionRef.current?.sequences || {}),
+        pose: () => (poseRef.current ? { kind: poseRef.current.kind, name: poseRef.current.name } : null),
+        applyPose: (name) => {
+          const st = motionRef.current?.states?.[name];
+          if (!playerRef.current || !st) return false;
+          playerRef.current.applyPose(motionRef.current, st);
+          return true;
+        },
+        applySequenceAt: (name, phase) => {
+          const seq = motionRef.current?.sequences?.[name];
+          if (!playerRef.current || !seq) return false;
+          playerRef.current.applyPose(motionRef.current, sequencePose(seq, motionRef.current.states, phase));
+          return true;
+        },
       };
       window.__cadChrome = {
         grid: () => apiRef.current.chrome?.grid?.visible ?? null,
@@ -610,7 +659,23 @@ export default function Canvas3D({
     const next = !playing;
     playingRef.current = next;
     setPlaying(next);
+    poseRef.current = null; // 往復示意與定格姿態互斥
+    setPoseState(null);
     if (!next) playerRef.current?.reset?.();
+  };
+  // 點姿態 chip:擺到那個姿態並定格;再點一次回到建成姿態。點序列 chip:從頭走一遍,停在最後一個姿態。
+  const selectPose = (kind, name) => {
+    playingRef.current = false;
+    setPlaying(false);
+    const cur = poseRef.current;
+    if (kind === "state" && cur?.kind === "state" && cur.name === name) {
+      poseRef.current = null;
+      setPoseState(null);
+      playerRef.current?.reset?.();
+      return;
+    }
+    poseRef.current = kind === "sequence" ? { kind, name, t0: performance.now() / 1000 } : { kind, name };
+    setPoseState({ kind, name });
   };
   const toggleOrbit = () => {
     const next = !orbit;
@@ -868,6 +933,8 @@ export default function Canvas3D({
     return { pid, label: nd?.label || pid, token: nd?.token || `#${pid}` };
   });
   const motionReady = !!(motion && motion.dofs?.length);
+  const poseNames = motionReady ? Object.keys(motion.states || {}) : [];
+  const sequenceNames = motionReady ? Object.keys(motion.sequences || {}) : [];
   const faceContextAvailability = normalToFaceAvailability(faceContextMenu?.face?.pick);
 
   return (
@@ -1098,6 +1165,35 @@ export default function Canvas3D({
               <a className="tool-chip motion-toggle" data-on={playing} onClick={togglePlay}>
                 {playing ? "⏸ 停止" : "▶ 運動示意"}
               </a>
+            )}
+            {/* 具名姿態與動作序列(產生器的 MOTION.states / sequences):幾個自由度同時到位的樣子 */}
+            {motionReady && view !== "flat" && poseNames.length > 0 && (
+              <span className="pose-chips" data-testid="pose-chips">
+                {poseNames.map((name) => (
+                  <a
+                    key={"s:" + name}
+                    className="tool-chip pose-chip"
+                    data-pose={name}
+                    data-on={pose?.kind === "state" && pose.name === name}
+                    title={`擺到「${name}」姿態(再點一次回到建成姿態)`}
+                    onClick={() => selectPose("state", name)}
+                  >
+                    {name}
+                  </a>
+                ))}
+                {sequenceNames.map((name) => (
+                  <a
+                    key={"q:" + name}
+                    className="tool-chip pose-chip"
+                    data-sequence={name}
+                    data-on={pose?.kind === "sequence" && pose.name === name}
+                    title={`依序走過:${(motion.sequences[name] || []).join(" → ")}`}
+                    onClick={() => selectPose("sequence", name)}
+                  >
+                    ▶ {name}
+                  </a>
+                ))}
+              </span>
             )}
             {pickerOpen && (
               <div className="marker-panel">

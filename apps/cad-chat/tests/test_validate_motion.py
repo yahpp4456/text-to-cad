@@ -169,6 +169,98 @@ class CoupledSweepIntegration(unittest.TestCase):
         self.assertNotIn("findings", check)
 
 
+class NamedPoseIntegration(unittest.TestCase):
+    """具名姿態與動作序列(藍圖 D3,需 build123d):兩個各自往復都乾淨的自由度,同時到位才相撞。
+
+    slider_x 沿 +X 走 30、slider_y 沿 -Y 走 30;兩者各自走到底時,對方還停在原位,碰不到。
+    兩個都走到底時落在同一個位置。逐群掃掠一次只動一個群,看不到這個;姿態與序列看得到。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from build123d import Box, Pos
+
+        from cadpy.assembly import label_shape
+
+        def part(name, shape):
+            label_shape(shape, name)
+            return (name, shape)
+
+        cls.named = [
+            part("base", Pos(15, 15, -6) * Box(80, 80, 4)),
+            part("slider_x", Pos(0, 0, 0) * Box(10, 10, 10)),
+            part("slider_y", Pos(30, 30, 0) * Box(10, 10, 10)),
+        ]
+
+    def _motion(self, **extra):
+        raw = {"dofs": [
+            {"id": "x", "axis": [1, 0, 0], "travel": 30.0, "moving": ["slider_x"], "samples": 6},
+            {"id": "y", "axis": [0, -1, 0], "travel": 30.0, "moving": ["slider_y"], "samples": 6},
+        ], **extra}
+        return validate._read_motion(SimpleNamespace(MOTION=raw), self.named)
+
+    def test_each_dof_alone_sweeps_clean(self):
+        motion, errs = self._motion()
+        self.assertEqual(errs, [])
+        check = validate._run_motion_sweep(self.named, motion)
+        self.assertTrue(check["ok"], check)
+
+    def test_named_pose_with_both_at_the_end_collides(self):
+        motion, errs = self._motion(states={"home": {}, "both": {"x": 1.0, "y": 1.0}})
+        self.assertEqual(errs, [])
+        self.assertEqual(motion["states"]["home"], {"x": 0.0, "y": 0.0})  # 沒指定的主動 dof 補 0
+        check = validate._run_motion_sweep(self.named, motion)
+        self.assertFalse(check["ok"], check)
+        self.assertIn("2 個姿態", check["note"])
+        finding, = check["findings"]
+        self.assertEqual(finding["rule"], "motion.penetration")
+        self.assertEqual(sorted(finding["refs"]), ["slider_x", "slider_y"])
+        self.assertEqual(finding["where"], "姿態 both")
+        self.assertAlmostEqual(finding["value"], 1000.0, delta=1.0)  # 兩個 10 mm 方塊完全重合
+
+    def test_sequence_reports_where_along_it_the_collision_starts(self):
+        motion, errs = self._motion(
+            states={"home": {}, "x_out": {"x": 1.0}, "both": {"x": 1.0, "y": 1.0}},
+            sequences={"go": ["home", "x_out", "both"]},
+        )
+        self.assertEqual(errs, [])
+        check = validate._run_motion_sweep(self.named, motion)
+        self.assertFalse(check["ok"], check)
+        self.assertIn("1 條序列", check["note"])
+        finding, = check["findings"]
+        self.assertEqual(sorted(finding["refs"]), ["slider_x", "slider_y"])
+        # 最深的那一幀是序列的終點;訊息說明一共有幾幀穿透(x_out 之後 slider_y 一路靠過來)
+        self.assertEqual(finding["where"], "序列 go:both")
+        self.assertIn("幀穿透", finding["message"])
+
+    def test_poses_that_do_not_collide_stay_ok(self):
+        motion, errs = self._motion(
+            states={"home": {}, "x_out": {"x": 1.0}, "y_out": {"y": 1.0}},
+            sequences={"out_and_back": ["home", "x_out", "home", "y_out"]},
+        )
+        self.assertEqual(errs, [])
+        check = validate._run_motion_sweep(self.named, motion)
+        self.assertTrue(check["ok"], check)
+        self.assertNotIn("findings", check)
+        self.assertIn("3 個姿態 · 1 條序列", check["note"])
+
+    def test_invalid_state_is_a_declaration_error(self):
+        motion, errs = self._motion(states={"bad": {"x": 1.5}})
+        self.assertIsNone(motion)
+        self.assertEqual(errs, ["states.bad.x: 位置必須是 0 到 1 之間的數(行程比例),收到 1.5"])
+
+    def test_playback_carries_states_and_sequences(self):
+        from cadpy.motion_decl import playback_motion
+
+        motion, _ = self._motion(states={"home": {}, "both": {"x": 1.0, "y": 1.0}}, sequences={"go": ["home", "both"]})
+        play = playback_motion(motion)
+        self.assertEqual(play["states"], {"home": {"x": 0.0, "y": 0.0}, "both": {"x": 1.0, "y": 1.0}})
+        self.assertEqual(play["sequences"], {"go": ["home", "both"]})
+        # 沒宣告時不多出這兩個鍵(舊的播放資料形狀不變)
+        plain, _ = self._motion()
+        self.assertNotIn("states", playback_motion(plain))
+
+
 class ClosedChainProfileIntegration(unittest.TestCase):
     """profile 掃掠語意(需 build123d/OCP):滑塊-曲柄(缸推擺臂)閉鏈——擺臂銷
     繞支點轉、連桿一端跟滑塊平移一端套在擺臂銷上。從動件對擺角是非線性關係:

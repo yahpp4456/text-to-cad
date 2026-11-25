@@ -12,7 +12,7 @@ import re
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, Checker, out_path
+from _util import BASE, Checker, evidence_shot, out_path
 
 c = Checker()
 DIRP = "sheet_u_bracket"   # 鈑金專案(有 gen_step + 滑桿)
@@ -85,7 +85,7 @@ with sync_playwright() as p:
     c.check("A: 無 folded 滑桿(攤平改視圖切換)",
             not any("攤平" in l or "摺疊" in l for l in labels), str(labels))
     c.check("A 頁無 JS 錯誤", not errs_a, "; ".join(errs_a[:3]))
-    page.screenshot(path=out_path("smoke_open_project_a.png"))
+    evidence_shot(page, "smoke_open_project_a.png")
     # 開專案 → session 綁定來源目錄(chip ✓ 已儲存 + 儲存鈕)
     chip = page.locator(".proj-chip")
     c.check(f"A: 綁定 chip「models/{DIRP} · ✓ 已儲存」",
@@ -171,7 +171,7 @@ with sync_playwright() as p:
     c.check("C: chat 在 open-project 之後(先升級再送)",
             "chat" in calls and calls.index("open-project") < calls.index("chat"), str(calls))
     c.check("C 頁無 JS 錯誤", not errs_b, "; ".join(errs_b[:3]))
-    page2.screenshot(path=out_path("smoke_open_project_c.png"))
+    evidence_shot(page2, "smoke_open_project_c.png")
     browser.close()
 
 c.finish()

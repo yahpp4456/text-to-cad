@@ -154,6 +154,17 @@ function ToolCard({ it, onToggle, demo = false }) {
         </>
       )}
       {it.note && error && <div className="tool-note">{it.note}</div>}
+      {/* 看圖工具:agent 看了哪幾張,使用者也看得到(點縮圖開原圖) */}
+      {Array.isArray(it.images) && it.images.length > 0 && (
+        <div className="tool-images" data-testid="tool-images">
+          {it.images.map((img, i) => (
+            <a key={i} className="tool-image" href={img.url} target="_blank" rel="noreferrer" title={`視角 ${img.view}`}>
+              <img src={img.url} alt={`視角 ${img.view}`} loading="lazy" />
+              <span>{img.view}</span>
+            </a>
+          ))}
+        </div>
+      )}
       {it.outputs && it.outputs.length > 0 && (
         <div className="tool-outputs">
           {it.outputs.map((f, i) => (

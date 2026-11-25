@@ -3,7 +3,7 @@
 會消耗兩個極短 LLM 回合(訂閱 OAuth / API key)——run_all 以 CADCHAT_SMOKE_LLM=1 閘門。"""
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, Checker, out_path
+from _util import BASE, Checker, evidence_shot, out_path
 
 c = Checker()
 
@@ -65,7 +65,7 @@ with sync_playwright() as p:
     c.check("全程無錯誤氣泡", page.locator(".ai-error").count() == 0)
     c.check("搶答訊息已入 transcript", "第二回合" in page.locator("body").inner_text())
     c.check("無 JS 頁面錯誤", not errors, "; ".join(errors[:3]))
-    page.screenshot(path=out_path("smoke_queue_live.png"))
+    evidence_shot(page, "smoke_queue_live.png")
     browser.close()
 
 c.finish()

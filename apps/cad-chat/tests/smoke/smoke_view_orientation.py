@@ -2,7 +2,7 @@
 """ViewCube 26 向視角 + 平面右鍵「正視於」煙測。免 LLM/session。"""
 from playwright.sync_api import sync_playwright
 
-from _util import Checker, glb_page_url, out_path
+from _util import Checker, evidence_shot, glb_page_url, out_path
 
 c = Checker()
 URL = glb_page_url("motorized_linear_stage/.motorized_linear_stage.step.glb", "stage")
@@ -162,7 +162,7 @@ with sync_playwright() as p:
     )
 
     c.check("無 JS 頁面錯誤", not errors, "; ".join(errors[:3]))
-    page.screenshot(path=out_path("smoke_view_orientation.png"))
+    evidence_shot(page, "smoke_view_orientation.png")
     browser.close()
 
 c.finish()

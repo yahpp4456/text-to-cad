@@ -3,7 +3,7 @@
 // 同步移動);不可只改 mesh.position(邊線脫節)、不可呼叫 model.update()(重置 transform)。
 import { applyDisplayRecordTransform } from "cadjs/common/displayRecordTransform";
 
-import { frameMatrix, triangleU } from "./cadMotionMath.js";
+import { expandState, frameMatrix, triangleU } from "./cadMotionMath.js";
 
 export function createMotionPlayer(THREE, model, runtime) {
   const records = model?.displayRecords || [];
@@ -46,12 +46,11 @@ export function createMotionPlayer(THREE, model, runtime) {
   const touched = new Set();
   const recMats = new Map(); // rec -> Matrix4(每幀重置為 identity 後累加)
 
+  // 往復示意:每個 dof 依時間走三角波。
   function apply(motion, tSec) {
     const dofs = motion?.dofs || [];
     const idxOf = new Map(dofs.map((d, i) => [String(d.id), i]));
-    recMats.clear();
-    dofs.forEach((dof, i) => {
-      // 每 dof 每幀算一次 frame-matrix Mi(linear=平移;revolute=繞 pivot 軸旋轉);數學見 cadMotionMath.js
+    applyWith(dofs, (dof, i) => {
       // couple(嚙合耦合):從動 dof 借主動 dof 的 period 與相位 index → 同一 u,
       // 齒輪齒條在畫面上純滾動不打滑(相位錯開只給獨立 dof)。
       let pi = i;
@@ -60,7 +59,22 @@ export function createMotionPlayer(THREE, model, runtime) {
         pi = idxOf.get(String(dof.couple));
         pd = dofs[pi];
       }
-      const Mi = frameMatrix(THREE, dof, triangleU(tSec, pd.period_s, pi));
+      return triangleU(tSec, pd.period_s, pi);
+    });
+  }
+
+  // 具名姿態:每個主動 dof 擺到指定的行程比例(state = {主動 dof id: u});從動 dof 跟著主動 dof。
+  function applyPose(motion, state) {
+    const dofs = motion?.dofs || [];
+    const u = expandState(state, dofs);
+    applyWith(dofs, (dof) => u[dof.id] ?? 0);
+  }
+
+  function applyWith(dofs, uOf) {
+    recMats.clear();
+    dofs.forEach((dof, i) => {
+      // 每 dof 每幀算一次 frame-matrix Mi(linear=平移;revolute=繞 pivot 軸旋轉);數學見 cadMotionMath.js
+      const Mi = frameMatrix(THREE, dof, uOf(dof, i));
       for (const label of dof.moving || []) {
         for (const rec of byLabel.get(String(label)) || []) {
           let m = recMats.get(rec);
@@ -111,5 +125,5 @@ export function createMotionPlayer(THREE, model, runtime) {
     return null;
   }
 
-  return { apply, reset, coverage, sample, matrixFor };
+  return { apply, applyPose, reset, coverage, sample, matrixFor };
 }

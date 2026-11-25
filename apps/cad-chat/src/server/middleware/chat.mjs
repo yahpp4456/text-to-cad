@@ -24,6 +24,7 @@ import {
   buildOrRollback,
   checkView,
   decorateChecks,
+  motionEvent,
   emitPresent,
   paramValuesFromGenerator,
   rewriteParams,
@@ -511,7 +512,7 @@ async function deterministicRegen(session, params, emit, signal) {
     checks: dec.map(checkView),
   });
   // MOTION 的 travel 引用 PARAMS,重生後重新 import 的新值在這裡帶回(播放自動跟上)
-  emit("motion", { name, schemaVersion: 1, dofs: val.motion?.dofs || [] });
+  emit("motion", motionEvent(name, val.motion));
 
   emit("stage", { index: 4 });
   emitPresent(session, name, emit);

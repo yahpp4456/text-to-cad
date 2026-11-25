@@ -26,6 +26,20 @@ def out_path(name):
     return os.path.join(OUT, name)
 
 
+def evidence_shot(page, name, timeout=15000):
+    """存證用的截圖(不是斷言):寫到 .out/<name>。截不到只印一行警告。
+
+    無頭瀏覽器對 WebGL 畫布截圖偶爾會卡到逾時(與產品無關);以前這會讓一支斷言全過的煙測整支紅。
+    需要「看圖判讀」的地方(capture_review_views)不走這裡——那種截圖拿不到就該失敗。
+    """
+    try:
+        page.screenshot(path=out_path(name), timeout=timeout)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [warn] 存證截圖 {name} 沒拍到({type(exc).__name__});不影響斷言")
+        return False
+
+
 class Checker:
     def __init__(self):
         self.passed = []

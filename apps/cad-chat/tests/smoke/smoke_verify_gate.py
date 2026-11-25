@@ -32,7 +32,7 @@ import urllib.parse
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, REPO, Checker, out_path, post, sse_events, capture_review_views
+from _util import BASE, capture_review_views, Checker, evidence_shot, out_path, post, REPO, sse_events
 
 c = Checker()
 
@@ -346,9 +346,22 @@ with sync_playwright() as p:
             str(first_items))
     c.check("D: 掃掠列說明只掃了幾幀",
             [t.strip() for t in lists.nth(1).locator("li").all_inner_texts()] == ["行程掃掠逾時,只掃了 3/12 幀"])
+    # 看圖工具的工具卡(藍圖 E1):agent 看了哪幾張,使用者在對話裡也看得到縮圖
+    PIXEL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    page.evaluate(
+        "(px) => window.__cadDispatch({ type: 'UPSERT_TOOL', id: 't_snap', patch: { id: 't_snap', name: 'cad.snapshot(iso, front)',"
+        " label: '看圖', status: 'done', ms: 5200, note: '2 張', images: [{ view: 'iso', url: px }, { view: 'front', url: px }] } })",
+        PIXEL,
+    )
+    page.wait_for_selector("[data-testid='tool-images'] img", timeout=5000)
+    snap_imgs = page.locator("[data-testid='tool-images'] .tool-image")
+    c.check("D: 看圖的工具卡顯示每個視角的縮圖與視角名稱",
+            snap_imgs.count() == 2 and [t.strip() for t in snap_imgs.locator("span").all_inner_texts()] == ["iso", "front"],
+            f"n={snap_imgs.count()}")
+    c.check("D: 縮圖可以點開原圖(連到圖檔)", (snap_imgs.first.get_attribute("href") or "").startswith("data:image/png"))
 
     c.check("D 頁無 JS 錯誤", not errs_d, "; ".join(errs_d[:3]))
-    page.screenshot(path=out_path("smoke_verify_gate_ui.png"))
+    evidence_shot(page, "smoke_verify_gate_ui.png")
     page.close()
 
     # ── E. flip_gripper revolute 前傾動畫(真 GLB + __cadMotion) ──
@@ -375,7 +388,7 @@ with sync_playwright() as p:
         c.check("E: u=0 → u=1 矩陣改變(動畫真的動)", m0 != m1)
 
     c.check("E 頁無 JS 錯誤", not errs_e, "; ".join(errs_e[:3]))
-    page2.screenshot(path=out_path("smoke_verify_gate_flip.png"))
+    evidence_shot(page2, "smoke_verify_gate_flip.png")
     page2.close()
 
     # ── F. steering_box 齒輪齒條耦合動畫(真 GLB + __cadMotion couple 同相位) ──
@@ -425,7 +438,7 @@ with sync_playwright() as p:
                 f"y={mr[13]:.3f} vs -R·θ={-RP_GEAR * theta:.3f}")
 
     c.check("F 頁無 JS 錯誤", not errs_f, "; ".join(errs_f[:3]))
-    page3.screenshot(path=out_path("smoke_verify_gate_gear.png"))
+    evidence_shot(page3, "smoke_verify_gate_gear.png")
 
     # ── H. cylinder_tilt_platform 閉鏈連桿(真 GLB + __cadMotion profile 非線性從動) ──
     # 擺臂銷繞鉸軸轉 θ;連桿先繞桿端銷擺 φ(θ)、再隨缸桿平移 s(θ)——φ、s 對 θ 非線性,
@@ -499,7 +512,7 @@ with sync_playwright() as p:
             c.check("H: 連桿有自己的擺角(非純平移)", abs(ml[2]) > 1e-3 or abs(ml[8]) > 1e-3,
                     f"m[2]={ml[2]:.5f}")
         c.check("H 頁無 JS 錯誤", not errs_h, "; ".join(errs_h[:3]))
-        page4.screenshot(path=out_path("smoke_verify_gate_tilt.png"))
+        evidence_shot(page4, "smoke_verify_gate_tilt.png")
     # ── I. L4 看圖固定機位組(等角/前/上/右 + 行程兩端;給人/AI 目視,不是驗證)──
     # 這裡在免 LLM 的真 GLB + MOTION 頁上證明 helper 能跑;真 L4 回合後用同一支
     # helper 拍同組機位比對(協定見 cad-chat-verify SKILL.md「L4 看圖固定機位協定」)。

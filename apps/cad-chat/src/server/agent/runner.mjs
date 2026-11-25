@@ -48,6 +48,7 @@ const MCP_TOOLS = [
   "cad_present",
   "cad_measure",
   "cad_align",
+  "cad_snapshot",
   "cad_export",
 ].map((t) => `mcp__cadchat__${t}`);
 

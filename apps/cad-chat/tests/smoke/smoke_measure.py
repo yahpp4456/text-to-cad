@@ -8,7 +8,7 @@ src/lib/measureFacts.test.js 鎖住)。動 cadpy.analysis positioning 數學 →
 """
 from playwright.sync_api import sync_playwright
 
-from _util import Checker, glb_page_url, out_path
+from _util import Checker, evidence_shot, glb_page_url, out_path
 
 c = Checker()
 URL = glb_page_url("motorized_linear_stage/.motorized_linear_stage.step.glb", "stage")
@@ -71,7 +71,7 @@ with sync_playwright() as p:
     c.check("退出 → HUD 消失", page.locator(".measure-hud").count() == 0)
 
     c.check("無 JS 頁面錯誤", not errors, "; ".join(errors[:2]))
-    page.screenshot(path=out_path("smoke_measure.png"))
+    evidence_shot(page, "smoke_measure.png")
     browser.close()
 
 c.finish()

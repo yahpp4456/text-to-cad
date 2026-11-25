@@ -6,7 +6,7 @@ import json
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, Checker, out_path
+from _util import BASE, Checker, evidence_shot, out_path
 
 KEY = "cadchat.session.v1"
 hand = json.load(open(out_path("versions_session.json"), encoding="utf-8"))
@@ -148,7 +148,7 @@ with sync_playwright() as p:
     c.check("新對話 → 版本清空", page.locator(".version-chip").count() == 0)
     c.check("新對話 → chip 消失", page.locator(".proj-chip").count() == 0)
     c.check("A 頁無 JS 錯誤", not errors, "; ".join(errors[:3]))
-    page.screenshot(path=out_path("smoke_restore.png"))
+    evidence_shot(page, "smoke_restore.png")
 
     # ── E. 關頁:綁定+未儲存 → beforeunload 攔截(page.on dialog 接受後才真的關)──
     page.evaluate("""() => {

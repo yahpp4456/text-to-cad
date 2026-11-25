@@ -17,7 +17,7 @@ import re
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, Checker, REPO, get_with_headers, out_path, post, sse_events
+from _util import BASE, Checker, evidence_shot, get_with_headers, out_path, post, REPO, sse_events
 
 c = Checker()
 DIRP = "cleanroom_sleeve_x"
@@ -88,7 +88,7 @@ with sync_playwright() as p:
     chip.click()
     page.wait_for_timeout(150)
     c.check("C: 再點回 → 恢復顯示", page.evaluate("() => window.__cadChrome.sweepPaths().visible") is True)
-    page.screenshot(path=out_path("smoke_sweep_overlay.png"))
+    evidence_shot(page, "smoke_sweep_overlay.png")
 
     # D(UI). 注入無 sweepPathsUrl 的 PRESENT → chip 消失(純前端,零 API;
     # 等 React 重渲染完成,固定 sleep 會 flake)

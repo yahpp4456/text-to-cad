@@ -9,7 +9,7 @@ import re
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, Checker, out_path
+from _util import BASE, Checker, evidence_shot, out_path
 
 c = Checker()
 DIRP = "sheet_u_bracket"
@@ -105,7 +105,7 @@ with sync_playwright() as p:
     c.check("摺疊態提示文字回復", "切回摺疊" not in page.locator(".model-pick-hint").inner_text())
 
     c.check("全程無 JS 錯誤", not errs, "; ".join(errs[:3]))
-    page.screenshot(path=out_path("smoke_flat_toggle.png"))
+    evidence_shot(page, "smoke_flat_toggle.png")
     browser.close()
 
 c.finish()

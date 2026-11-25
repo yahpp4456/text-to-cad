@@ -17,7 +17,7 @@ import re
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, Checker, get_with_headers, out_path, post
+from _util import BASE, Checker, evidence_shot, get_with_headers, out_path, post
 
 c = Checker()
 DIRP = "cleanroom_sleeve_x"
@@ -131,7 +131,7 @@ with sync_playwright() as p:
     c.check("F: 無 sweepPathsUrl 的 present → chip 消失", gone)
     real_errs = [e for e in errs if "WebSocket closed without opened" not in e]
     c.check("全程無 JS 錯誤(HMR ws 雜訊除外)", not real_errs, "; ".join(real_errs[:3]))
-    page.screenshot(path=out_path("smoke_sweep_window.png"))
+    evidence_shot(page, "smoke_sweep_window.png")
     browser.close()
 
 # F(API). 無 SWEEP_VIEW 的專案:sidecar 無 view(sheet 無 SWEEP_PATHS → 連 sidecar 都無)

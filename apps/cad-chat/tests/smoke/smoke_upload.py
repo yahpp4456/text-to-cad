@@ -10,7 +10,7 @@ import urllib.request
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, Checker, REPO, out_path
+from _util import BASE, Checker, evidence_shot, out_path, REPO
 
 c = Checker()
 
@@ -129,7 +129,7 @@ with sync_playwright() as p:
     c.check("文字氣泡仍在", "馬達座" in page.locator(".user-bubble").last.inner_text())
 
     c.check("無 JS 頁面錯誤", not errors, "; ".join(errors[:3]))
-    page.screenshot(path=out_path("smoke_upload.png"))
+    evidence_shot(page, "smoke_upload.png")
     browser.close()
 
 c.finish()

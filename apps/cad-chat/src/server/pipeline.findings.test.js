@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { checkView, decorateChecks, designChecksFromMeta } from "./cad/pipeline.mjs";
+import { checkView, decorateChecks, designChecksFromMeta, motionEvent } from "./cad/pipeline.mjs";
 import { signatureForCheck } from "./lessons.mjs";
 
 const overlap = (a, b, value) => ({
@@ -54,4 +54,14 @@ test("快路徑的 MOTION 宣告錯誤列:每條錯誤一筆 finding,規則代�
   assert.equal(signatureForCheck(motion).signature, "validate:motion_sweep:declaration");
   // 其餘列(略過的)沒有 findings
   for (const r of rows.filter((x) => x.id !== "motion_sweep")) assert.ok(!("findings" in r), r.id);
+});
+
+test("motionEvent:具名姿態與動作序列有宣告才帶;沒有 motion 時是空 dofs(清除舊宣告)", () => {
+  assert.deepEqual(motionEvent("rig", null), { name: "rig", schemaVersion: 1, dofs: [] });
+  const dofs = [{ id: "lift" }];
+  assert.deepEqual(motionEvent("rig", { dofs }), { name: "rig", schemaVersion: 1, dofs });
+  assert.deepEqual(motionEvent("rig", { dofs, states: {}, sequences: {} }), { name: "rig", schemaVersion: 1, dofs });
+  const full = motionEvent("rig", { dofs, states: { up: { lift: 1 } }, sequences: { go: ["home", "up"] } });
+  assert.deepEqual(full.states, { up: { lift: 1 } });
+  assert.deepEqual(full.sequences, { go: ["home", "up"] });
 });

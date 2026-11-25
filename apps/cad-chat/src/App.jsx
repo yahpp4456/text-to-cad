@@ -376,9 +376,10 @@ export default function App() {
     const motionRaw = params.get("motion");
     if (motionRaw) {
       try {
-        const dofs = JSON.parse(motionRaw)?.dofs || JSON.parse(motionRaw);
+        const parsed = JSON.parse(motionRaw);
+        const dofs = parsed?.dofs || parsed;
         if (Array.isArray(dofs) && dofs.length) {
-          dispatch({ type: "SET_MOTION", motion: { name, dofs } });
+          dispatch({ type: "SET_MOTION", motion: { name, dofs, states: parsed?.states, sequences: parsed?.sequences } });
         }
       } catch {
         console.warn("[cad-chat] ?motion= 解析失敗");
@@ -635,7 +636,7 @@ export default function App() {
         // 專案綁定(伺服端依範本/帶參數/可寫層規則裁定;null = 未綁定只有另存)
         dispatch({ type: "SET_PROJECT", project: j.project || null, sessionId: j.sessionId });
         if (j.motion?.dofs?.length) {
-          dispatch({ type: "SET_MOTION", motion: { name: j.name, dofs: j.motion.dofs } });
+          dispatch({ type: "SET_MOTION", motion: { ...j.motion, name: j.name } });
         }
         if (j.version) dispatch({ type: "ADD_VERSION", version: j.version });
         if (j.present) {
@@ -783,7 +784,7 @@ export default function App() {
           return;
         }
         if (j.motion?.dofs?.length) {
-          dispatch({ type: "SET_MOTION", motion: { name: j.name, dofs: j.motion.dofs } });
+          dispatch({ type: "SET_MOTION", motion: { ...j.motion, name: j.name } });
         }
         if (j.version) dispatch({ type: "ADD_VERSION", version: j.version });
         if (j.present) {
@@ -904,7 +905,7 @@ export default function App() {
       if (!j.stale && latestGen) {
         dispatch({
           type: "SET_MOTION",
-          motion: { name: latestGen.name, dofs: j.motion?.dofs || [], forVer: latestGen.id },
+          motion: { ...(j.motion || {}), name: latestGen.name, dofs: j.motion?.dofs || [], forVer: latestGen.id },
         });
         if (j.validateOk) dispatch({ type: "MARK_VERSION_VERIFIED", id: latestGen.id });
       }

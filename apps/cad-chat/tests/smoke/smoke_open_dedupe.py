@@ -11,7 +11,7 @@ import re
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, Checker, out_path
+from _util import BASE, Checker, evidence_shot, out_path
 
 c = Checker()
 
@@ -127,7 +127,7 @@ with sync_playwright() as p:
     c.check("v1 是 flip_gripper", DIR_B in page.locator(".version-chip").first.inner_text())
 
     c.check("全程無 JS 錯誤", not errors, "; ".join(errors[:3]))
-    page.screenshot(path=out_path("smoke_open_dedupe.png"))
+    evidence_shot(page, "smoke_open_dedupe.png")
     browser.close()
 
 c.finish()

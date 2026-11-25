@@ -15,6 +15,7 @@ const STEP_DIR = "skills/cad/scripts/step";
 const INSPECT_DIR = "skills/cad/scripts/inspect";
 const VALIDATE_PY = "apps/cad-chat/src/server/cad/validate.py";
 const FLAT_GLB_PY = "apps/cad-chat/src/server/cad/flat_glb.py";
+const RENDER_PY = "apps/cad-chat/src/server/cad/render_view.py";
 
 // 產生器名只留安全字元(它會進檔案路徑;name 來自 LLM / client)。
 export function sanitizeName(name) {
@@ -1279,6 +1280,96 @@ export function emitPresent(session, name, emit) {
   emit("present", { ver, name, code: name, file: stepRel, glbUrl: gUrl, type, flatGlbUrl, flatLinesUrl, sweepPathsUrl });
   persistSession(session); // version/lastName 剛變動 → 落盤(重整/重啟後計數不歸零)
   return { ver, glbUrl: gUrl };
+}
+
+// ---------------------------------------------------------------------------
+// 看圖(藍圖 E1):把目前的產生器離屏畫成 PNG,給 agent 自己看。render_view.py 開 OpenGL 環境,
+// 一律在一次性行程裡跑(顯示卡驅動出事時不拖垮常駐 worker;不在 python.mjs 的 worker 白名單內)。
+// 圖存在 session 的 .snapshots/(不進專案儲存、不進版本快照),只留最近的幾張。
+// ---------------------------------------------------------------------------
+export const SNAPSHOT_VIEWS = ["iso", "iso_back", "front", "back", "right", "left", "top", "bottom"];
+const SNAPSHOT_MAX_VIEWS = 4;
+const SNAPSHOT_KEEP_FILES = 16;
+
+export function snapshotArgs(session, name, stem, { views, hide, ghost, clip, pose, mode } = {}) {
+  const list = (v) => (Array.isArray(v) ? v : []).map((x) => String(x).trim()).filter(Boolean);
+  const wanted = list(views).slice(0, SNAPSHOT_MAX_VIEWS);
+  const args = [
+    relTarget(session, name, ".py"),
+    `${session.workdirRel}/.snapshots`,
+    "--views", (wanted.length ? wanted : ["iso"]).join(","),
+    "--stem", stem,
+    "--mode", mode === "wire" ? "wire" : "shaded",
+  ];
+  if (list(hide).length) args.push("--hide", list(hide).join(","));
+  if (list(ghost).length) args.push("--ghost", list(ghost).join(","));
+  if (clip && ["x", "y", "z"].includes(String(clip.axis).toLowerCase()) && Number.isFinite(Number(clip.at))) {
+    args.push("--clip", `${String(clip.axis).toLowerCase()}:${Number(clip.at)}`);
+  }
+  if (pose && String(pose).trim()) args.push("--pose", String(pose).trim());
+  return args;
+}
+
+// 回 { ok, views: [{ view, file(相對 DATA_ROOT), png(Buffer) }], legend, pose, ms } 或 { ok:false, error, ms }。
+export async function runSnapshot(session, name, options = {}) {
+  const t0 = Date.now();
+  const stem = `${sanitizeName(name)}_${t0.toString(36)}`;
+  const dir = path.join(session.workdir, ".snapshots");
+  const res = await spawnPython(RENDER_PY, snapshotArgs(session, name, stem, options), { session, signal: options.signal });
+  let parsed = null;
+  try {
+    parsed = JSON.parse(String(res.stdout || "").trim().split(/\r?\n/).filter(Boolean).pop());
+  } catch {
+    parsed = null;
+  }
+  if (!parsed?.ok) {
+    return {
+      ok: false,
+      error: parsed?.error || condenseSnapshotError(res.stderr) || "看圖失敗(渲染行程沒有回應)",
+      ms: Date.now() - t0,
+    };
+  }
+  const views = [];
+  for (const v of parsed.views || []) {
+    const base = path.basename(String(v.file || "").replace(/\\/g, "/"));
+    try {
+      views.push({ view: String(v.view), file: `${session.workdirRel}/.snapshots/${base}`, png: fs.readFileSync(path.join(dir, base)) });
+    } catch {
+      // 檔案讀不到:當作這一張沒畫出來
+    }
+  }
+  pruneSnapshotFiles(dir, SNAPSHOT_KEEP_FILES);
+  if (!views.length) return { ok: false, error: "看圖失敗(沒有產出圖檔)", ms: Date.now() - t0 };
+  return { ok: true, views, legend: parsed.legend || [], pose: parsed.pose || null, ms: Date.now() - t0 };
+}
+
+function condenseSnapshotError(stderr) {
+  const lines = String(stderr || "").trim().split(/\r?\n/).filter(Boolean);
+  return lines.length ? scrubPaths(lines[lines.length - 1]).slice(0, 240) : "";
+}
+
+function pruneSnapshotFiles(dir, keep) {
+  try {
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith(".png"))
+      .map((f) => ({ f, t: fs.statSync(path.join(dir, f)).mtimeMs }))
+      .sort((a, b) => b.t - a.t);
+    for (const { f } of files.slice(keep)) rmQuiet(path.join(dir, f));
+  } catch {
+    // 目錄不存在或讀不到:沒有東西可清
+  }
+}
+
+// motion 事件(SSE 與 JSON 路徑共用一個形狀):dofs 之外,具名姿態與動作序列有宣告才帶。
+// 空 dofs = 清除舊宣告(重生成靜態件後播放鈕不殘留)。
+export function motionEvent(name, motion) {
+  const hasKeys = (v) => v && typeof v === "object" && Object.keys(v).length > 0;
+  return {
+    name,
+    schemaVersion: 1,
+    dofs: motion?.dofs || [],
+    ...(hasKeys(motion?.states) ? { states: motion.states } : {}),
+    ...(hasKeys(motion?.sequences) ? { sequences: motion.sequences } : {}),
+  };
 }
 
 // 送到前端的一列檢查(decorateChecks 之後):圖示、顏色、備註、狀態,以及這一列的具體發現。

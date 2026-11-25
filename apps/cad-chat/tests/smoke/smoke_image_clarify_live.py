@@ -9,7 +9,7 @@ import urllib.parse
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, Checker, out_path
+from _util import BASE, Checker, evidence_shot, out_path
 
 c = Checker()
 
@@ -110,7 +110,7 @@ with sync_playwright() as p:
 
     c.check("全程無錯誤氣泡", page.locator(".ai-error").count() == 0)
     c.check("無 JS 頁面錯誤", not errors, "; ".join(errors[:3]))
-    page.screenshot(path=out_path("smoke_image_clarify_live.png"))
+    evidence_shot(page, "smoke_image_clarify_live.png")
     browser.close()
 
 c.finish()

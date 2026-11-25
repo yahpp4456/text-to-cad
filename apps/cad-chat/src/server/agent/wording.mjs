@@ -25,6 +25,7 @@ export const INTERNAL_TERMS = [
   "cad_present",
   "cad_export",
   "cad_measure",
+  "cad_snapshot",
   "emit_spec",
   "emit_clarify",
   "emit_params",

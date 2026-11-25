@@ -1124,6 +1124,105 @@ ghost 就能看內部滾動。**樹節點點擊同時連動 3D 圈選(toggle)**�
 `record.effectStyle.opacity`,與運動示意的 `effectMatrix` 正交可同時作用);dev 鉤
 `__cadVisual.display()/stateFor(label)`。
 
+## 看圖:agent 自己看模型(2026-11-25;藍圖 E1 / E2)
+
+驗證全過不等於做對了:位置、朝向、左右對稱、比例、少一件多一件,檢查都可能是綠的。以前這類問題只有
+使用者看畫面才發現。現在 agent 有一個工具可以把模型畫成圖片自己看。
+
+**工具 `cad_snapshot(name, views?, ghost?, hide?, clip?, pose?, mode?)`**(read-only)
+
+| 參數 | 意思 |
+|---|---|
+| `views` | 最多 4 個:`iso` / `iso_back` / `front` / `back` / `right` / `left` / `top` / `bottom`,或「方位角:仰角」(度,例 `45:30`) |
+| `ghost` | 這些零件畫成半透明(看殼裡面的機構) |
+| `hide` | 這些零件不畫 |
+| `clip` | `{axis, at}`:把該軸座標正的那一側切掉,看剖面 |
+| `pose` | 擺到已宣告的具名姿態再畫(見下一章) |
+| `mode` | `shaded`(預設,著色 + 面的邊界線)或 `wire` |
+
+回傳:每個視角一張 PNG(直接以圖片內容回給模型,Claude 與 Codex 兩條路都通)+ 一份 `legend`——每個零件
+一個顏色,legend 說明哪個顏色是哪個零件。對話裡的工具卡會顯示同樣的縮圖,使用者看得到 agent 看了什麼。
+
+**怎麼畫**:`py/cadchat_ext/render.py` 用 OCCT 自己的顯示核心(V3d),視圖掛在沒有原生視窗的
+`Aspect_NeutralWindow` 上,`ToPixMap` 取回畫面——不開視窗、不需要瀏覽器。入口腳本
+`src/server/cad/render_view.py` 載入產生器、(可選)擺姿態,再呼叫它。
+
+- **一律在一次性行程裡跑,不進常駐 worker**:它會開 OpenGL 環境,顯示卡驅動出事時行程可能直接死掉
+  (與 `drawing_pdf.py` 同樣的理由)。所以每次看圖約 5–6 秒(載入 kernel + 起 GL),畫圖本身 6 張才 2 秒。
+- 圖存在 session 的 `.snapshots/`,只留最近 16 張;不進專案儲存、不進版本快照。
+- **無顯示環境的 Linux(VM 部署)可能沒有可用的 OpenGL**,那時工具回報失敗,prompt 交代 agent 照常
+  繼續並在收尾說明這一版沒有看過圖。VM 上還沒實測。
+
+**看圖紀律(設計 prompt 的「# 看圖紀律」段)**:組合件在呈現前看一次,簡單的單一零件不必看;一次呼叫帶齊
+需要的視角;運動件藏在殼裡就把殼設成 ghost;同一版最多看兩次,不為了「再確認一下」反覆看;**圖不能拿來
+讀數字**(尺寸、間隙用量測工具或 `check_geometry` 的斷言)。
+
+**驗證**:`tests/test_render_view.py` 8 個(真的畫出 PNG 並解碼檢查不是空白;外殼設成半透明後畫面上的
+顏色種類變多;指定姿態後畫面不同;錯誤以 JSON 回報)。L1 `pipeline.snapshot.test.js` 6 個(工具參數的清洗)、
+`prompt.checks.test.js`。煙測 `smoke_verify_gate.py` D 段(工具卡顯示縮圖)。L4 `smoke_snapshot_live.py`。
+
+## 具名姿態與動作序列(2026-11-25;藍圖 D3)
+
+MOTION 的兩個選填欄位,描述「幾個自由度同時在某個位置」:
+
+```python
+MOTION = {
+    "dofs": [...],
+    "states": {                      # 具名姿態:各主動 dof 在行程的哪裡(0 = 建成姿態、1 = 行程終點)
+        "open":   {"grip": 0.0},
+        "closed": {"grip": 1.0},
+        "raised": {"lift": 1.0, "grip": 1.0},
+    },
+    "sequences": {                   # 動作序列:依序經過哪些姿態
+        "pick": ["open", "closed", "raised"],
+    },
+}
+```
+
+**為什麼需要**:各 dof 的掃掠一次只動一個群,其餘停在建成姿態。機構真正會撞的常是幾個軸同時到位的時候
+(夾爪閉合的同時升降軸降到底),逐群掃掠看不到。
+
+| 消費者 | 做什麼 |
+|---|---|
+| `cadpy/motion_states.py`(`motion_decl.normalize_motion` 呼叫) | 驗證與正規化:沒寫的主動 dof 補 0;從動 dof(帶 `couple`)不能寫;位置要在 0~1;序列引用的姿態要存在。任何錯誤都算宣告無效(與其他 MOTION 錯誤同一條路) |
+| `validate.py` 的 `_sweep_poses` | 完整驗證時,把每個姿態、以及序列中相鄰姿態之間的內插幀(每段 6 幀)用所有 dof 各自的位置一起擺出來查干涉。查的配對 = 各群自己的配對 + 不同群的運動件兩兩之間(上限 24 對)。穿透的發現標明是哪個姿態或序列的哪一步(`where`:「姿態 both」「序列 go:x_out>both@0.500」) |
+| 畫布 | 「▶ 運動示意」旁邊多出姿態 chip 與序列 chip。點姿態 chip 擺到該姿態並定格(再點一次回建成姿態);點序列 chip 從頭走一遍,停在最後一個姿態。與往復示意互斥 |
+| 設計 prompt | 兩個以上獨立運動軸的機構必寫;使用者描述了工作循環就照順序寫成序列 |
+
+- 上限:16 個姿態、8 條序列、每條 12 步;名稱限英數、底線、連字號。
+- 前端的內插(`cadMotionMath.js` 的 `expandState` / `interpolateStates` / `sequencePose`)與 Python 端
+  (`motion_states.py`)逐式鏡射,`cadMotionMath.test.js` 以 Python 現算的數字對拍——畫面上的姿態必須就是
+  驗證查的那個姿態。
+- 藍圖原列的 D2(耦合行程取各關節限位交集)在這個契約裡沒有對應物:從動 dof 與主動 dof 共用同一個
+  位置,沒有自己的限位。姿態只寫主動 dof,就是這件事的落實。
+
+**驗證**:cadpy `test_motion_states.py` 23 個;`tests/test_validate_motion.py` 的 `NamedPoseIntegration`
+6 個(兩個各自往復都乾淨的滑塊,同時到位才相撞——逐群掃掠過、姿態與序列擋下,並指出是序列的哪一步);
+L1 `cadMotionMath.test.js` 對拍、`chatStore.test.js`、`pipeline.findings.test.js` 的 `motionEvent`;
+煙測 `smoke_pose_chips.py` 15 個(點 chip 後讀零件的變換矩陣:齒條到位、從動的齒輪跟著轉);
+L4 `smoke_poses_live.py`。`motion_states.py` 由 Codex 依規格實作。
+
+## 平板件的切割圖:圓弧維持是圓弧(2026-11-25;藍圖 F2)
+
+`cadpy/flatten.py`(移植自上游 `build123d/_flatten.py`,MIT):從實體挑出平面、攤到 XY、合併、可選的
+刀縫補償,全程是精確的布林與偏移運算,所以圓弧不會被打成一串短線。另外加了兩個本專案需要的函式:
+
+- `emit_profile(msp, shape)`:把 XY 平面上的面寫進 ezdxf。整圓是 `CIRCLE`;直線與圓弧組成的輪廓是
+  一條封閉的 `LWPOLYLINE`,圓弧以 bulge 表示(精確);其他曲線(橢圓、樣條)才取樣成折線。
+- `plate_dxf(shape, kerf=0)`:不折彎的等厚平板件 → 一份切割輪廓的 DXF 文件。**零件不是等厚平板就拒絕**
+  (頂面輪廓×厚度必須等於體積):有階梯、盲孔、倒角的零件,一張輪廓圖代表不了。
+
+用法:產生器加 `def gen_dxf(): from cadpy.flatten import plate_dxf; return plate_dxf(gen_step())`,
+時間軸的 DXF 鈕就會亮(與鈑金件同一條匯出路徑)。設計 prompt 已教;使用者沒要切割圖就不寫。
+
+`SheetMetal.dxf()` 的輪廓也改由 `emit_profile` 輸出。目前鈑金產生器只產生直線輪廓與圓孔,所以既有
+鈑金件的 DXF 沒有可見變化;差別是輪廓含圓弧時不再拋「尚未支援此曲線型別」。
+
+**驗證**:`test_flatten.py` 28 個(上游 11 個測試:6 個照搬、5 個把原本靠上游匯出器的檢查改成讀
+`emit_profile` 的輸出;`emit_profile` 13 個,含用 bulge 算回面積確認圓弧方向沒寫反;`plate_dxf` 4 個),
+新舊 kernel 都過(shapely 未安裝,那 1 個 fallback 測試跳過)。`test_sheet_metal.py` 照常。
+L4 `smoke_plate_dxf_live.py`。上游模組的移植與 `emit_profile` 由 Codex 依規格實作。
+
 ## 機構設計知識庫(`kb/`,2026-11-10)
 
 設計模式的代理要**決定**尺寸、選型或構型時查的知識:選型計算、設計慣例,以及這些知識怎麼對應到

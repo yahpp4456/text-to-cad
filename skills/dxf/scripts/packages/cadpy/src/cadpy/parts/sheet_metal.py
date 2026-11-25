@@ -915,33 +915,18 @@ class SheetMetal:
         return body
 
     # -- DXF ---------------------------------------------------------------------
-    @staticmethod
-    def _wire_polyline_pts(wire) -> list[tuple[float, float]]:
-        """Ordered vertex loop of a line-only wire (endpoint-chained, tolerant
-        to per-edge orientation flips)."""
-        edges = wire.order_edges()
-        pts: list[tuple[float, float]] = []
-        cur = None
-        for ed in edges:
-            s, t = ed @ 0, ed @ 1
-            s2, t2 = (s.X, s.Y), (t.X, t.Y)
-            if cur is not None and math.hypot(s2[0] - cur[0], s2[1] - cur[1]) > 1e-6:
-                s2, t2 = t2, s2
-            if cur is None:
-                pts.append(s2)
-            pts.append(t2)
-            cur = t2
-        if len(pts) > 1 and math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) < 1e-6:
-            pts.pop()
-        return pts
-
     def dxf(self) -> Any:
         """Flat pattern as an ezdxf document (gen_dxf envelope: return as-is).
 
-        CUT: closed outer contour + hole circles + cutout loops.
+        CUT: closed outer contour + hole circles + cutout loops. Contours are
+        written by :func:`cadpy.flatten.emit_profile`: a full circle is a
+        ``CIRCLE``; a loop of lines and circular arcs is one closed
+        ``LWPOLYLINE`` whose arcs are exact (bulge values), so a rounded corner
+        or a slot end reaches the cutter as an arc, not a run of chords.
         BEND_UP_<deg> / BEND_DOWN_<deg>: one center line per bend (x=BA/2)."""
         import ezdxf
-        from build123d import GeomType
+
+        from cadpy.flatten import emit_profile
 
         self._finalize()
         face = self._flat_face()
@@ -951,24 +936,7 @@ class SheetMetal:
         doc.units = ezdxf.units.MM
         doc.layers.add("CUT", color=7)
         msp = doc.modelspace()
-
-        def emit_wire(wire):
-            edges = wire.edges()
-            if len(edges) == 1 and edges[0].geom_type == GeomType.CIRCLE:
-                c = edges[0].arc_center
-                msp.add_circle((c.X, c.Y), edges[0].radius, dxfattribs={"layer": "CUT"})
-                return
-            for ed in edges:
-                if ed.geom_type != GeomType.LINE:
-                    raise ValueError(self._err(
-                        f"攤平輪廓含非直線/整圓的邊({ed.geom_type}),DXF 匯出"
-                        f"尚未支援此曲線型別"))
-            msp.add_lwpolyline(self._wire_polyline_pts(wire), format="xy",
-                               close=True, dxfattribs={"layer": "CUT"})
-
-        emit_wire(face.outer_wire())
-        for w in face.inner_wires():
-            emit_wire(w)
+        emit_profile(msp, face, layer="CUT")
 
         made_layers = set()
         for p0, p1, angle in blines:

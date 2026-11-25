@@ -23,6 +23,7 @@ ORDER = [
     "smoke_chat_markdown.py",
     "smoke_upload.py",
     "smoke_verify_gate.py",
+    "smoke_pose_chips.py",  # 具名姿態 / 動作序列的 chip:點了零件真的擺到位、序列走完停在終點
     "smoke_gate_unmeasured.py",  # 量不到不算通過:掃掠逾時 → 未量測 → 匯出被擋(自己起一個掃掠時限 0 的伺服器)
     "smoke_asm_ui.py",
     "smoke_occ_tree.py",
@@ -60,6 +61,9 @@ LLM_GATED = [
     "smoke_sheetmetal_live.py",
     "smoke_checks_live.py",  # 使用者給的數字要在 check_geometry 裡量幾何驗(讀產生的 .py)
     "smoke_delta_live.py",  # 建置差異摘要在真回合裡說實話(加一個孔 → 只說那塊板改了)
+    "smoke_snapshot_live.py",  # 組合件:agent 在呈現前自己看圖(cad_snapshot),圖真的畫出來
+    "smoke_poses_live.py",  # 兩軸機構:agent 宣告姿態與序列,精算查到「同時到位」的組合
+    "smoke_plate_dxf_live.py",  # 不折彎的平板件出切割圖:圓角與長孔是真圓弧(cadpy.flatten.plate_dxf)
     "smoke_canvas_context_live.py",
     "smoke_lesson_offer_live.py",
     "smoke_sketch_live.py",

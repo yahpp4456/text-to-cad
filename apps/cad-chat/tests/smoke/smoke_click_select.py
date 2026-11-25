@@ -2,7 +2,7 @@
 """單擊圈選互動煙測:單擊選/再擊消/拖曳不選/雙擊確保選中+推近/空白清空。"""
 from playwright.sync_api import sync_playwright
 
-from _util import Checker, glb_page_url, out_path
+from _util import Checker, evidence_shot, glb_page_url, out_path
 
 URL = glb_page_url("motorized_linear_stage/.motorized_linear_stage.step.glb", "stage")
 c = Checker()
@@ -69,7 +69,7 @@ with sync_playwright() as p:
             c.check("雙擊後選取對象不變", page.locator(".sel-name").inner_text().startswith(sel_name.split(" + ")[0]))
 
     c.check("無 JS 頁面錯誤", not errors, "; ".join(errors[:2]))
-    page.screenshot(path=out_path("smoke_click_select.png"))
+    evidence_shot(page, "smoke_click_select.png")
     browser.close()
 
 c.finish()

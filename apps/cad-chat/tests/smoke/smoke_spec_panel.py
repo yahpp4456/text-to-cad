@@ -16,7 +16,7 @@ import json
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, Checker, out_path
+from _util import BASE, Checker, evidence_shot, out_path
 
 c = Checker()
 
@@ -176,7 +176,7 @@ with sync_playwright() as p:
     page.evaluate("() => window.__cadDispatch({ type: 'SET_MODE', mode: 'design' })")
 
     c.check("無 JS 頁面錯誤", not errors, "; ".join(errors[:3]))
-    page.screenshot(path=out_path("smoke_spec_panel.png"))
+    evidence_shot(page, "smoke_spec_panel.png")
     browser.close()
 
 c.finish()

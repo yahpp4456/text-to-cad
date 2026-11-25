@@ -53,3 +53,37 @@ export function frameMatrix(THREE, dof, uRaw) {
   }
   return Mi;
 }
+
+// ── 具名姿態與動作序列(與 cadpy.motion_states 逐式鏡射;cadMotionMath.test.js 有對拍)──
+// 姿態 = 每個**主動** dof 的行程比例 u(0~1)。從動 dof(帶 couple)跟著它的主動 dof。
+
+// 把姿態展開成「每一個 dof(含從動)的 u」;依 dofs 的宣告順序。
+export function expandState(state, dofs) {
+  const active = {};
+  for (const d of dofs || []) if (!d.couple) active[d.id] = Number(state?.[d.id]) || 0;
+  const out = {};
+  for (const d of dofs || []) out[d.id] = active[d.couple || d.id] ?? 0;
+  return out;
+}
+
+// 兩個姿態之間線性內插(t 夾在 0~1);鍵取聯集,缺的一邊當 0。
+export function interpolateStates(a, b, t) {
+  const k = Math.min(1, Math.max(0, Number(t) || 0));
+  const out = {};
+  for (const key of Object.keys({ ...(a || {}), ...(b || {}) })) {
+    const start = Number(a?.[key]) || 0;
+    out[key] = start + ((Number(b?.[key]) || 0) - start) * k;
+  }
+  return out;
+}
+
+// 序列在 phase 位置的姿態:phase 的整數部分 = 走到第幾步,小數部分 = 往下一步走了多少。
+// phase <= 0 是第一個姿態;phase >= 步數-1 是最後一個姿態(停在終點,不循環)。
+export function sequencePose(sequence, states, phase) {
+  const steps = (sequence || []).map((name) => states?.[name]).filter(Boolean);
+  if (!steps.length) return {};
+  const x = Math.min(steps.length - 1, Math.max(0, Number(phase) || 0));
+  const i = Math.min(steps.length - 1, Math.floor(x));
+  if (i >= steps.length - 1) return { ...steps[steps.length - 1] };
+  return interpolateStates(steps[i], steps[i + 1], x - i);
+}

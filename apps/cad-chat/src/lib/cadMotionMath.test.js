@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as THREE from "three";
 
-import { frameMatrix, profileFraction, triangleU } from "./cadMotionMath.js";
+import { expandState, frameMatrix, interpolateStates, profileFraction, sequencePose, triangleU } from "./cadMotionMath.js";
 
 const at = (m, x, y, z) => new THREE.Vector3(x, y, z).applyMatrix4(m);
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
@@ -117,4 +117,60 @@ test("閉鏈連桿(缸推擺臂)用 profile:連桿末端孔心全程與擺臂銷
   assert.ok(worstProfile < 0.01, `profile 殘差 ${worstProfile} mm`);
   assert.ok(worstLinear > 1, `線性 couple 中段殘差應 >1mm,得 ${worstLinear}`);
   assert.ok(near(gap(mk(false), 1), 0, 1e-9)); // 線性在端點仍閉合(所以只看端點會漏)
+});
+
+// ── 具名姿態與動作序列:與 cadpy.motion_states 對拍 ──
+// golden 由 Python 端現算(同一組輸入):
+//   expand_state / interpolate_states / sequence_frames(samples_per_step=4)
+// 兩邊不一致 = 畫面上的姿態與驗證查的姿態不是同一個。動任一端,這裡的數字要重算。
+const POSE_DOFS = [{ id: "lift" }, { id: "grip" }, { id: "finger_r", couple: "grip" }];
+const POSE_STATES = {
+  open: { lift: 0.0, grip: 0.0 },
+  closed: { lift: 0.0, grip: 1.0 },
+  raised: { lift: 0.75, grip: 1.0 },
+};
+
+test("expandState:從動 dof 跟著主動 dof,鍵依宣告順序(python golden)", () => {
+  const out = expandState(POSE_STATES.raised, POSE_DOFS);
+  assert.deepEqual(out, { lift: 0.75, grip: 1.0, finger_r: 1.0 });
+  assert.deepEqual(Object.keys(out), ["lift", "grip", "finger_r"]);
+  assert.deepEqual(expandState({}, POSE_DOFS), { lift: 0, grip: 0, finger_r: 0 }); // 缺的主動 dof 當 0
+  assert.deepEqual(expandState({ grip: 0.5 }, [{ id: "a", couple: "nope" }, { id: "grip" }]), { a: 0, grip: 0.5 });
+});
+
+test("interpolateStates:線性內插、t 夾在 0~1(python golden)", () => {
+  const mid = interpolateStates(POSE_STATES.open, POSE_STATES.raised, 0.4);
+  assert.ok(near(mid.lift, 0.30000000000000004, 1e-12) && near(mid.grip, 0.4, 1e-12));
+  assert.deepEqual(interpolateStates(POSE_STATES.open, POSE_STATES.raised, -1), { lift: 0, grip: 0 });
+  assert.deepEqual(interpolateStates(POSE_STATES.open, POSE_STATES.raised, 2), { lift: 0.75, grip: 1 });
+  assert.deepEqual(interpolateStates({ a: 1 }, { b: 1 }, 0.5), { a: 0.5, b: 0.5 }); // 鍵取聯集
+});
+
+test("sequencePose:phase 的整數部分是第幾步、小數部分是往下一步走了多少(python golden)", () => {
+  const seq = ["open", "closed", "raised"];
+  // sequence_frames("pick", seq, states, samples_per_step=4) 的 9 幀,phase = 幀序 / 4
+  const golden = [
+    { lift: 0.0, grip: 0.0 }, { lift: 0.0, grip: 0.25 }, { lift: 0.0, grip: 0.5 }, { lift: 0.0, grip: 0.75 },
+    { lift: 0.0, grip: 1.0 }, { lift: 0.1875, grip: 1.0 }, { lift: 0.375, grip: 1.0 }, { lift: 0.5625, grip: 1.0 },
+    { lift: 0.75, grip: 1.0 },
+  ];
+  golden.forEach((want, k) => {
+    const got = sequencePose(seq, POSE_STATES, k / 4);
+    assert.ok(near(got.lift, want.lift, 1e-12) && near(got.grip, want.grip, 1e-12), `frame ${k}: ${JSON.stringify(got)}`);
+  });
+  // 走完停在最後一個姿態(不循環);起點之前是第一個姿態
+  assert.deepEqual(sequencePose(seq, POSE_STATES, 99), POSE_STATES.raised);
+  assert.deepEqual(sequencePose(seq, POSE_STATES, -3), POSE_STATES.open);
+  assert.deepEqual(sequencePose([], POSE_STATES, 0.5), {});
+  assert.deepEqual(sequencePose(["nope"], POSE_STATES, 0), {}); // 不存在的姿態:不拋例外
+});
+
+test("姿態下的矩陣:從動 dof 用主動 dof 的 u(夾爪兩指同時到位)", () => {
+  const dofs = [
+    { id: "grip", type: "linear", axis: [1, 0, 0], travel: 10, moving: ["finger_l"] },
+    { id: "finger_r", type: "linear", axis: [-1, 0, 0], travel: 10, moving: ["finger_r"], couple: "grip" },
+  ];
+  const u = expandState({ grip: 0.5 }, dofs);
+  assert.ok(near(at(frameMatrix(THREE, dofs[0], u.grip), 0, 0, 0).x, 5));
+  assert.ok(near(at(frameMatrix(THREE, dofs[1], u.finger_r), 0, 0, 0).x, -5));
 });

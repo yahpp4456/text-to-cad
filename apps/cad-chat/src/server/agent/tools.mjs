@@ -7,6 +7,9 @@ import {
   applyEdits,
   checkView,
   decorateChecks,
+  motionEvent,
+  runSnapshot,
+  SNAPSHOT_VIEWS,
   emitPresent,
   generatorHasDxf,
   importStepIntoSession,
@@ -20,7 +23,7 @@ import {
   writeGenerator,
 } from "../cad/pipeline.mjs";
 import { condenseTraceback, spawnPython } from "../cad/python.mjs";
-import { lessonsEnabled } from "../config.mjs";
+import { BASE_PATH, lessonsEnabled } from "../config.mjs";
 import { unescapeNewlines } from "../../lib/clarifyText.js";
 import { makeClarifyGate, makeUiTools, result, toolId } from "./tools.shared.mjs";
 import {
@@ -285,7 +288,7 @@ export function buildCadchatServer({ session, emit, signal }) {
             checks: decorated.map(checkView),
           });
           // 一律發 motion(空 dofs = 清除舊宣告),防止重生成靜態件後播放鈕殘留
-          emit("motion", { name: part, schemaVersion: 1, dofs: motion?.dofs || [] });
+          emit("motion", motionEvent(part, motion));
           return result({ ok, checks, motionDeclared: !!motion?.dofs?.length });
         },
       ),
@@ -346,6 +349,57 @@ export function buildCadchatServer({ session, emit, signal }) {
               : parsed.errors?.[0]?.message || parsed.error || "量測失敗",
           });
           return result(parsed);
+        },
+      ),
+      tool(
+        "cad_snapshot",
+        "看圖:把目前的模型畫成圖片回給你(read-only)。每個零件一個顏色,回傳的 legend 說明哪個顏色是哪個零件。views 最多 4 個,可用 " +
+          SNAPSHOT_VIEWS.join("/") +
+          " 或「方位角:仰角」(度,例 45:30);ghost 的零件畫成半透明(看殼裡面);hide 的零件不畫;clip 把指定軸座標正的那一側切掉看剖面;pose 擺到已宣告的具名姿態;mode=wire 是線框。",
+        {
+          name: z.string().optional(),
+          views: z.array(z.string()).max(4).optional(),
+          ghost: z.array(z.string()).optional(),
+          hide: z.array(z.string()).optional(),
+          clip: z.object({ axis: z.enum(["x", "y", "z"]), at: z.number() }).optional(),
+          pose: z.string().optional(),
+          mode: z.enum(["shaded", "wire"]).optional(),
+        },
+        async ({ name, views, ghost, hide, clip, pose, mode }) => {
+          const gated = clarifyGate();
+          if (gated) return gated;
+          const part = sanitizeName(name || n());
+          const id = toolId();
+          const wanted = (views?.length ? views : ["iso"]).slice(0, 4);
+          emit("tool", { id, name: `cad.snapshot(${wanted.join(", ")})`, label: "看圖", status: "running" });
+          const snap = await runSnapshot(session, part, { views: wanted, ghost, hide, clip, pose, mode, signal });
+          if (!snap.ok) {
+            emit("tool", { id, status: "error", note: snap.error, ms: snap.ms });
+            return result({ ok: false, error: snap.error });
+          }
+          emit("tool", {
+            id,
+            status: "done",
+            ms: snap.ms,
+            note: `${snap.views.length} 張${snap.pose ? ` · 姿態 ${snap.pose}` : ""}`,
+            // 使用者也看得到 agent 看的是哪幾張(對話裡的工具卡顯示縮圖)
+            images: snap.views.map((v) => ({ view: v.view, url: `${BASE_PATH}/api/asset?file=${encodeURIComponent(v.file)}` })),
+          });
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  ok: true,
+                  views: snap.views.map((v) => v.view),
+                  legend: snap.legend,
+                  pose: snap.pose,
+                  note: "圖片依 views 的順序附在後面。尺寸與距離不要從圖上讀,用量測工具或 check_geometry 的斷言。",
+                }),
+              },
+              ...snap.views.map((v) => ({ type: "image", data: v.png.toString("base64"), mimeType: "image/png" })),
+            ],
+          };
         },
       ),
       tool(

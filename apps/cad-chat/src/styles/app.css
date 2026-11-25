@@ -927,6 +927,34 @@
   border-top: 1px solid var(--line-soft);
   flex-wrap: wrap;
 }
+/* 看圖工具的縮圖:agent 看的那幾張 */
+.tool-images {
+  display: flex;
+  gap: 8px;
+  padding: 10px 13px;
+  border-top: 1px solid var(--line-soft);
+  flex-wrap: wrap;
+}
+.tool-image {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  text-decoration: none;
+}
+.tool-image img {
+  width: 132px;
+  height: 94px;
+  object-fit: contain;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+.tool-image span {
+  font-family: var(--font-eyebrow);
+  font-size: 9px;
+  letter-spacing: 0.8px;
+  color: #9aa3b0;
+}
 .out-pill {
   display: inline-flex;
   align-items: center;
@@ -3391,6 +3419,16 @@
   color: #fff;
   background: var(--emit);
   border-color: var(--emit);
+}
+/* 具名姿態 / 動作序列的 chip:接在「運動示意」後面,名稱是產生器宣告的(不轉大寫、不拉字距) */
+.pose-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tool-chip.pose-chip {
+  letter-spacing: 0.3px;
+  text-transform: none;
 }
 /* ── ViewCube:精密 CAD 儀表式視角控制(面/稜/角 = 26 向;六面另有直達鍵) ── */
 .view-cube {

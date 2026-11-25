@@ -24,7 +24,7 @@ import shutil
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, Checker, REPO, out_path
+from _util import BASE, Checker, evidence_shot, out_path, REPO
 
 c = Checker()
 CADCHAT = os.path.join(REPO, "models", ".cadchat")
@@ -133,7 +133,7 @@ try:
             )
 
         c.check("全程無 JS 錯誤(HMR ws 雜訊除外)", not errs, "; ".join(errs[:3]))
-        page.screenshot(path=out_path("smoke_library_submit.png"))
+        evidence_shot(page, "smoke_library_submit.png")
         browser.close()
 finally:
     # 上傳建立的暫存 session(models/.cadchat/<sid>/uploads/*.step)——只清本測新建的,

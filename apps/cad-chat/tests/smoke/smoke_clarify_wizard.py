@@ -7,7 +7,7 @@ import json
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, Checker, out_path
+from _util import BASE, Checker, evidence_shot, out_path
 
 c = Checker()
 
@@ -172,7 +172,7 @@ with sync_playwright() as p:
             posted[4].get("message", "") if len(posted) >= 5 else f"posted={len(posted)}")
 
     c.check("無 JS 頁面錯誤", not errors, "; ".join(errors[:3]))
-    page.screenshot(path=out_path("smoke_clarify_wizard.png"))
+    evidence_shot(page, "smoke_clarify_wizard.png")
     browser.close()
 
 c.finish()

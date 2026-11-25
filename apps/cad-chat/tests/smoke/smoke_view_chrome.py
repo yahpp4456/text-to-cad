@@ -2,7 +2,7 @@
 """視圖 chrome 煙測:網格/座標軸 + chips toggle + 進度面板/細條 + clarify 卡(dev 鉤注入)。"""
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, Checker, glb_page_url, out_path
+from _util import BASE, Checker, evidence_shot, glb_page_url, out_path
 
 URL = glb_page_url("motorized_linear_stage/.motorized_linear_stage.step.glb", "stage")
 c = Checker()
@@ -100,7 +100,7 @@ with sync_playwright() as p:
             and page.locator(".clarify-live").count() == 0)
 
     c.check("A頁無 JS 錯誤", not errors, "; ".join(errors[:3]))
-    page.screenshot(path=out_path("smoke_view_chrome_model.png"))
+    evidence_shot(page, "smoke_view_chrome_model.png")
     page.close()
 
     # ── B. 空畫布頁:產圖進度面板(五階段+live+工具卡) ──
@@ -155,7 +155,7 @@ with sync_playwright() as p:
     c.check("答完 → 佔位圖仍在", page2.locator(".canvas-empty").count() == 1)
 
     c.check("B頁無 JS 錯誤", not errors2, "; ".join(errors2[:3]))
-    page2.screenshot(path=out_path("smoke_view_chrome_empty.png"))
+    evidence_shot(page2, "smoke_view_chrome_empty.png")
     browser.close()
 
 c.finish()

@@ -2,7 +2,7 @@
 """組合件互動煙測:面標記閘門 / 已帶入高亮 / 巢狀樹 / 面級填色 / ◇ 面標記面板。"""
 from playwright.sync_api import sync_playwright
 
-from _util import Checker, glb_page_url, out_path
+from _util import Checker, evidence_shot, glb_page_url, out_path
 
 URL = glb_page_url("motorized_linear_stage/.motorized_linear_stage.step.glb", "motorized_linear_stage")
 c = Checker()
@@ -128,7 +128,7 @@ with sync_playwright() as p:
             page.locator(".marker-toggle").click()  # 收面板,別擋後續截圖
 
     c.check("無 JS 頁面錯誤", not errors, "; ".join(errors[:3]))
-    page.screenshot(path=out_path("smoke_asm_ui.png"))
+    evidence_shot(page, "smoke_asm_ui.png")
     browser.close()
 
 c.finish()

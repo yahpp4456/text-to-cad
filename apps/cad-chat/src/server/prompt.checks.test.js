@@ -72,3 +72,35 @@ test("檢查列的具體發現:prompt 交代 findings 裡有什麼、要照它�
   for (const field of ["refs", "value", "limit", "where"]) assert.ok(design.includes("`" + field + "`"), field);
   assert.match(design, /照它點名的零件與數值修最小責任段/);
 });
+
+test("平板件的切割圖:prompt 教 plate_dxf,並說明不是等厚平板時不要硬出", () => {
+  assert.match(design, /def gen_dxf\(\): from cadpy\.flatten import plate_dxf; return plate_dxf\(gen_step\(\)\)/);
+  assert.match(design, /不是等厚平板\)它會報錯/);
+  assert.match(design, /dxf=鈑金展開圖或平板件的切割輪廓/);
+});
+
+test("具名姿態與動作序列:prompt 教 states / sequences 的寫法與為什麼要寫", () => {
+  assert.match(design, /具名姿態與動作序列\(兩個以上獨立運動軸的機構必寫\)/);
+  assert.match(design, /"states": \{"open": \{"grip": 0\.0\}/);
+  assert.match(design, /"sequences": \{"pick": \["open", "closed", "raised"\]\}/);
+  assert.match(design, /帶 couple 的從動 dof 不能寫/);
+  assert.match(design, /掃掠一次只動一個軸/);
+});
+
+test("看圖紀律:什麼時候看、怎麼看、看什麼、不能拿來讀數字;放在「紀律」之前", () => {
+  const section = design.slice(design.indexOf("# 看圖紀律"), design.indexOf("\n# 紀律"));
+  assert.ok(section.length > 200, "有「看圖紀律」一段");
+  assert.match(section, /組合件\(兩件以上\)在 cad_present 之前看一次/);
+  assert.match(section, /同一版最多看兩次/);
+  assert.match(section, /圖不能拿來讀數字/);
+  assert.match(section, /這一版沒有看過圖/);
+  // 工具說明裡的參數與伺服器的工具定義一致
+  for (const word of ["cad_snapshot", "views", "ghost", "hide", "clip", "pose", "iso_back"]) assert.ok(design.includes(word), word);
+});
+
+test("看圖工具只在設計類模式:草模與零件庫的提示不提它", () => {
+  const session = { sessionId: "s_test", workdirRel: "models/.cadchat/s_test" };
+  for (const other of [buildSketchSystemPrompt({ ...session, mode: "sketch" }), buildLibrarySystemPrompt({ ...session, mode: "library" })]) {
+    assert.ok(!other.includes("cad_snapshot"));
+  }
+});

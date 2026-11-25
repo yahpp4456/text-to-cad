@@ -11,6 +11,11 @@
 本模組刻意**純 stdlib**(不 import OCP/build123d):正規化只做資料驗證,不碰幾何;
 幾何掃掠(sweep)留在 validate.py / geometry_checks。錯誤訊息字串是對外契約
 (cad-chat 驗證卡 note 與根測試斷言依賴),勿改寫。
+
+選填的 ``states``(具名姿態:每個主動 dof 的行程比例)與 ``sequences``(動作序列:依序經過
+哪些姿態)由 :mod:`cadpy.motion_states` 驗證;通過後原樣帶在回傳的 motion 上,播放子集也透傳。
+各 dof 的往復示意只會一次動一個群;姿態與序列描述的是「幾個 dof 同時在某個位置」——機構真正
+會出事的地方(夾爪閉合時升降軸降到底)要靠它才檢查得到。
 """
 from __future__ import annotations
 
@@ -234,7 +239,18 @@ def normalize_motion(
                 errs.append(f"{d['id']}: couple 主動 dof {cid} 必須明給 pairs")
     if errs:
         return None, errs
-    return {"schemaVersion": 1, "dofs": dofs}, []
+    motion = {"schemaVersion": 1, "dofs": dofs}
+    if raw.get("states") is not None or raw.get("sequences") is not None:
+        from cadpy.motion_states import normalize_states
+
+        states, sequences, state_errs = normalize_states(raw.get("states"), raw.get("sequences"), dofs)
+        if state_errs:
+            return None, state_errs
+        if states:
+            motion["states"] = states
+        if sequences:
+            motion["sequences"] = sequences
+    return motion, []
 
 
 def playback_motion(motion: Mapping | None) -> dict | None:
@@ -266,4 +282,10 @@ def playback_motion(motion: Mapping | None) -> dict | None:
         if d.get("profile"):
             pd["profile"] = d["profile"]  # 播放與掃掠同一張位移表(否則畫面閉合、驗證脫開)
         play_dofs.append(pd)
-    return {"schemaVersion": 1, "dofs": play_dofs}
+    play = {"schemaVersion": 1, "dofs": play_dofs}
+    # 具名姿態與動作序列:前端的姿態 chip 與序列播放用(值是主動 dof 的行程比例,不含幾何)
+    if motion.get("states"):
+        play["states"] = motion["states"]
+    if motion.get("sequences"):
+        play["sequences"] = motion["sequences"]
+    return play

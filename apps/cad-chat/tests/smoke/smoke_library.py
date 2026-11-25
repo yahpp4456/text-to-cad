@@ -16,7 +16,7 @@ import shutil
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, Checker, REPO, out_path, post
+from _util import BASE, Checker, evidence_shot, out_path, post, REPO
 
 c = Checker()
 SRC = "ref-cable-sheath/cable_x.stp"
@@ -100,7 +100,7 @@ try:
                 and lib_row.locator(".fb-action", has_text=re.compile(r"^開啟$")).count() == 1)
         real_errs = [e for e in errs if "WebSocket closed without opened" not in e]
         c.check("C: 全程無 JS 錯誤(HMR ws 雜訊除外)", not real_errs, "; ".join(real_errs[:3]))
-        page.screenshot(path=out_path("smoke_library.png"))
+        evidence_shot(page, "smoke_library.png")
         browser.close()
 finally:
     for slug in made:

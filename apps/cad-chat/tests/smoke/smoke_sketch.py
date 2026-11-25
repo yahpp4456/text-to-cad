@@ -18,7 +18,7 @@ import urllib.parse
 
 from playwright.sync_api import sync_playwright
 
-from _util import BASE, REPO, Checker, get_with_headers, out_path, post
+from _util import BASE, Checker, evidence_shot, get_with_headers, out_path, post, REPO
 
 c = Checker()
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -257,7 +257,7 @@ try:
                 page.locator(".marker-toggle").count() == 0
                 and page.locator(".props-toggle").count() == 0
                 and page.locator(".motion-toggle").count() == 0)
-        page.screenshot(path=out_path("smoke_sketch_render.png"))
+        evidence_shot(page, "smoke_sketch_render.png")
 
         # ---- B2. 傳動呈現積木(motor/pulley/belt;2026-07-14)----
         # 以 RESET 換場注入 belt_drive fixture:三新 part type 編譯+渲染零錯、
@@ -316,7 +316,7 @@ try:
         )
         ratio = page.evaluate("() => window.__cadSketch.frame().jointValues.pulley_out")
         c.check("皮帶耦合活的:θ=270 → 從動輪 90(scale=rA/rB 同號)", abs(ratio - 90) < 0.1, str(ratio))
-        page.screenshot(path=out_path("smoke_sketch_belt.png"))
+        evidence_shot(page, "smoke_sketch_belt.png")
 
         # ---- C. 時間軸:草模 chip 樣式 + 匯出/精算鈕 type 守衛 ----
         print("== C. 時間軸守衛 ==")

@@ -134,6 +134,27 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `PYTHONUTF8=1 .venv/Scripts/python.exe scripts/dev/regress_fixtures.py --pipeline --jobs 6 --out tmp/regress/<名>.json [--compare tmp/regress/<基準>.json]`
   (~15 分;`--python` 可指定另一個 venv 的直譯器)。**`smc_cg1_cylinder` 與
   `smc_cq2_cylinder` 的 validate 原本就不通過**,不是你弄壞的。
+- **看圖 cad_snapshot(2026-11-25,藍圖 E1 / E2)**:渲染在 `py/cadchat_ext/render.py`(OCCT V3d 離屏),入口
+  `src/server/cad/render_view.py`,伺服器 `pipeline.runSnapshot`(一次性行程,**不要**加進 `python.mjs` 的
+  worker 白名單),工具在 `tools.mjs`。動渲染 → `apps/cad-chat/tests/test_render_view.py`(需要 OpenGL;
+  它自己解 PNG 檢查不是空白,不必裝影像套件);動工具參數 → `pipeline.snapshot.test.js`;動工具卡的縮圖 →
+  `smoke_verify_gate.py` D 段;動看圖紀律 → `prompt.checks.test.js` + L4 `smoke_snapshot_live.py`。
+  **L4 判讀時自己也看那幾張圖**(`models/.cadchat/<sid>/.snapshots/*.png`,用 Read 開):agent 說「看過了沒問題」
+  不代表圖上真的沒問題。新增工具時三處要一起改:`tools.mjs` 的定義、`runner.mjs` 的 `MCP_TOOLS` 白名單、
+  `wording.mjs` 的 `INTERNAL_TERMS`(否則 agent 會在回覆裡把工具名稱講出來)。
+- **具名姿態與動作序列(2026-11-25,藍圖 D3)**:MOTION 的 `states` / `sequences`。四個消費端要一起想:
+  `cadpy/motion_states.py`(驗證與內插,錯誤訊息是契約)、`validate.py` 的 `_sweep_poses`(完整驗證查
+  「同時到位」的組合)、`cadMotionMath.js`(`expandState` / `interpolateStates` / `sequencePose`,**與
+  Python 端逐式鏡射**,golden 在 `cadMotionMath.test.js`)、畫布的姿態 chip。動任一端 → sync-vendored →
+  `test_motion_states.py` + `tests/test_validate_motion.py`(`NamedPoseIntegration`)+ `cadMotionMath.test.js`
+  + `smoke_pose_chips.py`;動 prompt 的那一段 → `prompt.checks.test.js` + L4 `smoke_poses_live.py`。
+  **motion 事件的形狀只有一個來源**:伺服器 `pipeline.motionEvent`;前端 JSON 路徑(open-project / revert /
+  精算)是 `{ ...j.motion, name }` 整個帶,不要再手寫 `{ name, dofs }`(會把姿態丟掉)。
+- **平板件切割圖(2026-11-25,藍圖 F2)**:`cadpy/flatten.py` 的 `emit_profile` / `plate_dxf`。動它 →
+  `test_flatten.py`(兩個 kernel)+ `test_sheet_metal.py`(`SheetMetal.dxf()` 的輪廓也走 `emit_profile`)
+  + `smoke_versions.py` 的 DXF 段;動 prompt → L4 `smoke_plate_dxf_live.py`。免 LLM 的端到端確認:寫一個
+  帶 `gen_dxf` 的平板產生器,依序跑 `skills/cad/scripts/step <gen> --force` 與 `skills/dxf/scripts/dxf <gen>`,
+  再用 ezdxf 讀回數 `CIRCLE` 與 `LWPOLYLINE` 的 bulge。
 - **建置可重現(2026-11-25,藍圖 A8)**:`cadpy/kernel/determinism.py` 讓同一份產生器每次建出相同的面/邊/
   頂點順序(點選 token 是位置編號)。**新增「會執行產生器」的入口腳本時,要在產生器模組執行前呼叫
   `cadpy.kernel.determinism.ensure_installed()`**(現有:`generation._load_generator_module`、
@@ -187,8 +208,10 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `page.add_init_script` 在新頁面載入之初寫入,並用 sessionStorage 旗標限定只種一次**,不要在舊
   頁面 `page.evaluate(localStorage.setItem…)` 後 reload。同一支的 F 段(書架離屏縮圖
   `wait_for_function` 120 秒逾時)仍約六次一次,原因未查。
-  另一種:斷言全綠、最後存證用的 `page.screenshot` 卻 `Timeout 30000ms`(無頭 WebGL 截圖卡住,
-  `smoke_measure` 遇過)——同樣重跑即可。**整套跑完有紅,先看是不是「單支重跑三次全綠」**:
+  另一種:斷言全綠、最後存證用的 `page.screenshot` 卻 `Timeout 30000ms`(無頭 WebGL 截圖卡住)——這一類
+  已根除:**存證截圖一律用 `_util.evidence_shot(page, "name.png")`**,拍不到只印警告、不讓整支紅
+  (2026-11-25 之前幾乎每輪全套都會在某一支中一次)。新煙測不要再直接寫 `page.screenshot(path=out_path(…))`;
+  要「看圖判讀」的截圖(`capture_review_views`)才該在拍不到時失敗。**整套跑完有紅,先看是不是「單支重跑三次全綠」**:
   是的話記為偶發並在交付時如實說明,不是的話才是真問題。
 - **`scripts/test/test-python.sh` 在 Windows 要帶 `PYTHON_BIN=$PWD/.venv/Scripts/python.exe`**
   (它預設找 `.venv/bin/python`),而且用 `set -e`:bambu-labs skill 有 2 個既有 ERROR

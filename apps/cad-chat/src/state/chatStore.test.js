@@ -519,3 +519,13 @@ test("RESTORE:同 session 的綁定回灌;跨 session / 舊快照無欄位 → n
   const legacy = reducer(initialState, { type: "RESTORE", snapshot: { sessionId: "s1", versions: [] } });
   assert.equal(legacy.project, null);
 });
+
+test("SET_MOTION:具名姿態與動作序列跟著 motion 進 state;沒宣告時是 null", () => {
+  const dofs = [{ id: "lift" }];
+  let s = reducer(initialState, { type: "SET_MOTION", motion: { name: "rig", dofs, states: { up: { lift: 1 } }, sequences: { go: ["home", "up"] } } });
+  assert.deepEqual(s.motion.states, { up: { lift: 1 } });
+  assert.deepEqual(s.motion.sequences, { go: ["home", "up"] });
+  s = reducer(s, { type: "SET_MOTION", motion: { name: "rig", dofs } });
+  assert.equal(s.motion.states, null);
+  assert.equal(s.motion.sequences, null);
+});

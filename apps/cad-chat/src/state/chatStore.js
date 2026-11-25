@@ -489,7 +489,15 @@ export function reducer(state, action) {
       return {
         ...state,
         motion: action.motion?.dofs?.length
-          ? { name: action.motion.name || "", dofs: action.motion.dofs, forVer: action.motion.forVer ?? null }
+          ? {
+              name: action.motion.name || "",
+              dofs: action.motion.dofs,
+              forVer: action.motion.forVer ?? null,
+              // 具名姿態與動作序列(有宣告才有;畫布據此出姿態 chip)
+              states: action.motion.states && typeof action.motion.states === "object" ? action.motion.states : null,
+              sequences:
+                action.motion.sequences && typeof action.motion.sequences === "object" ? action.motion.sequences : null,
+            }
           : null,
       };
 

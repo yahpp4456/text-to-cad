@@ -99,6 +99,8 @@ def _pair_list(pairs, fmt, limit=3):
     shown = ", ".join(fmt(p) for p in pairs[:limit])
     return shown + (f" 等 {len(pairs)} 對" if len(pairs) > limit else "")
 _MOTION_AABB_MARGIN = 2.0          # 自動配對的 AABB 外擴 (mm)
+_POSE_SAMPLES_PER_STEP = 6         # 序列裡相鄰兩個姿態之間取幾幀
+_POSE_MAX_CROSS_PAIRS = 24         # 不同群的運動件兩兩配對的上限(各自往復時互不相干,同時動才可能相撞)
 _MOTION_LABEL = "運動掃掠干涉 motion-sweep"
 
 
@@ -175,6 +177,95 @@ def _dof_frame_shape(base_shape, dof, u):
         )
     dv = tuple(a * f * dof["travel"] for a in dof["axis"])
     return base_shape.translate(dv)
+
+
+def _sweep_poses(base_map, motion, plan, deadline, state):
+    """具名姿態與動作序列的檢查:幾個自由度**同時**在某個位置時有沒有相撞。
+
+    上面的逐群掃掠一次只動一個群(其餘保持建成姿態),所以「夾爪閉合的同時升降軸降到底」這種
+    只在組合姿態才出現的干涉它看不到。這裡把每個姿態、以及序列中相鄰姿態之間的內插幀,
+    用所有 dof 各自的位置一起擺出來查。
+
+    查哪些配對:各群自己宣告(或自動挑)的配對,加上不同群的運動件兩兩之間。
+    回 (hits, 一句統計, 是否有東西可查)。
+    """
+    from cadpy.geometry_checks import sweep_interference
+    from cadpy.motion_states import expand_state, sequence_frames
+
+    dofs = motion["dofs"]
+    states = motion.get("states") or {}
+    sequences = motion.get("sequences") or {}
+    seen, pairs = set(), []
+
+    def add(a, b):
+        key = tuple(sorted((a, b)))
+        if a == b or key in seen or a not in base_map or b not in base_map:
+            return False
+        seen.add(key)
+        pairs.append((a, b))
+        return True
+
+    for g in plan:
+        for a, b in g["pairs"]:
+            add(a, b)
+    moving_by_group = [sorted({n for m in g["members"] for n in m["moving"]}) for g in plan]
+    cross = 0
+    for i in range(len(moving_by_group)):
+        for j in range(i + 1, len(moving_by_group)):
+            for a in moving_by_group[i]:
+                for b in moving_by_group[j]:
+                    if cross < _POSE_MAX_CROSS_PAIRS and add(a, b):
+                        cross += 1
+    if not pairs:
+        return [], "", False
+
+    def labelled_frames(samples):
+        in_sequences = {step for seq in sequences.values() for step in seq}
+        out = [(f"姿態 {name}", expand_state(st, dofs)) for name, st in states.items() if name not in in_sequences]
+        for name, seq in sequences.items():
+            out.extend(
+                (f"序列 {label}", expand_state(st, dofs))
+                for label, st in sequence_frames(name, seq, states, samples_per_step=samples)
+            )
+        return out
+
+    samples = _POSE_SAMPLES_PER_STEP
+    frames = labelled_frames(samples)
+    note = ""
+    while len(frames) * len(pairs) > _MOTION_MAX_PAIR_FRAMES and samples > 1:
+        samples = max(1, samples // 2)
+        frames = labelled_frames(samples)
+        note = f";超出預算,序列每段降為 {samples} 幀"
+    if len(frames) * len(pairs) > _MOTION_MAX_PAIR_FRAMES:
+        keep = max(1, _MOTION_MAX_PAIR_FRAMES // len(frames))
+        note += f";配對截至前 {keep} 對(共 {len(pairs)} 對)"
+        pairs = pairs[:keep]
+    involved = {n for pair in pairs for n in pair}
+
+    def pose_frame(positions):
+        frame = {n: base_map[n] for n in involved}
+        # 照宣告序依次施加(與逐群掃掠、前端播放同一個合成順序:後宣告者在外層)
+        for d in dofs:
+            u = positions.get(d["id"], 0.0)
+            if not u:
+                continue
+            for n in d["moving"]:
+                if n in involved:
+                    frame[n] = _dof_frame_shape(frame[n], d, u)
+        return frame
+
+    def poses():
+        for label, positions in frames:
+            if time.monotonic() > deadline:
+                state["timeout"] = True
+                return
+            state["pose_done"] += 1
+            yield (label, pose_frame(positions))
+
+    hits = sweep_interference(poses(), pairs, baseline=[(n, base_map[n]) for n in involved], tol=0.05)
+    stat = (f"{len(states)} 個姿態 · {len(sequences)} 條序列 · {state['pose_done']}/{len(frames)} 幀 · "
+            f"{len(pairs)} 對{note}")
+    return hits, stat, True
 
 
 def _run_motion_sweep(named, motion):
@@ -267,13 +358,14 @@ def _run_motion_sweep(named, motion):
                 break
         notes.append(f"超出預算,降級後掃 {total} pair-frames")
 
-    if all(not g["pairs"] for g in plan):
+    has_poses = bool(motion.get("states") or motion.get("sequences"))
+    if all(not g["pairs"] for g in plan) and not has_poses:
         note = ";".join(["無可掃配對"] + notes)
         return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": True,
                 "skipped": True, "note": note}
 
     deadline = time.monotonic() + _MOTION_SWEEP_DEADLINE_S
-    state = {"done": 0, "timeout": False}
+    state = {"done": 0, "timeout": False, "pose_done": 0}
     frames_total = sum(g["samples"] for g in plan if g["pairs"])
     all_hits = []
 
@@ -316,6 +408,22 @@ def _run_motion_sweep(named, motion):
         if state["timeout"]:
             break
 
+    # 具名姿態與動作序列:幾個自由度同時在位(逐群掃掠看不到的組合)
+    pose_stat = ""
+    if has_poses and not state["timeout"]:
+        try:
+            pose_hits, pose_stat, pose_checked = _sweep_poses(base_map, motion, plan, deadline, state)
+        except Exception as exc:  # noqa: BLE001
+            message = f"掃掠失敗: 姿態/序列 {type(exc).__name__}: {exc}"
+            return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": False, "note": message,
+                    "findings": to_dicts([Finding("motion.sweep_error", "failed", message)])}
+        all_hits.extend((dofs[0], h) for h in pose_hits)
+        if not pose_checked:
+            pose_stat = "姿態/序列:無可查配對"
+    if all(not g["pairs"] for g in plan) and not pose_stat:
+        return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": True, "skipped": True,
+                "note": ";".join(["無可掃配對"] + notes)}
+
     n_dof = sum(len(g["members"]) for g in plan if g["pairs"])
     n_pairs = sum(len(g["pairs"]) for g in plan)
     coupled = [g["gid"] for g in plan if len(g["members"]) > 1 and g["pairs"]]
@@ -325,6 +433,8 @@ def _run_motion_sweep(named, motion):
         stat += f" · 耦合群 {','.join(coupled)}"
     if notes:
         stat += " · " + ";".join(notes)
+    if pose_stat:
+        stat += " · " + pose_stat
 
     if all_hits:
         all_hits.sort(key=lambda t: t[1].excess, reverse=True)
@@ -352,7 +462,8 @@ def _run_motion_sweep(named, motion):
                 "note": f"未量測:掃掠逾時,只掃了一部分(已掃部分無穿透;掃 {stat})",
                 "findings": to_dicts([Finding(
                     "motion.unmeasured", "not_checked",
-                    f"行程掃掠逾時,只掃了 {state['done']}/{frames_total} 幀")])}
+                    f"行程掃掠逾時,只掃了 {state['done'] + state['pose_done']} 幀"
+                    f"(逐群 {state['done']}/{frames_total})")])}
     return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": True,
             "note": f"全程無穿透(掃 {stat})"}
 

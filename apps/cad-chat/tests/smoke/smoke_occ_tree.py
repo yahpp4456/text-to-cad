@@ -3,7 +3,7 @@
 + GROUP 節點 3D 預覽高亮(不佔圈選名額)。"""
 from playwright.sync_api import sync_playwright
 
-from _util import Checker, glb_page_url, out_path
+from _util import Checker, evidence_shot, glb_page_url, out_path
 
 c = Checker()
 
@@ -78,7 +78,7 @@ with sync_playwright() as p:
     else:
         c.check("雙擊圈選到零件", False, "raycast 沒中")
     c.check("gantry 無 JS 錯誤", not errors, "; ".join(errors[:2]))
-    page.screenshot(path=out_path("smoke_occ_gantry.png"))
+    evidence_shot(page, "smoke_occ_gantry.png")
     page.close()
 
     # ── 場景 2:motorized_linear_stage(扁平組合件)不回歸 ──
@@ -104,7 +104,7 @@ with sync_playwright() as p:
     kinds2 = page.locator(".tree-node .tree-kind").all_inner_texts()
     c.check("stage 點零件展開面層", sum(1 for k in kinds2 if k == "FACE") > 0)
     c.check("stage 無 JS 錯誤", not errors2, "; ".join(errors2[:2]))
-    page.screenshot(path=out_path("smoke_occ_stage.png"))
+    evidence_shot(page, "smoke_occ_stage.png")
     browser.close()
 
 c.finish()
