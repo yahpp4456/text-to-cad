@@ -102,7 +102,7 @@ def render_views(
     """
     from OCP.AIS import AIS_InteractiveContext, AIS_Shape
     from OCP.Aspect import Aspect_DisplayConnection, Aspect_NeutralWindow
-    from OCP.Graphic3d import Graphic3d_ClipPlane
+    from OCP.Graphic3d import Graphic3d_ClipPlane, Graphic3d_MaterialAspect, Graphic3d_NOM_PLASTER
     from OCP.Image import Image_AlienPixMap
     from OCP.OpenGl import OpenGl_GraphicDriver
     from OCP.Quantity import Quantity_Color, Quantity_TOC_RGB
@@ -138,6 +138,9 @@ def render_views(
             continue
         ais = AIS_Shape(_topods(shape))
         _label, (r, g, b) = PALETTE[index % len(PALETTE)]
+        # 無高光的材質:預設材質有鏡面反射,在正視 / 俯視這種正對鏡頭的視角,平行光打在整個平面上
+        # 反射方向都一樣,整面一起過曝成白色——零件只剩輪廓、分不出顏色。先設材質再設顏色。
+        ais.SetMaterial(Graphic3d_MaterialAspect(Graphic3d_NOM_PLASTER))
         context.Display(ais, 1 if mode == "shaded" else 0, 0, False)
         context.SetColor(ais, Quantity_Color(r, g, b, Quantity_TOC_RGB), False)
         if name in ghosted and mode == "shaded":

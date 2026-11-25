@@ -438,6 +438,8 @@ function readBuildMetaFile(file) {
       sweepView: meta.sweepView && typeof meta.sweepView === "object" ? meta.sweepView : null,
       // 每個零件的量測摘要(cadpy.build_delta);舊 sidecar 沒有這欄 → null,差異摘要就不出。
       summary: meta.summary && typeof meta.summary === "object" ? meta.summary : null,
+      // 鈑金可製造性建議(findings 的 dict;cadpy 收割時已轉好)。舊 sidecar 沒有 → 空陣列
+      advisories: Array.isArray(meta.advisories) ? meta.advisories : [],
     };
   } catch {
     return null;
@@ -678,12 +680,14 @@ export function checkStatus(check) {
   return check?.ok ? "ok" : "failed";
 }
 
-// 完整驗證是否通過:至少有一列,且每一列不是通過就是不適用。
+// 完整驗證是否通過:至少有一列真的檢查,且每一列不是通過、不適用,就是建議(advisory:做得出來,
+// 只是加工廠會提的事——不擋匯出)。只有建議列、沒有任何檢查列,不算通過。
 export function fullValidationOk(checks) {
+  if (!Array.isArray(checks)) return false;
+  const judged = checks.filter((c) => checkStatus(c) !== "advisory");
   return (
-    Array.isArray(checks) &&
-    checks.length > 0 &&
-    checks.every((c) => {
+    judged.length > 0 &&
+    judged.every((c) => {
       const status = checkStatus(c);
       return status === "ok" || status === "not_applicable";
     })
@@ -876,6 +880,18 @@ export function designChecksFromMeta(meta) {
   } else {
     motionRow = skip("motion_sweep", MOTION_LABEL, "設計模式:略過掃掠(未驗證)");
   }
+  // 鈑金可製造性建議:有才列,永遠是 ok(不擋匯出)。與 validate.py 的同名列同一份資料、同一個形狀。
+  const advisoryRows = meta.advisories?.length
+    ? [{
+        id: "sheet_dfm",
+        label: "鈑金可製造性(建議)",
+        ok: true,
+        skipped: false,
+        status: "advisory",
+        note: `${meta.advisories.length} 項建議`,
+        findings: meta.advisories,
+      }]
+    : [];
   return [
     skip("valid_solid", "封閉性 / 有效實體 (watertight)", "設計模式:略過驗證(未驗證)"),
     meta.partCount >= 2
@@ -884,6 +900,7 @@ export function designChecksFromMeta(meta) {
     motionRow,
     // 零 spawn 後沒有 inspect 的 bbox/faceCount:誠實標 SKIP(精算此版會補真值)
     skip("facts", "拓撲 / 尺寸 topology", "設計模式:略過檢查(未驗證)"),
+    ...advisoryRows,
   ];
 }
 
@@ -1399,6 +1416,8 @@ export function decorateChecks(checks) {
     const status = checkStatus(c);
     if (status === "not_applicable") return { ...c, status, icon: "–", color: "#a3acba", noteText: c.note || "不適用" };
     if (status === "not_checked") return { ...c, status, icon: "?", color: "#c98a1b", noteText: c.note || "未量測" };
+    // advisory:建議列(鈑金可製造性)。不是通過也不是失敗,不擋匯出;驚嘆號 + 琥珀色
+    if (status === "advisory") return { ...c, status, icon: "!", color: "#c98a1b", noteText: c.note || "有建議" };
     return status === "ok"
       ? { ...c, status, icon: "✓", color: "#34ab86", noteText: c.note || "PASS" }
       : { ...c, status, icon: "✗", color: "#d64848", noteText: c.note || "FAIL" };

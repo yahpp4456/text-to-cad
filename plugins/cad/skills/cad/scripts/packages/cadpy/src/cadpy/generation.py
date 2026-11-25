@@ -1230,6 +1230,26 @@ def _harvest_sweep_view(module: object) -> dict[str, object] | None:
     }
 
 
+def _harvest_advisories(raw_payload: object, named: list) -> list[dict[str, object]]:
+    """鈑金可製造性建議(``SheetMetal.folded()`` 掛在形狀上的 ``sheet_advisories``),轉成 findings 的 dict。
+
+    從回傳的形狀本身與它的每個零件上找;沒有就是空清單。整段不拋例外:建議是附帶資訊,不能弄掛建置。
+    """
+    try:
+        from cadpy.findings import advisory_findings, to_dicts
+
+        collected: list = []
+        seen: set[int] = set()
+        for shape in [raw_payload, *(shape for _name, shape in named)]:
+            items = getattr(shape, "sheet_advisories", None)
+            if items and id(items) not in seen:
+                seen.add(id(items))
+                collected.extend(items)
+        return to_dicts(advisory_findings(collected))
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _harvest_build_meta(module: object, raw_payload: object) -> dict[str, object]:
     """從已執行過的 gen_step 收割模組層 MOTION + parts labels(cad-chat sidecar)。
 
@@ -1254,11 +1274,13 @@ def _harvest_build_meta(module: object, raw_payload: object) -> dict[str, object
         summary = build_summary(named)
     except Exception:  # noqa: BLE001 — build_summary 本身不拋;這層只防意外
         summary = None
+    advisories = _harvest_advisories(raw_payload, named)
     return {
         "schemaVersion": BUILD_META_SCHEMA_VERSION,
         "parts": labels,
         "partCount": len(labels),
         "summary": summary,
+        "advisories": advisories,
         "motion": playback_motion(motion),
         "motionErrs": errs,
         "sweepPaths": _harvest_sweep_paths(module),

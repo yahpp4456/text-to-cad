@@ -146,6 +146,34 @@ class FindingTests(unittest.TestCase):
         self.assertEqual(to_dicts(findings, cap=0), [])
         self.assertEqual(to_dicts(findings, cap=None), expected)
 
+    def test_advisories_become_warning_findings(self):
+        from cadpy.findings import advisory_findings
+
+        items = [
+            {"rule": "sheet.hole_spacing", "severity": "warning", "message": "兩個孔太近", "value": 2.0,
+             "limit": 4.0, "unit": "mm", "refs": ["base"]},
+            {"rule": "sheet.no_such_rule", "message": "x"},      # 不認得的規則:丟掉,不拋例外
+            {"message": "沒有 rule"},
+            "壞資料",
+        ]
+        found = advisory_findings(items)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].to_dict(), {
+            "rule": "sheet.hole_spacing", "status": "warning", "message": "兩個孔太近",
+            "value": 2.0, "limit": 4.0, "unit": "mm", "refs": ["base"],
+        })
+        self.assertEqual(advisory_findings(None), [])
+
+    def test_warning_sorts_after_unmeasured_and_does_not_change_the_verdict(self):
+        warn = Finding("sheet.bend_radius", "warning", "w")
+        fail = Finding("solid.invalid", "failed", "f")
+        skip = Finding("motion.unmeasured", "not_checked", "s")
+        fine = Finding("interference.declared_contact", "ok", "o")
+        ordered = sorted([fine, warn, skip, fail], key=sort_key)
+        self.assertEqual([f.status for f in ordered], ["failed", "not_checked", "warning", "ok"])
+        self.assertEqual(summarize([warn]), "ok")          # 建議不改變判定
+        self.assertEqual(summarize([warn, skip]), "not_checked")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1036,6 +1036,10 @@
 .check-findings li[data-status="failed"] {
   color: var(--danger, #c0392b);
 }
+/* 建議(做得出來,但加工廠會提的事):琥珀色,與建議列的驚嘆號同色 */
+.check-findings li[data-status="warning"] {
+  color: #9a6a12;
+}
 .check-findings-more {
   color: #9aa3b0;
 }

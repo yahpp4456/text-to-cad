@@ -134,6 +134,13 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `PYTHONUTF8=1 .venv/Scripts/python.exe scripts/dev/regress_fixtures.py --pipeline --jobs 6 --out tmp/regress/<名>.json [--compare tmp/regress/<基準>.json]`
   (~15 分;`--python` 可指定另一個 venv 的直譯器)。**`smc_cg1_cylinder` 與
   `smc_cq2_cylinder` 的 validate 原本就不通過**,不是你弄壞的。
+- **鈑金可製造性建議(2026-11-25,藍圖 F1)**:`SheetMetal.advisories()` → `folded()` 掛在實體上 → build 收割
+  寫進 sidecar 的 `advisories` → 快路徑與 `validate.py` 各加一列 `sheet_dfm`,狀態 `advisory`(不算通過、
+  不算失敗、**不擋匯出**;`fullValidationOk` 與 `verdictFor` 都特別處理這個狀態)。加一條規則要動三處:
+  `sheet_metal.py` 的 `advisories`、`cadpy/findings.py` 的 `RULES`(不認得的規則會被丟掉,不拋例外)、
+  README 的規則表。動它 → sync-vendored → `test_sheet_metal.py`(`AdvisoryTests`)+ `test_findings.py`
+  + `tests/test_build_meta.py`(`SheetAdvisoriesE2E`)+ `pipeline.findings.test.js`。**硬性的可製造性門檻
+  不在這裡**:那些是 `SheetMetal` 建構時的 `ValueError`(翼板太短、孔在折彎區…),違反的零件建不出來。
 - **看圖 cad_snapshot(2026-11-25,藍圖 E1 / E2)**:渲染在 `py/cadchat_ext/render.py`(OCCT V3d 離屏),入口
   `src/server/cad/render_view.py`,伺服器 `pipeline.runSnapshot`(一次性行程,**不要**加進 `python.mjs` 的
   worker 白名單),工具在 `tools.mjs`。動渲染 → `apps/cad-chat/tests/test_render_view.py`(需要 OpenGL;
@@ -211,7 +218,9 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   另一種:斷言全綠、最後存證用的 `page.screenshot` 卻 `Timeout 30000ms`(無頭 WebGL 截圖卡住)——這一類
   已根除:**存證截圖一律用 `_util.evidence_shot(page, "name.png")`**,拍不到只印警告、不讓整支紅
   (2026-11-25 之前幾乎每輪全套都會在某一支中一次)。新煙測不要再直接寫 `page.screenshot(path=out_path(…))`;
-  要「看圖判讀」的截圖(`capture_review_views`)才該在拍不到時失敗。**整套跑完有紅,先看是不是「單支重跑三次全綠」**:
+  要「看圖判讀」的截圖(`capture_review_views`)才該在拍不到時失敗。L1 另有一類:整套 `node --test` 時某一支報 `Unable to deserialize cloned data`(Node 測試執行器的 IPC),
+  單跑必過——`asset.user.test.js` 與 `chat.quota.test.js` 都中過,後者 2026-11-25 連續兩輪。兩支都會起真的
+  伺服器並短暫開始一個回合;原因未查。**整套跑完有紅,先看是不是「單支重跑三次全綠」**:
   是的話記為偶發並在交付時如實說明,不是的話才是真問題。
 - **`scripts/test/test-python.sh` 在 Windows 要帶 `PYTHON_BIN=$PWD/.venv/Scripts/python.exe`**
   (它預設找 `.venv/bin/python`),而且用 `set -e`:bambu-labs skill 有 2 個既有 ERROR

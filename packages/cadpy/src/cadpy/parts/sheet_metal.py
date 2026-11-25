@@ -742,6 +742,102 @@ class SheetMetal:
             ys += [p[1] for p in pts]
         return (max(xs) - min(xs), max(ys) - min(ys))
 
+    # -- manufacturability advisories ---------------------------------------------
+    # The hard limits -- flange too short to grip, a hole in the bend zone or off
+    # the edge, flanges colliding at a corner -- are construction errors above:
+    # such a part is never built. What is left are RECOMMENDATIONS a shop would
+    # raise: the part can be made, at more cost or risk. They are reported, not
+    # enforced. Rules and limits follow the public sheet-metal design guides
+    # (Hubs / Protolabs Network, Protolabs), as collected in the upstream project's
+    # dfm/sheet.py rule table (earthtojake/text-to-cad, MIT); each is scaled by the
+    # sheet thickness t.
+    STANDARD_SHEET_MM = (3048.0, 1524.0)   # 10 x 5 ft: the sheet assumed when none is given
+    LARGEST_PLATE_MM = (12192.0, 3048.0)   # 40 x 10 ft: no stock plate is larger
+
+    def advisories(self, *, sheet: tuple[float, float] | None = None) -> list[dict]:
+        """Manufacturability recommendations for this part (never raises on a finalized tree).
+
+        Each is ``{"rule", "severity": "warning", "message", "value", "limit",
+        "unit", "refs"}`` -- ``refs`` names the panel or bend concerned. An
+        empty list means none of the recommendations is violated.
+        """
+        self._finalize()
+        t = self.thickness
+        out: list[dict] = []
+
+        def add(rule, message, value, limit, unit="mm", refs=()):
+            out.append({
+                "rule": rule, "severity": "warning", "message": message,
+                "value": round(float(value), 4), "limit": round(float(limit), 4), "unit": unit,
+                "refs": [str(r) for r in refs],
+            })
+
+        bends = list(self._iter_bends(self._root))
+        if t < 0.5 - _TOL:
+            add("sheet.thickness", f"板厚 {t:g} mm 低於建議下限 0.5 mm(太薄不易折彎與搬運)", t, 0.5)
+        elif bends and t > 6.0 + _TOL:
+            add("sheet.thickness", f"板厚 {t:g} mm 超過建議的折彎上限 6 mm(需要大噸位折床,先與加工廠確認)", t, 6.0)
+        elif not bends and t > 10.0 + _TOL:
+            add("sheet.thickness", f"板厚 {t:g} mm 超過建議的雷射切割上限 10 mm", t, 10.0)
+
+        for bend in bends:
+            hem = abs(abs(bend.angle) - 180.0) < _TOL
+            if hem:
+                if bend.child.web < 6.0 * t - _TOL:
+                    add("sheet.hem_return",
+                        f"摺邊「{bend.label}」的回折長 {bend.child.web:g} mm 短於建議的 6 倍板厚({6.0 * t:g} mm)",
+                        bend.child.web, 6.0 * t, refs=(bend.label,))
+                continue
+            if bend.radius < t - _TOL:
+                add("sheet.bend_radius",
+                    f"折彎「{bend.label}」的內半徑 {bend.radius:g} mm 小於板厚 {t:g} mm"
+                    f"(建議內半徑至少等於板厚,太小外側容易裂)",
+                    bend.radius, t, refs=(bend.label,))
+            elif bend.radius > 10.0 * t + _TOL:
+                add("sheet.bend_radius_max",
+                    f"折彎「{bend.label}」的內半徑 {bend.radius:g} mm 超過 10 倍板厚({10.0 * t:g} mm):"
+                    f"一刀折不出來,要分段成形或滾圓,成本較高",
+                    bend.radius / t, 10.0, unit="ratio", refs=(bend.label,))
+
+        for node in self._iter_nodes(self._root):
+            for hole in node.holes:
+                if hole.d < t - _TOL:
+                    add("sheet.hole_diameter",
+                        f"面板「{node.label}」的孔 (x={hole.x:g}, y={hole.y:g}) 直徑 {hole.d:g} mm 小於板厚 {t:g} mm"
+                        f"(建議孔徑至少等於板厚;更小的孔切割時容易變形,可改為切後再鑽)",
+                        hole.d, t, refs=(node.label,))
+            for i, a in enumerate(node.holes):
+                for b in node.holes[i + 1:]:
+                    gap = math.hypot(a.x - b.x, a.y - b.y) - (a.d + b.d) / 2.0
+                    if gap < 2.0 * t - _TOL:
+                        add("sheet.hole_spacing",
+                            f"面板「{node.label}」的兩個孔 (x={a.x:g}, y={a.y:g}) 與 (x={b.x:g}, y={b.y:g}) "
+                            f"邊到邊只隔 {gap:.2f} mm,少於建議的 2 倍板厚({2.0 * t:g} mm);"
+                            f"太近的孔在成形或折彎時容易變形",
+                            gap, 2.0 * t, refs=(node.label,))
+
+        long_side, short_side = sorted(self.flat_size(), reverse=True)
+        given = sheet is not None
+        sheet_long, sheet_short = sorted(sheet if given else self.STANDARD_SHEET_MM, reverse=True)
+        if long_side > sheet_long + _TOL or short_side > sheet_short + _TOL:
+            which = "指定的板材" if given else "標準板材"
+            add("sheet.flat_size",
+                f"展開尺寸 {long_side:.1f}×{short_side:.1f} mm 超過{which} {sheet_long:g}×{sheet_short:g} mm:"
+                f"要拆件、或改用更大的板材",
+                long_side if long_side > sheet_long + _TOL else short_side,
+                sheet_long if long_side > sheet_long + _TOL else sheet_short, refs=(self.label,))
+        return out
+
+    def _iter_nodes(self, node: _Node):
+        yield node
+        for bend in node.bends:
+            yield from self._iter_nodes(bend.child)
+
+    def _iter_bends(self, node: _Node):
+        for bend in node.bends:
+            yield bend
+            yield from self._iter_bends(bend.child)
+
     def flat_bend_lines(self) -> list[dict]:
         """Bend center lines in FLAT coordinates, one per bend:
         ``[{"a": [x, y], "b": [x, y], "up": bool}]`` -- ``up`` = fold toward +Z
@@ -880,6 +976,7 @@ class SheetMetal:
         self._assert_no_fold_collision(members)
         body = reduce(add, [m[2] for m in members] + tabs).clean()
         label_shape(body, self.label)
+        self._attach_advisories(body)
         return body
 
     def _flat_face(self):
@@ -904,6 +1001,15 @@ class SheetMetal:
             raise ValueError(self._err(
                 f"攤平面融合異常:得到 {len(fl)} 個面(預期 1)——請回報此案例"))
         return fl[0]
+
+    def _attach_advisories(self, body: Any) -> None:
+        """Carry the advisories on the solid, so the build can report them without
+        the generator doing anything. Best effort: a shape that will not take the
+        attribute simply reports none."""
+        try:
+            body.sheet_advisories = self.advisories()
+        except Exception:  # noqa: BLE001
+            pass
 
     def flat(self) -> Any:
         """Flat pattern as ONE labeled solid of thickness t (3D preview twin)."""

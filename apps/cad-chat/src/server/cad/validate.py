@@ -639,6 +639,24 @@ def main() -> int:
     else:
         checks.append(_run_motion_sweep(named, motion))
 
+    # 4) 鈑金可製造性建議——有才列。這一列永遠是 ok:建議不擋匯出,只是把加工廠會提的事先說出來。
+    #    與快路徑(pipeline.designChecksFromMeta 讀 build sidecar)同一份資料、同一個列形狀。
+    try:
+        from cadpy.generation import _harvest_advisories
+
+        advisories = _harvest_advisories(payload, named)
+    except Exception:  # noqa: BLE001
+        advisories = []
+    if advisories:
+        checks.append({
+            "id": "sheet_dfm",
+            "label": "鈑金可製造性(建議)",
+            "ok": True,
+            "status": "advisory",
+            "note": f"{len(advisories)} 項建議",
+            "findings": advisories,
+        })
+
     # 自交、壁厚:這支腳本沒有這兩項檢查,所以不列(以前各佔一列、永遠 skipped)。
 
     for check in checks:

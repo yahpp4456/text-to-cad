@@ -23,9 +23,14 @@ export function verdictFor(it) {
     return { text: "偵測到問題", tone: "danger" };
   }
   const ran = count("ok");
-  if (checks.length && ran === 0) return { text: "未執行檢查", tone: "muted" };
-  if (unchecked > 0) return { text: `${ran} 項通過 · ${unchecked} 項未驗證`, tone: "ok" };
-  return { text: "全部通過", tone: "ok" };
+  // 建議列(advisory,例:鈑金可製造性)不是檢查項:不算通過、不算未驗證,有的話在標題尾端提一句。
+  const advised = checks
+    .filter((c) => checkStatusOf(c) === "advisory")
+    .reduce((n, c) => n + (c.findingCount || (Array.isArray(c.findings) ? c.findings.length : 0) || 1), 0);
+  const tail = advised > 0 ? ` · ${advised} 項建議` : "";
+  if (checks.length && ran === 0) return { text: `未執行檢查${tail}`, tone: "muted" };
+  if (unchecked > 0) return { text: `${ran} 項通過 · ${unchecked} 項未驗證${tail}`, tone: "ok" };
+  return { text: `全部通過${tail}`, tone: "ok" };
 }
 
 export const VERDICT_COLOR = {

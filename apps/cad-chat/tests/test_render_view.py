@@ -37,7 +37,10 @@ def _run(*argv):
 
 
 def _png(path):
-    """回 (寬, 高, 不同顏色的像素種類數);只支援 8-bit RGB/RGBA、非交錯(OCCT 寫出來的就是這種)。"""
+    """回 (寬, 高, 不同顏色的像素種類數, 有顏色的像素比例);只支援 8-bit RGB/RGBA、非交錯(OCCT 寫出來的就是這種)。
+
+    「有顏色」= 不是接近白色的背景(三個通道都 > 235)。零件正對鏡頭的平面若過曝成白色,這個比例會掉到接近 0。
+    """
     data = Path(path).read_bytes()
     assert data[:8] == b"\x89PNG\r\n\x1a\n", "不是 PNG"
     pos, chunks, header = 8, [], None
@@ -55,6 +58,7 @@ def _png(path):
     raw = zlib.decompress(b"".join(chunks))
     stride = width * bpp
     colors, prev = set(), bytearray(stride)
+    sampled = tinted = 0
     for y in range(height):
         row_start = y * (stride + 1)
         kind = raw[row_start]
@@ -74,9 +78,13 @@ def _png(path):
                 pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
                 row[i] = (row[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
         if y % 8 == 0:  # 取樣即可,省時間
-            colors.update(bytes(row[x:x + 3]) for x in range(0, stride, bpp * 4))
+            for x in range(0, stride, bpp * 4):
+                pixel = bytes(row[x:x + 3])
+                colors.add(pixel)
+                sampled += 1
+                tinted += min(pixel) <= 235
         prev = row
-    return width, height, len(colors)
+    return width, height, len(colors), tinted / max(1, sampled)
 
 
 class RenderHelpersTests(unittest.TestCase):
@@ -130,7 +138,7 @@ class RenderViewE2E(unittest.TestCase):
         for v in out["views"]:
             path = REPO / v["file"]
             self.assertTrue(path.exists(), v)
-            width, height, colors = _png(path)
+            width, height, colors, _tinted = _png(path)
             self.assertEqual((width, height), (900, 640))
             self.assertGreater(colors, 3, f"{v['view']} 幾乎是空白圖")  # 背景 + 至少幾種零件色與陰影
 
@@ -142,6 +150,31 @@ class RenderViewE2E(unittest.TestCase):
         a, b = (REPO / out["views"][0]["file"] for out in (solid, ghost))
         self.assertNotEqual(a.read_bytes(), b.read_bytes())
         self.assertGreater(_png(b)[2], _png(a)[2])
+
+    def test_faces_square_to_the_camera_keep_their_colour(self):
+        """正視 / 俯視時,正對鏡頭的平面要看得到零件的顏色。
+
+        預設材質有鏡面反射:平行光加正交鏡頭,整個平面的反射方向相同,會一起過曝成白色——零件只剩
+        輪廓線、分不出顏色(2026-11-25 看真回合的圖才發現;當時的測試只檢查「不是空白」所以沒抓到)。
+        """
+        gen = WORKDIR / "blocks.py"
+        gen.write_text(
+            "\n".join([
+                "from build123d import Box, Compound, Pos",
+                "def gen_step():",
+                "    a = Box(40, 20, 30); a.label = 'a'",
+                "    b = Pos(50, 0, 0) * Box(40, 20, 30); b.label = 'b'",
+                "    return Compound(label='blocks', children=[a, b])",
+                "",
+            ]),
+            encoding="utf-8",
+        )
+        _, out = _run(gen, WORKDIR, "--views", "front,top,right", "--stem", "square")
+        self.assertTrue(out["ok"], out)
+        for v in out["views"]:
+            _w, _h, _colors, tinted = _png(REPO / v["file"])
+            # 兩個方塊正對鏡頭:畫面上應有一大片是零件的顏色(過曝時這個比例不到 2%)
+            self.assertGreater(tinted, 0.10, f"{v['view']} 的平面幾乎全白: {tinted:.3f}")
 
     def test_hide_drops_the_part_from_the_legend(self):
         _, out = _run(GEAR, WORKDIR, "--views", "iso", "--stem", "hidden", "--hide", "housing")

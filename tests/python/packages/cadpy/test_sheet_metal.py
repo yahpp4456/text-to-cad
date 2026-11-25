@@ -397,5 +397,81 @@ class CheckGeometryGateTests(unittest.TestCase):
             check_sheet(_l_bracket().folded(), sweep_args={})
 
 
+class AdvisoryTests(unittest.TestCase):
+    """可製造性建議:做得出來,但加工廠會提的事。只回報、不擋(硬性門檻是建構時的 ValueError)。"""
+
+    def _rules(self, sm: SheetMetal, **kw) -> list[str]:
+        return [a["rule"] for a in sm.advisories(**kw)]
+
+    def test_clean_part_has_none(self) -> None:
+        self.assertEqual(_l_bracket().advisories(), [])
+
+    def test_holes_too_close_and_too_small(self) -> None:
+        sm = SheetMetal(thickness=2.0, bend_radius=2.0, label="plate")
+        base = sm.base_rect(80.0, 40.0)
+        base.hole(20.0, 20.0, d=5.0)
+        base.hole(27.0, 20.0, d=5.0)    # 邊到邊 2 mm < 2t = 4 mm
+        base.hole(60.0, 20.0, d=1.5)    # 孔徑 1.5 < t = 2
+        found = sm.advisories()
+        self.assertEqual([a["rule"] for a in found], ["sheet.hole_diameter", "sheet.hole_spacing"])
+        spacing = found[1]
+        self.assertEqual((spacing["severity"], spacing["unit"], spacing["refs"]), ("warning", "mm", ["base"]))
+        self.assertAlmostEqual(spacing["value"], 2.0, places=4)
+        self.assertAlmostEqual(spacing["limit"], 4.0, places=4)
+        self.assertIn("邊到邊只隔 2.00 mm", spacing["message"])
+        # 剛好 2t 不算
+        ok = SheetMetal(thickness=2.0, bend_radius=2.0, label="plate")
+        b2 = ok.base_rect(80.0, 40.0)
+        b2.hole(20.0, 20.0, d=5.0)
+        b2.hole(29.0, 20.0, d=5.0)
+        self.assertEqual(ok.advisories(), [])
+
+    def test_bend_radius_below_thickness_and_far_above(self) -> None:
+        tight = SheetMetal(thickness=2.0, bend_radius=1.0, label="tight")   # 0.5t 做得出來,但建議 >= t
+        tight.base_rect(56.0, 30.0).flange("x+", length=40.0, label="leg")
+        found = tight.advisories()
+        self.assertEqual([a["rule"] for a in found], ["sheet.bend_radius"])
+        self.assertEqual(found[0]["refs"], ["leg"])
+        wide = SheetMetal(thickness=1.0, bend_radius=12.0, label="wide")    # 12t > 10t
+        wide.base_rect(80.0, 30.0).flange("x+", web=30.0, label="sweep")
+        self.assertEqual(self._rules(wide), ["sheet.bend_radius_max"])
+
+    def test_thickness_range(self) -> None:
+        thin = SheetMetal(thickness=0.4, bend_radius=0.4, label="thin")
+        thin.base_rect(40.0, 20.0)
+        self.assertEqual(self._rules(thin), ["sheet.thickness"])
+        thick_bent = SheetMetal(thickness=8.0, bend_radius=8.0, label="thick")
+        thick_bent.base_rect(200.0, 100.0).flange("x+", length=80.0)
+        self.assertEqual(self._rules(thick_bent), ["sheet.thickness"])
+        thick_flat = SheetMetal(thickness=8.0, bend_radius=8.0, label="flat")   # 不折彎:上限是 10
+        thick_flat.base_rect(200.0, 100.0)
+        self.assertEqual(self._rules(thick_flat), [])
+
+    def test_hem_return_shorter_than_six_thicknesses(self) -> None:
+        sm = SheetMetal(thickness=1.0, bend_radius=1.0, label="hemmed")
+        sm.base_rect(60.0, 30.0).hem("x+", length=5.0, label="edge")   # 5 < 6t
+        found = sm.advisories()
+        self.assertEqual([a["rule"] for a in found], ["sheet.hem_return"])
+        self.assertEqual(found[0]["refs"], ["edge"])
+        # 摺邊的內半徑是開口的一半(本來就小於板厚),不該被當成「折彎半徑太小」
+        self.assertNotIn("sheet.bend_radius", [a["rule"] for a in found])
+
+    def test_flat_size_against_the_standard_and_a_given_sheet(self) -> None:
+        sm = SheetMetal(thickness=2.0, bend_radius=2.0, label="big")
+        sm.base_rect(1300.0, 400.0)
+        self.assertEqual(self._rules(sm), [])                                   # 標準板材 3048×1524 放得下
+        found = sm.advisories(sheet=(1219.0, 2438.0))                            # 給定的板材:長邊放得下、方向不拘
+        self.assertEqual(found, [])
+        found = sm.advisories(sheet=(1000.0, 1200.0))
+        self.assertEqual([a["rule"] for a in found], ["sheet.flat_size"])
+        self.assertIn("指定的板材", found[0]["message"])
+
+    def test_folded_solid_carries_the_advisories(self) -> None:
+        sm = SheetMetal(thickness=2.0, bend_radius=1.0, label="carry")
+        sm.base_rect(56.0, 30.0).flange("x+", length=40.0, label="leg")
+        body = sm.folded()
+        self.assertEqual([a["rule"] for a in body.sheet_advisories], ["sheet.bend_radius"])
+
+
 if __name__ == "__main__":
     unittest.main()

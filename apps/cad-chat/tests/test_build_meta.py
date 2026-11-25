@@ -110,5 +110,67 @@ class BuildMetaSidecarE2E(unittest.TestCase):
         self.assertFalse(bad_sidecar.exists(), "失敗 build 不得殘留 stale sidecar")
 
 
+
+SHEET_WITH_ADVISORIES = '''from cadpy.parts import SheetMetal
+
+PARAMS = {"t": 2.0}
+
+
+def _build():
+    sm = SheetMetal(thickness=PARAMS["t"], bend_radius=1.0, label="bracket")   # 內半徑 0.5t:做得出來,但有建議
+    base = sm.base_rect(80.0, 40.0)
+    base.hole(20.0, 20.0, d=5.0)
+    base.hole(27.0, 20.0, d=5.0)                                               # 兩孔邊到邊 2 mm < 2t
+    base.flange("x+", length=30.0, label="leg")
+    return sm
+
+
+def gen_step():
+    return _build().folded()
+'''
+
+
+class SheetAdvisoriesE2E(unittest.TestCase):
+    """鈑金可製造性建議(藍圖 F1):build 時寫進 sidecar;完整驗證多一列,不擋。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = WORKDIR.with_name(WORKDIR.name + "_sheet")
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        cls.gen = cls.dir / "sb.py"
+        cls.gen.write_text(SHEET_WITH_ADVISORIES, encoding="utf-8")
+        r = _spawn(STEP_CLI, cls.gen, "--force")
+        assert r.returncode == 0, f"build 失敗:\n{r.stdout}\n{r.stderr}"
+        cls.meta = json.loads((cls.dir / ".sb.step.meta.json").read_text(encoding="utf-8"))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.dir, ignore_errors=True)
+
+    def test_sidecar_lists_the_advisories_as_warning_findings(self):
+        found = self.meta["advisories"]
+        self.assertEqual(sorted(f["rule"] for f in found), ["sheet.bend_radius", "sheet.hole_spacing"])
+        for f in found:
+            self.assertEqual(f["status"], "warning")
+            self.assertTrue(f["message"] and f["refs"])
+
+    def test_full_validation_adds_an_advisory_row_that_does_not_fail(self):
+        r = _spawn(VALIDATE, self.gen)
+        out = json.loads(r.stdout.strip().splitlines()[-1])
+        row = {c["id"]: c for c in out["checks"]}["sheet_dfm"]
+        self.assertEqual((row["status"], row["ok"], bool(row.get("skipped"))), ("advisory", True, False))
+        self.assertEqual(row["note"], "2 項建議")
+        self.assertEqual(row["findings"], self.meta["advisories"])   # 與 build sidecar 同一份資料
+        self.assertIs(out["ok"], True)
+        self.assertIs(out["complete"], True)
+
+    def test_a_part_without_advisories_has_no_such_row(self):
+        clean = self.dir / "clean.py"
+        clean.write_text(SHEET_WITH_ADVISORIES.replace("bend_radius=1.0", "bend_radius=2.0").replace("27.0, 20.0", "40.0, 20.0"),
+                         encoding="utf-8")
+        out = json.loads(_spawn(VALIDATE, clean).stdout.strip().splitlines()[-1])
+        self.assertNotIn("sheet_dfm", [c["id"] for c in out["checks"]])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -3,7 +3,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { checkView, decorateChecks, designChecksFromMeta, motionEvent } from "./cad/pipeline.mjs";
+import { checkView, decorateChecks, designChecksFromMeta, fullValidationOk, motionEvent } from "./cad/pipeline.mjs";
+import { verdictFor } from "../lib/validateVerdict.js";
 import { signatureForCheck } from "./lessons.mjs";
 
 const overlap = (a, b, value) => ({
@@ -64,4 +65,37 @@ test("motionEvent:具名姿態與動作序列有宣告才帶;沒有 motion 時�
   const full = motionEvent("rig", { dofs, states: { up: { lift: 1 } }, sequences: { go: ["home", "up"] } });
   assert.deepEqual(full.states, { up: { lift: 1 } });
   assert.deepEqual(full.sequences, { go: ["home", "up"] });
+});
+
+// 鈑金可製造性建議(藍圖 F1):做得出來,但加工廠會提的事。只回報、不擋。
+const ADVISORY = { rule: "sheet.hole_spacing", status: "warning", message: "面板「base」的兩個孔邊到邊只隔 2.00 mm", value: 2, limit: 4, unit: "mm", refs: ["base"] };
+
+test("快路徑:sidecar 有建議就多一列「鈑金可製造性(建議)」,狀態是 advisory;沒有就不多列", () => {
+  const meta = { parts: ["a"], partCount: 1, motion: null, motionErrs: [] };
+  assert.ok(!designChecksFromMeta({ ...meta, advisories: [] }).some((r) => r.id === "sheet_dfm"));
+  assert.ok(!designChecksFromMeta(meta).some((r) => r.id === "sheet_dfm")); // 舊 sidecar 沒有這欄
+  const rows = designChecksFromMeta({ ...meta, advisories: [ADVISORY] });
+  const row = rows[rows.length - 1];
+  assert.deepEqual([row.id, row.status, row.ok, row.skipped, row.note], ["sheet_dfm", "advisory", true, false, "1 項建議"]);
+  const view = checkView(decorateChecks([row])[0]);
+  assert.deepEqual([view.icon, view.status, view.findingCount], ["!", "advisory", 1]);
+  assert.equal(view.findings[0].status, "warning");
+});
+
+test("建議列不擋匯出,也不能單獨讓驗證算通過", () => {
+  const advisory = { id: "sheet_dfm", ok: true, status: "advisory", findings: [ADVISORY] };
+  const pass = { id: "valid_solid", ok: true, status: "ok" };
+  assert.equal(fullValidationOk([pass, advisory]), true);
+  assert.equal(fullValidationOk([{ id: "interference", ok: false, status: "failed" }, advisory]), false);
+  assert.equal(fullValidationOk([{ id: "motion_sweep", ok: true, skipped: true, status: "not_checked" }, advisory]), false);
+  assert.equal(fullValidationOk([advisory]), false); // 只有建議、沒有任何檢查:不算通過
+  assert.equal(fullValidationOk([]), false);
+});
+
+test("驗證卡標題:建議不算通過、不算未驗證,只在尾端提一句", () => {
+  const advisory = { status: "advisory", findings: [ADVISORY, ADVISORY], findingCount: 2 };
+  assert.deepEqual(verdictFor({ ok: true, checks: [{ status: "ok" }, { status: "ok" }, advisory] }), { text: "全部通過 · 2 項建議", tone: "ok" });
+  assert.deepEqual(verdictFor({ ok: true, checks: [{ skipped: true, status: "not_checked" }, advisory] }), { text: "未執行檢查 · 2 項建議", tone: "muted" });
+  assert.deepEqual(verdictFor({ ok: true, checks: [{ status: "ok" }] }), { text: "全部通過", tone: "ok" });
+  assert.deepEqual(verdictFor({ ok: false, checks: [{ ok: false, status: "failed" }, advisory] }), { text: "偵測到問題", tone: "danger" });
 });

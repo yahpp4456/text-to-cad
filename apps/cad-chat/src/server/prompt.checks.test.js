@@ -104,3 +104,9 @@ test("看圖工具只在設計類模式:草模與零件庫的提示不提它", (
     assert.ok(!other.includes("cad_snapshot"));
   }
 });
+
+test("鈑金可製造性建議:prompt 說明它不是錯誤、不要為它重試、收尾要告訴使用者", () => {
+  assert.match(design, /鈑金可製造性\(建議\)/);
+  assert.match(design, /不要為它重試/);
+  assert.match(design, /在收尾用一句話告訴使用者有哪幾項/);
+});

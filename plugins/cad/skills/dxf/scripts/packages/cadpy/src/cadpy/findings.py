@@ -4,7 +4,8 @@ import math
 from dataclasses import dataclass
 
 
-STATUSES = ("ok", "failed", "not_checked")
+# "warning" is a recommendation that is not met: reported, never blocking.
+STATUSES = ("ok", "failed", "not_checked", "warning")
 RULES = {
     "solid.invalid": "零件不是有效實體",
     "interference.overlap": "兩個零件重疊,且沒有宣告為接觸",
@@ -15,6 +16,14 @@ RULES = {
     "motion.sweep_error": "行程掃掠執行失敗",
     "motion.penetration": "行程中兩個零件穿透",
     "motion.unmeasured": "行程沒有掃完",
+    # 鈑金可製造性建議(cadpy.parts.SheetMetal.advisories):做得出來,但加工廠會提出的事
+    "sheet.thickness": "板厚超出建議範圍",
+    "sheet.bend_radius": "內折彎半徑小於板厚",
+    "sheet.bend_radius_max": "內折彎半徑過大,一刀折不出來",
+    "sheet.hem_return": "摺邊回折長過短",
+    "sheet.hole_diameter": "孔徑小於板厚",
+    "sheet.hole_spacing": "孔與孔太近",
+    "sheet.flat_size": "展開尺寸超過板材",
 }
 
 
@@ -58,7 +67,7 @@ class Finding:
 
 
 def sort_key(finding: Finding) -> tuple:
-    priority = ("failed", "not_checked", "ok").index(finding.status)
+    priority = ("failed", "not_checked", "warning", "ok").index(finding.status)
     value = finding.value
     missing = value is None or math.isnan(value)
     return priority, missing, 0.0 if missing else -value, finding.rule, finding.refs
@@ -130,7 +139,27 @@ def sweep_findings(hits, *, tol=0.05) -> list[Finding]:
     return sorted(findings, key=sort_key)
 
 
+def advisory_findings(advisories) -> list[Finding]:
+    """Recommendations (``SheetMetal.advisories()`` dicts) as ``warning`` findings.
+
+    An entry that does not name a known rule is dropped rather than raised on:
+    advisories are harvested from a built shape and must never fail a build.
+    """
+    findings = []
+    for item in advisories or ():
+        try:
+            findings.append(Finding(
+                str(item["rule"]), "warning", str(item["message"]),
+                value=item.get("value"), limit=item.get("limit"), unit=item.get("unit"),
+                refs=tuple(item.get("refs") or ()),
+            ))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return sorted(findings, key=sort_key)
+
+
 def summarize(findings) -> str:
+    """``failed`` beats ``not_checked`` beats ``ok``; a ``warning`` does not change the verdict."""
     status = "ok"
     for finding in findings:
         if finding.status == "failed":
