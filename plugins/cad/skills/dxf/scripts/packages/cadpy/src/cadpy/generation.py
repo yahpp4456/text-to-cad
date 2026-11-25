@@ -1228,22 +1228,32 @@ def _harvest_sweep_view(module: object) -> dict[str, object] | None:
 def _harvest_build_meta(module: object, raw_payload: object) -> dict[str, object]:
     """從已執行過的 gen_step 收割模組層 MOTION + parts labels(cad-chat sidecar)。
 
-    純資料收割:label 取法(``_as_named_parts``)與正規化(``cadpy.motion_decl``)
-    都和 cad-chat 的 validate harness 同源,build 側 sidecar 與 validate.py 不可能
-    分歧。不做幾何運算(bbox/faceCount 在此不可得,刻意不算)。
+    label 取法(``_as_named_parts``)與正規化(``cadpy.motion_decl``)都和 cad-chat 的
+    validate harness 同源,build 側 sidecar 與 validate.py 不可能分歧。
+
+    ``summary`` 是每個零件的量測摘要(包絡、體積、面數、與位置無關的幾何鍵;
+    ``cadpy.build_delta``),cad-chat 拿它與上一版比對出「這版改了什麼」。它是附加
+    欄位:量不到的零件各自帶 error,整份摘要算不出來時為 None,都不影響其餘欄位。
     """
+    from cadpy.build_delta import build_summary
     from cadpy.geometry_checks import _as_named_parts
     from cadpy.motion_decl import normalize_motion, playback_motion
 
     try:
-        labels = [name for name, _ in _as_named_parts(raw_payload)]
+        named = list(_as_named_parts(raw_payload))
     except Exception:  # noqa: BLE001 — 鏡射 validate.py 的 ("part", payload) fallback
-        labels = ["part"]
+        named = [("part", raw_payload)]
+    labels = [name for name, _ in named]
     motion, errs = normalize_motion(getattr(module, "MOTION", None), labels)
+    try:
+        summary = build_summary(named)
+    except Exception:  # noqa: BLE001 — build_summary 本身不拋;這層只防意外
+        summary = None
     return {
         "schemaVersion": BUILD_META_SCHEMA_VERSION,
         "parts": labels,
         "partCount": len(labels),
+        "summary": summary,
         "motion": playback_motion(motion),
         "motionErrs": errs,
         "sweepPaths": _harvest_sweep_paths(module),

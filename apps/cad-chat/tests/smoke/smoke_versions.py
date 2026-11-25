@@ -29,6 +29,10 @@ sid = j.get("sessionId")
 name = j.get("name")
 v1 = j.get("version") or {}
 c.check("v1 glbUrl 指快照路徑", "versions%2Fv1" in (v1.get("glbUrl") or ""), v1.get("glbUrl", ""))
+# 建置差異摘要(藍圖 B3):第一版沒有上一版可比,只列現況(件數 + 包絡)
+import re as _re
+c.check("v1 帶差異摘要:沒有上一版 → 只列件數與包絡", bool(_re.match(r"^\d+ 件,包絡 [\d.]+×[\d.]+×[\d.]+ mm$", v1.get("delta") or "")),
+        repr(v1.get("delta")))
 wd = os.path.join(REPO, "models", ".cadchat", sid)
 snap1 = os.path.join(wd, "versions", "v1")
 need = [f".{name}.step.glb", f"{name}.py", f"{name}.step", "meta.json"]
@@ -98,6 +102,7 @@ rj = json.loads(post("/api/revert-version", {"sessionId": sid, "ver": "v1"}))
 c.check("revert ok", rj.get("ok") is True, str(rj)[:200])
 v2 = rj.get("version") or {}
 c.check("revert 產生 v2", v2.get("id") == "v2", str(v2)[:120])
+c.check("v2 差異摘要:回退到 v1 的幾何 → 與上一版(v1)相同", (v2.get("delta") or "").startswith("與上一版相同("), repr(v2.get("delta")))
 c.check("revert from=v1", rj.get("from") == "v1")
 c.check("頂層 py == v1 快照(真回退,標記消失)", sha(top_py) == py1)
 c.check("v2 glbUrl 指 versions/v2", "versions%2Fv2" in (v2.get("glbUrl") or ""), v2.get("glbUrl", ""))

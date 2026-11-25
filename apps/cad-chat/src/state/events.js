@@ -144,6 +144,7 @@ export function handleEvent(dispatch, type, data = {}) {
           flatGlbUrl: data.flatGlbUrl ?? null, // 鈑金件(有 gen_flat)→ 摺疊/攤平即時切換
           flatLinesUrl: data.flatLinesUrl ?? null, // 折彎線 sidecar → 攤平態虛線 overlay
           sweepPathsUrl: data.sweepPathsUrl ?? null, // 掃出路徑 sidecar → 3D 路徑虛線 overlay
+          delta: typeof data.delta === "string" ? data.delta : "", // 與上一版的差異摘要(一行字)
           projectDir: data.projectDir ?? null, // 唯讀檢視版的升級目錄(一般產出=null)
           sceneUrl: data.sceneUrl ?? null, // 草模場景 JSON(type:"sketch";CAD 版=null)
           dofs: Array.isArray(data.dofs) ? data.dofs : undefined, // 草模 DOF 摘要

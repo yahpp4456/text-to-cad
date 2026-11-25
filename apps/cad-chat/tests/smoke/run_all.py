@@ -59,6 +59,7 @@ LLM_GATED = [
     "smoke_image_clarify_live.py",
     "smoke_sheetmetal_live.py",
     "smoke_checks_live.py",  # 使用者給的數字要在 check_geometry 裡量幾何驗(讀產生的 .py)
+    "smoke_delta_live.py",  # 建置差異摘要在真回合裡說實話(加一個孔 → 只說那塊板改了)
     "smoke_canvas_context_live.py",
     "smoke_lesson_offer_live.py",
     "smoke_sketch_live.py",

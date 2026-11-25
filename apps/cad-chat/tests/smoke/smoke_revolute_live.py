@@ -5,7 +5,7 @@ turn 走到呈現;掃掠驗證(收斂單一快路徑後回合內一律 skip)改�
 /api/validate 斷真跑。CADCHAT_SMOKE_LLM=1 才跑(見 run_all)。"""
 import json
 
-from _util import Checker, post, sse_events
+from _util import Checker, chat_until_version, post
 
 PROMPT = (
     "做一個最簡單的鉸鏈組合件:一片固定底座板 + 一片門板,門板繞世界 Y 軸旋轉 0~90 度開闔。"
@@ -14,10 +14,10 @@ PROMPT = (
 )
 
 c = Checker()
-raw = post("/api/chat", {"message": PROMPT}, timeout=600)
-evs = sse_events(raw)
+run = chat_until_version(PROMPT, timeout=600)
+evs = run.events
 kinds = [e for e, _ in evs]
-print(f"  [info] SSE events: {len(evs)}  kinds={sorted(set(kinds))}")
+print(f"  [info] SSE events: {len(evs)}  kinds={sorted(set(kinds))}  turns={run.turns}")
 
 motions = [d for e, d in evs if e == "motion" and d.get("dofs")]
 rev = [dof for m in motions for dof in m.get("dofs", []) if dof.get("type") == "revolute"]

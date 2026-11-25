@@ -134,6 +134,18 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `PYTHONUTF8=1 .venv/Scripts/python.exe scripts/dev/regress_fixtures.py --pipeline --jobs 6 --out tmp/regress/<名>.json [--compare tmp/regress/<基準>.json]`
   (~15 分;`--python` 可指定另一個 venv 的直譯器)。**`smc_cg1_cylinder` 與
   `smc_cq2_cylinder` 的 validate 原本就不通過**,不是你弄壞的。
+- **建置差異摘要(2026-11-25,藍圖 B3)**:量測在 `cadpy/build_delta.py`(build 收割寫進 sidecar 的
+  `summary`),比對與成句在 `src/lib/buildDelta.js`,接線在 `pipeline.mjs`(`buildDeltaText`、
+  `versionDeltaText`)。動量測 → 先 sync-vendored,再 `test_build_delta.py` + `tests/test_build_meta.py`;
+  動比對或句型 → `buildDelta.test.js` + `pipeline.delta.test.js`(句子逐字鎖,改措辭兩邊一起改)+
+  `smoke_versions.py` / `smoke_open_project.py`;動 prompt 那兩行 → `prompt.checks.test.js` + L4
+  `smoke_delta_live.py`。`version` 物件新增欄位時 SSE 路徑要在 `events.js` 透出(JSON 路徑的
+  open-project / revert 是整個物件直傳,不必另外帶)。
+- **真回合煙測要能在會先提問的 provider 下跑(2026-11-25)**:Codex 即使題目寫了「不要澄清」也常先問
+  一次。`_util.chat_until_version` 會在同一對話回答一次再繼續(最多三輪),新的 `_live` 煙測一律用它
+  送建模訊息,不要直接 `post("/api/chat")` 後就斷 version。讀產生器原始碼做斷言時不要假設寫法
+  (Codex 把斷言包進區域小函式重複呼叫;`smoke_checks_live.py` 兩種都認)。以 Codex 跑:測試實例
+  啟動時設 `CADCHAT_PROVIDER=codex`;免 LLM 的煙測不要設(會進本機啟動器模式,頁面載入時接續上次對話)。
 - **OCP 7.9 與 OCP 8 都要能跑(2026-11-25)**:開發環境與 Linux VM 是
   各自安裝的 Python,不會同時升級。寫 OCP 程式碼的三條規矩(README「Kernel 版本」章):
   集合類別從 `cadpy.kernel.ocp_compat` import(不要直接 `from OCP.TopTools import TopTools_…`);
@@ -146,7 +158,12 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   整個 cad-chat 換直譯器:`CADCHAT_PYTHON_EXE=<abs>/python.exe npm run dev`。
 - **`smoke_open_project` / 回灌類斷言的偶發(2026-11-25 再確認)**:同一實例連跑三次只有第一次
   紅、或整套裡紅一次而單跑三次全綠——先重跑該支,不要急著改產品。`smoke_open_project` A 段
-  「數 `.fb-projrow`」已補上等待(清單內容非同步載入);`smoke_library_mode` E 段回灌仍可能偶發。
+  「數 `.fb-projrow`」已補上等待(清單內容非同步載入)。`smoke_library_mode` E 段回灌的原因已查出
+  並修掉:在舊頁面寫 localStorage 再 reload,會被該頁的持久化 effect(500ms throttle)蓋回去,
+  重整後還原到的是前幾段留下的對話(約三次一次)。**要種「重整後還原」用的快照,一律用
+  `page.add_init_script` 在新頁面載入之初寫入,並用 sessionStorage 旗標限定只種一次**,不要在舊
+  頁面 `page.evaluate(localStorage.setItem…)` 後 reload。同一支的 F 段(書架離屏縮圖
+  `wait_for_function` 120 秒逾時)仍約六次一次,原因未查。
   另一種:斷言全綠、最後存證用的 `page.screenshot` 卻 `Timeout 30000ms`(無頭 WebGL 截圖卡住,
   `smoke_measure` 遇過)——同樣重跑即可。**整套跑完有紅,先看是不是「單支重跑三次全綠」**:
   是的話記為偶發並在交付時如實說明,不是的話才是真問題。

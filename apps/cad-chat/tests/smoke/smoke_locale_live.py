@@ -59,7 +59,10 @@ def main():
         },
     )
     text = ai_text(raw)
-    C.check("A: 有 AI 文字", len(text) > 20, text[:80])
+    # 沒有文字時把收到的事件種類與錯誤訊息印出來(否則只看得到「沒有文字」,查不出原因)
+    kinds = sorted({ev for ev, _ in sse_events(raw)})
+    errors = [str(d.get("message", d))[:160] for ev, d in sse_events(raw) if ev == "error"]
+    C.check("A: 有 AI 文字", len(text) > 20, text[:80] or f"kinds={kinds} errors={errors} raw={raw[:160]!r}")
     if text:
         conv = to_hans(text)
         C.check("A: AI 文字已是簡體(twp→cn 轉換冪等)", conv == text, f"差異示例:{next((a+'→'+b for a,b in zip(text,conv) if a!=b), '')}")

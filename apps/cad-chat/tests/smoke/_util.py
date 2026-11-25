@@ -90,6 +90,49 @@ def sse_events(raw):
     return out
 
 
+FOLLOW_UP = "尺寸與條件照我給的,其餘你決定。不要再提問,現在直接做完到呈現。"
+
+
+class ChatRun:
+    """chat_until_version 的結果:events = 各輪事件依序串接;last = 最後一輪的事件。"""
+
+    def __init__(self, sid, events, last, turns):
+        self.sid, self.events, self.last, self.turns = sid, events, last, turns
+
+    @property
+    def versions(self):
+        return [d for e, d in self.events if e == "version"]
+
+    @property
+    def kinds(self):
+        return sorted({e for e, _ in self.events})
+
+    def ai_text(self, last_only=False):
+        return "\n".join(d.get("text", "") for e, d in (self.last if last_only else self.events) if e == "ai")
+
+
+def chat_until_version(message, *, session_id=None, follow=FOLLOW_UP, max_turns=3, timeout=900):
+    """送一輪建模訊息;模型若先提問(該輪沒有 version 事件)就在同一對話回答後續跑。
+
+    題目都已寫明「不要澄清」,但有的 provider(Codex)仍會先問一次。這不是這些煙測要驗的事,
+    所以回答一次讓它繼續,最多 max_turns 輪;仍沒走到呈現就照實回傳(versions 為空,由呼叫端斷)。
+    """
+    sid, events, last, turns = session_id, [], [], 0
+    text = message
+    for _ in range(max_turns):
+        body = {"message": text}
+        if sid:
+            body["sessionId"] = sid
+        last = sse_events(post("/api/chat", body, timeout=timeout))
+        turns += 1
+        events.extend(last)
+        sid = next((d.get("sessionId") for e, d in last if e == "session"), sid)
+        if any(e == "version" for e, _ in last):
+            break
+        text = follow
+    return ChatRun(sid, events, last, turns)
+
+
 REVIEW_VIEWS = (("home", "iso"), ("yNeg", "front"), ("z", "top"), ("x", "right"))
 
 

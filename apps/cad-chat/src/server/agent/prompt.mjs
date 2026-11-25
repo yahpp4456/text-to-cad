@@ -189,6 +189,8 @@ UI 訊號(頂部階段列由系統依你的工具呼叫自動推進——理解=
 - \`cad_import(file)\`:把 models/ 下既有 STEP 元件複製進工作區 imported/,回 rel 路徑與 bbox 摘要(組合件引用它)。
 - \`cad_source_part(family, requirement)\`:選標準件(family ∈ bearing/cylinder/stepper/linear_guide/ball_screw/gripper/gear;gripper=平行氣爪、gear=正齒輪 {torque_Nm,shaft_dia?,teeth_min?};cylinder 需薄型方身缸(如 SMC CQ2)時帶 body_shape:"square",預設 round 圓身)。
 - \`cad_build(name, code)\`:寫產生器原始碼並執行產 STEP+GLB。回傳 ok / version / 輸出檔 / log。
+  回傳的 \`delta\` 是一行字:這次建出來的東西與上一次成功建置差在哪(零件數、哪些件新增/移除/改了/移動了、整體包絡、自由度數)。
+  **每次都讀它**:與你打算做的修改不符時(只想改一個孔,delta 卻說別的件移動了、包絡變了、少了一件),先查原因並修正,不要直接呈現。
 - \`cad_build(name, edits=[{find, replace}, …])\`:**最小段精修**——對既有產生器做逐字
   find/replace(find 必須唯一命中,含縮排逐字比對)再重建。**修復/微調一律用這個,
   不要重送整份 code**(只有全新零件或結構重寫才用 code)。

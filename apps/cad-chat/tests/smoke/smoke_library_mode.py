@@ -294,9 +294,14 @@ try:
             "motion": None,
             "savedAt": 1,
         }
-        page.evaluate(
-            "(s) => { localStorage.setItem('cadchat.session.v1', JSON.stringify(s)); localStorage.setItem('cadchat.mode', 'library'); }",
-            snap,
+        # 快照要在「新頁面載入之初」寫入,不能在舊頁面上寫了再 reload:舊頁面的持久化 effect
+        # (500ms throttle)可能在這兩步之間把目前的對話狀態寫回同一個 key,蓋掉剛種的快照——
+        # 重整後還原到的就是前面幾段留下的對話(實測約三次中一次)。init script 在每次導覽的
+        # 文件一開始就跑,所以用 sessionStorage 旗標限定只種這一次。
+        page.add_init_script(
+            "(() => { if (sessionStorage.getItem('__seedE')) return; sessionStorage.setItem('__seedE', '1');"
+            f" localStorage.setItem('cadchat.session.v1', JSON.stringify({json.dumps(snap)}));"
+            " localStorage.setItem('cadchat.mode', 'library'); })()"
         )
         page.reload()
         page.wait_for_selector('.mode-seg[data-mode="library"][data-on="true"]', timeout=20000)
@@ -305,10 +310,12 @@ try:
         c.check(
             "E: 對話回灌(RESTORE 走 library 產物守衛)",
             "收進零件庫" in page.locator(".conv-scroll").inner_text(),
+            " | ".join(page.locator(".conv-scroll").inner_text()[:200].split()),
         )
         c.check(
             "E: 畫布 glbUrl 回灌(nameplate 顯示模型名)",
             "cdq2" in page.locator(".canvas").inner_text().lower(),
+            " | ".join(page.locator(".canvas").inner_text()[:160].split()),
         )
         c.check(
             "E: 已有對話 → 硬閘不鎖(訪談要能接著打字)",

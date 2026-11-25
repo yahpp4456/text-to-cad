@@ -11,29 +11,19 @@ assert 假失敗。也斷收尾有交代這回沒跑的檢查。CADCHAT_SMOKE_LL
 import os
 import re
 
-from _util import Checker, REPO, post, sse_events
+from _util import Checker, REPO, chat_until_version
 
 PROMPT = (
     "做一個圓法蘭:外徑 40mm、厚 8mm,中心通孔直徑 12mm,孔心圓直徑 30mm 上均布 6 個直徑 5.5mm 的通孔。"
     "尺寸都給了,不要澄清,直接做完到呈現。"
 )
-FOLLOW = "尺寸照我給的,其餘你決定。不要再提問,現在直接建模並呈現。"
 # 量的是做出來的幾何:包絡、體積/面積、面/邊/頂點的數量、圓邊的半徑或圓心。
 MEASURES = re.compile(r"bounding_box|\bsize\.|\.volume|\.area|faces\(|edges\(|vertices\(|\.radius|arc_center|len\(")
 
 c = Checker()
-sid, vers, evs, message, retries = None, [], [], PROMPT, 0
-for _turn in range(3):
-    body = {"message": message}
-    if sid:
-        body["sessionId"] = sid
-    evs = sse_events(post("/api/chat", body, timeout=1200))
-    sid = next((d.get("sessionId") for e, d in evs if e == "session"), sid)
-    retries += sum(1 for e, _ in evs if e == "retry")
-    vers = [d for e, d in evs if e == "version"]
-    if vers:
-        break
-    message = FOLLOW
+run = chat_until_version(PROMPT, timeout=1200)
+sid, vers, evs = run.sid, run.versions, run.last
+retries = sum(1 for e, _ in run.events if e == "retry")
 
 c.check("turn 走到呈現(version)", bool(sid) and bool(vers), f"sid={sid}")
 if not vers:
@@ -46,18 +36,47 @@ match = re.search(r"^def check_geometry\(.*?(?=^\S|\Z)", src, re.S | re.M)
 body_src = match.group(0) if match else ""
 # 一條 assert 可能用反斜線續行:先接回一行再數
 joined = re.sub(r"\\\n\s*", " ", body_src)
-asserts = [line.strip() for line in joined.splitlines() if line.strip().startswith("assert ")]
-measuring = [a for a in asserts if MEASURES.search(a)]
-print("  [info] check_geometry 的 assert:")
-for a in asserts:
+lines = joined.splitlines()
+asserts = [line.strip() for line in lines if line.strip().startswith("assert ")]
+
+
+def _indent(line):
+    return len(line) - len(line.lstrip())
+
+
+# 斷言的寫法不限:直接寫 assert,或包進一個區域小函式(def near(量到的, 應為, 名稱): assert …)
+# 重複呼叫——後者每呼叫一次等於一條斷言。
+helpers = set()
+for i, line in enumerate(lines):
+    m = re.match(r"\s+def (\w+)\(", line)
+    if not m:
+        continue
+    block = []
+    for nxt in lines[i + 1:]:
+        if nxt.strip() and _indent(nxt) <= _indent(line):
+            break
+        block.append(nxt)
+    if any(b.strip().startswith("assert ") for b in block):
+        helpers.add(m.group(1))
+LITERAL_FIRST_ARG = re.compile(r"\(\s*(?:[-\d.]|PARAMS\[|p\[)")  # 第一個引數是常數或參數 = 沒在量東西
+calls = []
+for line in lines:
+    s = line.strip()
+    for h in helpers:
+        m = re.match(rf"{h}(\(.*)", s)
+        if m and not LITERAL_FIRST_ARG.match(m.group(1)):
+            calls.append(s)
+measuring = [a for a in asserts if MEASURES.search(a)] + calls
+print(f"  [info] check_geometry 的斷言:直接 assert {len(asserts)} 條、經小函式 {sorted(helpers)} 呼叫 {len(calls)} 次")
+for a in (asserts + calls)[:14]:
     print("    " + a[:150])
 
 c.check("產生器有 check_geometry", bool(body_src), py)
 c.check("check_geometry 仍呼叫 assert_valid_solid", "assert_valid_solid" in body_src)
-c.check("至少 3 條 assert 是量幾何的(包絡/體積/數量/圓邊…)", len(measuring) >= 3, f"{len(measuring)} / {len(asserts)}")
+c.check("至少 3 條斷言是量幾何的(包絡/體積/數量/圓邊…)", len(measuring) >= 3, f"{len(measuring)} / {len(asserts) + len(calls)}")
 c.check("量到的值與 PARAMS 比,不是把字面常數互比", any("PARAMS" in a or re.search(r"\bp\[", a) for a in measuring),
         str(measuring[:2])[:200])
-c.check("assert 訊息寫出量到多少(f-string 帶量測值)", any(re.search(r'f"[^"]*\{', a) for a in measuring))
+c.check("assert 訊息寫出量到多少(f-string 帶量測值)", any(re.search(r'f"[^"]*\{', a) for a in asserts))
 c.check("build 沒有被這些 assert 假擋下(自修重試 ≤ 1 次)", retries <= 1, f"retries={retries}")
 c.check("PARAMS 含使用者給的五個數字",
         all(re.search(rf"\b{v}(\.0)?\b", src.split("def ")[0]) for v in ("40", "8", "12", "30", "6")),

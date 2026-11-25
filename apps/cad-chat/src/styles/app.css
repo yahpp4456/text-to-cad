@@ -3263,6 +3263,15 @@
 .version-chip[data-active="true"] .version-id {
   color: var(--text);
 }
+/* 與上一版的差異摘要:一行、過長截斷(完整內容在版本卡的 title) */
+.version-delta {
+  font-size: 10px;
+  color: #5b6577;
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .version-name {
   font-family: var(--font-eyebrow);
   font-size: 9px;

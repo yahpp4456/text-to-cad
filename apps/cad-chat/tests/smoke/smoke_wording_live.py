@@ -14,7 +14,7 @@ import json
 import os
 import subprocess
 
-from _util import Checker, REPO, post, sse_events
+from _util import Checker, REPO, chat_until_version, post, sse_events
 
 c = Checker()
 
@@ -39,11 +39,12 @@ def leaks(txt):
 
 
 # (1) 設計回合
-evs = sse_events(post("/api/chat", {"message": (
+run1 = chat_until_version((
     "做一個鈑金長方形盒子:板厚 1.5mm、內折彎半徑 2mm,底板 100×60mm,四邊 90 度立邊外高 30mm。"
     "不要澄清、用合理假設直接做完到呈現,呈現後用三句話總結你做了什麼、怎麼驗證的。"
-)}, timeout=900))
-sid = next((d.get("sessionId") for e, d in evs if e == "session"), None)
+), follow="尺寸照我給的,其餘你決定。不要再提問,現在直接做完到呈現,呈現後用三句話總結你做了什麼、怎麼驗證的。", timeout=900)
+evs = run1.events  # 含先提問的那一輪:它的文字也不得洩漏內部詞
+sid = run1.sid
 t1 = ai_text(evs)
 c.check("Q1 走到呈現(version 事件)", bool(sid) and any(e == "version" for e, _ in evs), f"sid={sid}")
 c.check("Q1 回覆有內容(三句總結)", len(t1) > 60, t1[:120])

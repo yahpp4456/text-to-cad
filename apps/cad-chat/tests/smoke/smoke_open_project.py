@@ -75,6 +75,11 @@ with sync_playwright() as p:
     # (range 只剩草模 DofBar,見 smoke_sketch.py)
     page.wait_for_selector(".param .numfield input", timeout=15000)
     c.check("A: PARAMS 出現數值輸入欄", page.locator(".param .numfield input").count() >= 3)
+    # 建置差異摘要(藍圖 B3):選中的版本卡展開一行;沒有上一版 → 件數與包絡
+    delta_el = page.locator(".version-chip[data-active='true'] [data-testid='version-delta']")
+    c.check("A: 選中的版本卡顯示差異摘要(件數+包絡)",
+            delta_el.count() == 1 and "件,包絡" in delta_el.inner_text(),
+            delta_el.inner_text() if delta_el.count() else "(無)")
     labels = [page.locator(".param-label").nth(i).inner_text()
               for i in range(page.locator(".param-label").count())]
     c.check("A: 無 folded 滑桿(攤平改視圖切換)",

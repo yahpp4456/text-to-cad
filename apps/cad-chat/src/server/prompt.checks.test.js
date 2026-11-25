@@ -61,3 +61,8 @@ test("草模與零件庫模式不帶這些建模規則(它們不寫產生器)", 
     assert.ok(!other.includes("使用者給的數字,在 check_geometry 裡對做出來的形狀驗"), mode);
   }
 });
+
+test("建置差異摘要:prompt 交代 cad_build 回傳的 delta 是什麼、對不上時要先查原因", () => {
+  assert.match(design, /回傳的 `delta` 是一行字/);
+  assert.match(design, /與你打算做的修改不符時.*先查原因並修正,不要直接呈現/);
+});

@@ -48,6 +48,21 @@ class BuildMetaSidecarE2E(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(WORKDIR, ignore_errors=True)
 
+    def test_sidecar_summary(self):
+        """每個零件的量測摘要(建置差異摘要的資料來源):與 parts 逐一對應,全部量得到。"""
+        summary = self.meta["summary"]
+        self.assertEqual(summary["partCount"], self.meta["partCount"])
+        self.assertEqual([p["name"] for p in summary["parts"]], self.meta["parts"])
+        self.assertEqual([p for p in summary["parts"] if "error" in p], [])
+        for part in summary["parts"]:
+            self.assertRegex(part["key"], r"^[0-9a-f]{12}$")
+            self.assertGreater(part["volume"], 0)
+            lo, hi = part["bbox"]
+            self.assertTrue(all(a < b for a, b in zip(lo, hi)), part)
+        lo, hi = summary["bbox"]
+        self.assertTrue(all(lo[k] <= p["bbox"][0][k] and hi[k] >= p["bbox"][1][k]
+                            for p in summary["parts"] for k in range(3)))
+
     def test_sidecar_content(self):
         self.assertEqual(self.meta["schemaVersion"], 1)
         self.assertEqual(self.meta["partCount"], len(self.meta["parts"]))

@@ -7,7 +7,7 @@ gen_dxf(禁手疊方塊/手繪 ezdxf;folded 不進 PARAMS);(b) version 事件 ha
 import json
 import os
 
-from _util import Checker, REPO, post, sse_events
+from _util import Checker, REPO, chat_until_version, post, sse_events
 
 PROMPT = (
     "做一個鈑金 U 型支架:板厚 2mm、內折彎半徑 3mm,底板 60×40mm,"
@@ -16,14 +16,16 @@ PROMPT = (
 )
 
 c = Checker()
-raw = post("/api/chat", {"message": PROMPT}, timeout=600)
-evs = sse_events(raw)
+run = chat_until_version(PROMPT, timeout=600)
+evs = run.events
 kinds = [e for e, _ in evs]
-print(f"  [info] SSE events: {len(evs)}  kinds={sorted(set(kinds))}")
+print(f"  [info] SSE events: {len(evs)}  kinds={sorted(set(kinds))}  turns={run.turns}")
 
 sid = next((d.get("sessionId") for e, d in evs if e == "session"), None)
 vers = [d for e, d in evs if e == "version"]
 c.check("turn 走到呈現(version)", bool(sid) and bool(vers), f"sid={sid}")
+if not vers:
+    c.finish()  # 沒有產物,後面全是連帶失敗
 name = vers[-1].get("name") if vers else None
 
 # (a) 產生器契約:SheetMetal + gen_dxf,禁手疊/手繪

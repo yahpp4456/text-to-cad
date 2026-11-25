@@ -235,7 +235,14 @@ export function buildCadchatServer({ session, emit, signal }) {
               { path: `.${part}.step.glb`, kind: "glb" },
             ],
           });
-          return result({ ok: true, name: part, stepRel: res.stepRel, log: (res.log || "").slice(-1200) });
+          // delta:這次建出來的東西與上一次成功建置的差異(零件數、哪些件改了/移動了、包絡)。
+          return result({
+            ok: true,
+            name: part,
+            stepRel: res.stepRel,
+            ...(res.delta ? { delta: res.delta } : {}),
+            log: (res.log || "").slice(-1200),
+          });
         },
       ),
       tool(

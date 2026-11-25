@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { diffBuildSummaries, formatBuildDelta } from "../../lib/buildDelta.js";
 import { BASE_PATH, DATA_ROOT, resolveMaxSnapshots } from "../config.mjs";
 import { persistSession } from "../sessions.mjs";
 import { checkStamp, hashTree, makeStamp, readStamp, writeStamp } from "./closure.mjs";
@@ -416,11 +417,13 @@ export async function inspectFacts(session, rel, { signal } = {}) {
 // 讀 build 收割 sidecar(`.{name}.step.meta.json`,cadpy generation 寫)。
 // 壞 JSON / 缺檔 / schema 不符 → null(呼叫端退回 spawn fallback,絕不誤用)。
 export function readBuildMeta(session, name) {
+  return readBuildMetaFile(path.join(session.workdir, `.${sanitizeName(name)}.step.meta.json`));
+}
+
+// 同上,直接給檔案路徑(版本快照裡的那一份也用這個讀)。
+function readBuildMetaFile(file) {
   try {
-    const raw = fs.readFileSync(
-      path.join(session.workdir, `.${sanitizeName(name)}.step.meta.json`),
-      "utf8",
-    );
+    const raw = fs.readFileSync(file, "utf8");
     const meta = JSON.parse(raw);
     if (meta?.schemaVersion !== 1 || !Array.isArray(meta.parts)) return null;
     return {
@@ -432,10 +435,44 @@ export function readBuildMeta(session, name) {
       sweepPaths: Array.isArray(meta.sweepPaths) ? meta.sweepPaths : [],
       // 掃出工作窗資料(SWEEP_VIEW;cadpy 收割「任一欄壞=整份 None」)
       sweepView: meta.sweepView && typeof meta.sweepView === "object" ? meta.sweepView : null,
+      // 每個零件的量測摘要(cadpy.build_delta);舊 sidecar 沒有這欄 → null,差異摘要就不出。
+      summary: meta.summary && typeof meta.summary === "object" ? meta.summary : null,
     };
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// 建置差異摘要(藍圖 B3):這次建出來的東西和上一次差在哪——零件數、哪些件新增/移除/
+// 改了/移動了、整體包絡、自由度數。一行字,給 agent(cad_build 的回覆)與使用者(時間軸
+// 版本卡)看同一句。比對是純函數(src/lib/buildDelta.js);量測在 build 時由 cadpy 收割。
+// 用意是讓「我以為只改了一個孔,結果整個件位移了」這種事在建置當下就看得到。
+// ---------------------------------------------------------------------------
+function summaryOf(meta) {
+  if (!meta?.summary) return null;
+  const dofs = Array.isArray(meta.motion?.dofs) ? meta.motion.dofs.length : 0;
+  return { ...meta.summary, dofCount: dofs > 0 ? dofs : null };
+}
+
+// prevMeta 可為 null(沒有上一次)。本次沒有摘要(舊 sidecar、收割失敗)→ 空字串。
+export function buildDeltaText(prevMeta, curMeta) {
+  const cur = summaryOf(curMeta);
+  if (!cur) return "";
+  return formatBuildDelta(diffBuildSummaries(summaryOf(prevMeta), cur));
+}
+
+// 版本卡用:與「上一個含同名產物的版本快照」比。找不到上一版 → 只列件數與包絡。
+function versionDeltaText(session, name, verNum) {
+  const n = sanitizeName(name);
+  const cur = readBuildMeta(session, name);
+  if (!cur?.summary) return "";
+  let prev = null;
+  for (let k = verNum - 1; k >= 1 && k >= verNum - 40 && !prev; k -= 1) {
+    prev = readBuildMetaFile(path.join(snapshotDir(session, k), `.${n}.step.meta.json`));
+    if (prev && !prev.summary) prev = null;
+  }
+  return buildDeltaText(prev, cur).replace(/^首次建置:/, "");
 }
 
 // 掃出路徑預覽 sidecar(`.{name}.sweep.json`):把 meta 收割的 SWEEP_PATHS 落成
@@ -509,6 +546,9 @@ export async function runStep(session, name, { onLog, signal, reuse = false } = 
       };
     }
   }
+  // 差異摘要的比較基準 = 上一次**成功**的建置。記憶體裡沒有(伺服器重啟後)就讀磁碟上
+  // 還在的 sidecar——要在 spawn 之前讀,Python 端一開跑就會把它刪掉。
+  const prevMeta = session._buildPrev?.[n] ?? readBuildMeta(session, name);
   // 要真的重建了:舊憑證與驗證快取描述的是即將被覆寫的產物,先作廢。
   rmQuiet(buildStampPath(session, name));
   rmQuiet(validateCachePath(session, name));
@@ -529,10 +569,14 @@ export async function runStep(session, name, { onLog, signal, reuse = false } = 
   const artifactsOk = ok && fs.existsSync(stepAbs) && fs.existsSync(glbAbs);
   const flatRelVal =
     flatRes && flatRes.code === 0 && fs.existsSync(flatAbs) ? flatGlbRel(session, name) : null;
+  let delta = "";
   if (artifactsOk) {
     const meta = adoptBuild(session, name);
     // 有 sidecar 才寫憑證:沿用產物時要靠 sidecar 還原 session 的 build 資訊。
     if (meta) writeBuildStamp(session, name, [stepRes, flatRes]);
+    delta = buildDeltaText(prevMeta, meta);
+    // 失敗的建置不更新基準:下一次成功時仍與「上一個做得出來的版本」比。
+    if (meta?.summary) (session._buildPrev ||= {})[n] = meta;
   } else {
     // 失敗 build(Python 側已先 unlink sidecar):清掉記憶體 meta,雙保險防 stale。
     if (session.lastBuildMeta?.name === n) session.lastBuildMeta = null;
@@ -546,6 +590,7 @@ export async function runStep(session, name, { onLog, signal, reuse = false } = 
     stepRel: relTarget(session, name, ".step"),
     glbRel: glbRel(session, name),
     flatGlbRel: flatRelVal, // 鈑金攤平預覽 GLB(null = 非鈑金件 / 攤平失敗)
+    delta, // 與上一次成功建置的差異摘要(一行字;沒有摘要可比時為空字串)
     ms: Date.now() - t0,
   };
 }
@@ -1226,6 +1271,7 @@ export function emitPresent(session, name, emit) {
     flatGlbUrl, // 鈑金件(有 gen_flat)→ 前端「摺疊/攤平」即時切換(null=無)
     flatLinesUrl, // 折彎線 sidecar → 攤平態疊虛線 overlay(null=無)
     sweepPathsUrl, // 掃出路徑 sidecar → 3D 視圖路徑中心虛線 overlay(null=無)
+    delta: versionDeltaText(session, name, session.version), // 與上一版的差異摘要(""=無可比)
     ...stamp, // verified(前端 badge / 匯出閘依賴)
   });
   emit("present", { ver, name, code: name, file: stepRel, glbUrl: gUrl, type, flatGlbUrl, flatLinesUrl, sweepPathsUrl });

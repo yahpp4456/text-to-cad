@@ -174,7 +174,8 @@
 | 3 B2 | 部分 | 每列多了 `status`,但還沒有統一的 `Finding{rule, value, limit, refs}` 結構;教訓庫 signature 仍比對訊息文字 |
 | 3 B8 | ✅ 2026-11-25 | 具名診斷:`cadpy/kernel/brep_checks.py`(`probed_statuses` 移植自上游 `checks.py`,另加 `diagnose` / `summarize`)。無效實體的斷言訊息與驗證備註附上「哪個殼/面/線框、什麼問題」,面號即點選 token 的 `fN`;訊息開頭不變,教訓庫歸類不受影響(有測試)。OCP 7.9 與 8 都過。限制同藍圖所記:掃出件自交這類 BRepCheck 本來就判 valid 的缺陷,這項幫不上 |
 | 3 B7 / B9 | ✅ 2026-11-25 | 設計 prompt 加兩段:「使用者給的數字,在 check_geometry 裡對做出來的形狀驗」(量幾何再與 PARAMS 比,不重抄常數)與「改了什麼,用什麼檢查」對照表+三條原則。L1 `prompt.checks.test.js` 鎖文字;L4 實測(圓法蘭,給定外徑/厚度/孔數/孔心圓):agent 寫了 7 條斷言——包絡兩向、厚度、體積、每個螺栓孔的孔心半徑、孔數、中心孔存在——一次建置通過,收尾如實說明哪些量過、哪些等精算。鈑金真回合回歸 12/12。對照表依本專案的工具改寫(上游的 `cad model interference` / `dfm` 沒有對應物);草模、零件庫模式不帶 |
-| 3 B3 / B4 其餘 | 未做 | build 差異摘要、干涉的緊箱+分離軸篩選/pair 快取/輔助行程逐對逾時 |
+| 3 B3 | ✅ 2026-11-25 | 建置差異摘要(README 同名章)。`cad_build` 回覆多一個 `delta`、`version` 事件帶 `delta`、時間軸選中的版本卡顯示。與藍圖的差異:① 幾何鍵用體積/表面積/拓樸數量的雜湊,與位置無關,所以「移動」與「改了」分得開;② agent 與使用者看到的比較基準不同(上一次成功的建置 vs 上一個版本快照);③ 量測在 build 收割時做(0.06 秒 / 61 件),沒有另起行程。兩個純函數模組交 Codex 實作 |
+| 3 B4 其餘 | 未做 | 干涉的緊箱+分離軸篩選、pair 快取、輔助行程逐對逾時。2026-11-25 重新剖析 61 件龍門架:四段掃掠各約 0.5 秒、靜態干涉 2.8 秒,大頭是該模型自己的檢查程式每一幀重擺全部零件(每段約 4 秒);這幾項的效益比原先估的小 |
 | 4–7 | 未做 | 機構(具名姿態、關節行程推算)、看圖(離屏渲染)、參照(穩定命名)、製造與圖面(鈑金/CNC DFM、工程圖標註移植) |
 | Electron 桌面版 | 已移除(2026-11-25,Sam 裁決:先不做桌面版) | `electron/`、`electron-builder.yml`、`PACKAGING.md`、bake 注入(`scripts/bake-auth.mjs`、`.env.baked` 載入)、`entry.child.mjs`、asar 的 CLI 路徑改寫與 `b-calm-swing.md` 都拿掉了;磁碟上的安裝檔(`dist-electron/`)、內嵌 Python(`build-runtime/`)與兩個 bake 憑證檔也一併刪除。雙根路徑機制(`CADCHAT_RUNTIME_ROOT` 等)留著,Linux VM 部署在用。原本掛在這裡的兩件待辦(打包版實測 worker、內嵌 runtime 升 OCP 8)隨之取消 |
 

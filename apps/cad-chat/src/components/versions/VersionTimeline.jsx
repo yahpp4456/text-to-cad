@@ -55,6 +55,7 @@ export default function VersionTimeline({
               className="version-chip"
               data-active={v.id === activeVer}
               data-sketch={v.type === "sketch" || undefined}
+              title={v.delta || undefined}
               onClick={() => onSelect(v.id)}
             >
               <span className="version-thumb">
@@ -66,6 +67,10 @@ export default function VersionTimeline({
                   {v.source === "opened" ? " · 檢視" : ""}
                 </span>
                 <span className="version-name">{v.name}</span>
+                {/* 與上一版的差異摘要(伺服端算好的一行字):只在選中的版本卡展開,其餘靠 title */}
+                {v.delta && v.id === activeVer && (
+                  <span className="version-delta" data-testid="version-delta">{v.delta}</span>
+                )}
                 <TypeBadge type={v.type} partCount={v.partCount} />
                 {/* 驗證狀態 badge:三態——undefined(舊資料/opened)不渲染,對齊
                     TypeBadge「未知不出 badge」的誠實慣例 */}
