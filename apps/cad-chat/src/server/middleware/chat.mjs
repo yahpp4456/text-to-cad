@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { isDemoAllowedMode, isDesignLike, isMode } from "../../lib/chatModes.js";
 import { isLocale } from "../../lib/locale.js";
+import { elementProvenance } from "../../lib/partRefs.js";
 import { toHans, warmHans } from "../agent/hans.mjs";
 import { demoReady, orchDefault, resolveAuth, resolveDemoQuota } from "../config.mjs";
 import { demoEventFilter } from "../demoEvents.mjs";
@@ -26,7 +27,10 @@ import {
   decorateChecks,
   motionEvent,
   emitPresent,
+  madeByText,
   paramValuesFromGenerator,
+  partOfRef,
+  readBuildMeta,
   rewriteParams,
   runValidateDesign,
 } from "../cad/pipeline.mjs";
@@ -350,10 +354,27 @@ export function buildUserText(body, session, img, steps, locale = "zh-Hant") {
         .map((r) => ({
           token: String(r?.token || "").slice(0, 120),
           label: String(r?.label || "").slice(0, 120),
+          part: String(r?.part || "").slice(0, 120),
         }))
         .filter((r) => r.token)
     : [];
-  const fmt = (r) => `${r.token}${r.label && r.label !== r.token ? `「${r.label}」` : ""}`;
+  // 參照所屬零件是產生器哪一行建的(藍圖 C2):agent 不必從幾何描述反推該改哪裡
+  const meta = refs.length && session?.lastName ? readBuildMeta(session, session.lastName) : null;
+  // 點到的是面或邊時再多兩件事(藍圖 C1):這個元素本身是哪一行做的,以及它的穩定參照——
+  // 位置 token 的序號在重建後可能指到別的面,穩定參照說的是「它怎麼做出來的」,不會。
+  const origin = (r) => {
+    const part = meta ? partOfRef(meta, r) : null;
+    if (!part) return "";
+    const bits = [];
+    const made = madeByText(meta, part);
+    if (made) bits.push(`零件 ${part},${made}`);
+    const el = elementProvenance(meta.names, part, r.token);
+    const what = el?.kind === "e" ? "邊" : "面";
+    if (el?.line) bits.push(`這個${what}由 ${el.file} 第 ${el.line} 行做出`);
+    if (el?.stable) bits.push(`重建後要再指這個${what},用 @${part}#~${el.stable}`);
+    return bits.length ? `[${bits.join(";")}]` : "";
+  };
+  const fmt = (r) => `${r.token}${r.label && r.label !== r.token ? `「${r.label}」` : ""}${origin(r)}`;
   if (refs.length > 1) {
     const list = refs.map((r, i) => `  ${i + 1}. ${fmt(r)}`).join("\n");
     const src = session?.lastName ? `,來自 ${session.lastName}.step` : "";

@@ -63,6 +63,16 @@ class BuildMetaSidecarE2E(unittest.TestCase):
         self.assertTrue(all(lo[k] <= p["bbox"][0][k] and hi[k] >= p["bbox"][1][k]
                             for p in summary["parts"] for k in range(3)))
 
+    def test_sidecar_made_by(self):
+        """每個零件是產生器哪一行建的(點選參照時告訴 agent 該改哪裡):對得上零件表、行號落在產生器檔內。"""
+        made = self.meta["madeBy"]
+        self.assertTrue(made, "這個範例用 label_shape 標零件,應該收得到建立位置")
+        self.assertLessEqual(set(made), set(self.meta["parts"]))
+        for name, site in made.items():
+            self.assertTrue(site["file"].endswith(".py"), (name, site))
+            self.assertGreater(site["line"], 0)
+            self.assertNotIn("cadpy", site["file"])
+
     def test_sidecar_content(self):
         self.assertEqual(self.meta["schemaVersion"], 1)
         self.assertEqual(self.meta["partCount"], len(self.meta["parts"]))
@@ -170,6 +180,64 @@ class SheetAdvisoriesE2E(unittest.TestCase):
                          encoding="utf-8")
         out = json.loads(_spawn(VALIDATE, clean).stdout.strip().splitlines()[-1])
         self.assertNotIn("sheet_dfm", [c["id"] for c in out["checks"]])
+
+
+MACHINED_WITH_ADVISORIES = '''
+from build123d import Box, Compound, Cylinder, Pos
+from cadpy.assembly import label_shape
+
+MACHINED = ["plate"]
+
+
+def gen_step():
+    plate = Box(80, 60, 30) - Pos(0, 0, 5) * Box(40, 30, 20)          # 封閉口袋,四個直立尖角
+    cover = Pos(0, 0, 40) * (Box(80, 60, 10) - Pos(0, 0, 0) * Box(40, 30, 10))   # 同樣有尖角,但沒宣告是切削件
+    return Compound(children=[label_shape(plate, "plate"), label_shape(cover, "cover")])
+'''
+
+
+class MachinedAdvisoriesE2E(unittest.TestCase):
+    """切削可製造性建議(藍圖 F3):產生器宣告 MACHINED 的零件才量;build 寫進 sidecar,完整驗證多一列,不擋。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = WORKDIR.with_name(WORKDIR.name + "_cnc")
+        cls.dir.mkdir(parents=True, exist_ok=True)
+        cls.gen = cls.dir / "mp.py"
+        cls.gen.write_text(MACHINED_WITH_ADVISORIES, encoding="utf-8")
+        r = _spawn(STEP_CLI, cls.gen, "--force")
+        assert r.returncode == 0, f"build 失敗:\n{r.stdout}\n{r.stderr}"
+        cls.meta = json.loads((cls.dir / ".mp.step.meta.json").read_text(encoding="utf-8"))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.dir, ignore_errors=True)
+
+    def test_only_the_declared_part_is_measured(self):
+        found = self.meta["advisories"]
+        self.assertEqual([(f["rule"], f["status"], f["refs"]) for f in found],
+                         [("cnc.sharp_internal_corner", "warning", ["plate"])])
+        self.assertEqual(found[0]["value"], 4)
+
+    def test_full_validation_row_is_titled_for_machining_and_does_not_fail(self):
+        out = json.loads(_spawn(VALIDATE, self.gen).stdout.strip().splitlines()[-1])
+        row = {c["id"]: c for c in out["checks"]}["sheet_dfm"]
+        self.assertEqual((row["label"], row["status"], row["ok"]), ("切削可製造性(建議)", "advisory", True))
+        self.assertEqual(row["findings"], self.meta["advisories"])
+        self.assertIs(out["ok"], True)
+
+    def test_an_assembly_whose_root_has_no_label_builds(self):
+        """根沒有 label 的組合件(這個範例就是)以前在讀回模型樹時原生當掉、沒有任何訊息。"""
+        self.assertEqual(self.meta["parts"], ["plate", "cover"])
+        self.assertTrue((self.dir / "mp.step").stat().st_size > 1000)
+
+    def test_without_the_declaration_nothing_is_reported(self):
+        plain = self.dir / "plain.py"
+        plain.write_text(MACHINED_WITH_ADVISORIES.replace('MACHINED = ["plate"]', ""), encoding="utf-8")
+        r = _spawn(STEP_CLI, plain, "--force")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        meta = json.loads((self.dir / ".plain.step.meta.json").read_text(encoding="utf-8"))
+        self.assertEqual(meta["advisories"], [])
 
 
 if __name__ == "__main__":

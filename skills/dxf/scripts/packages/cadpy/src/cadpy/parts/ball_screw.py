@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from cadpy.assembly import label_shape
+from cadpy.part_cache import cached_part
 
 _CLEARANCE = 0.5  # running clearance between nut bore and screw major dia (mm)
 
@@ -46,6 +47,7 @@ def _check_nut_pos(screw_len, nut_len, nut_pos):
     return travel
 
 
+@cached_part
 def ball_screw(
     screw_dia: float,
     lead: float,

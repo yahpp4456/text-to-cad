@@ -136,6 +136,16 @@ def _aabb_overlap_volume(a, b, margin=0.0):
     return v
 
 
+def _advisory_label(advisories):
+    """建議列的標題:全是鈑金規則、全是切削規則,或兩者都有。與 pipeline.mjs 的 advisoryLabel 逐字同步。"""
+    kinds = {str(a.get("rule", "")).split(".")[0] for a in advisories}
+    if kinds == {"sheet"}:
+        return "鈑金可製造性(建議)"
+    if kinds == {"cnc"}:
+        return "切削可製造性(建議)"
+    return "可製造性(建議)"
+
+
 def _read_motion(gen_module, named):
     """驗證+正規化模組層 MOTION。回 (motion|None, errors);無宣告 -> (None, [])。
 
@@ -723,18 +733,18 @@ def main() -> int:
     else:
         checks.append(_run_motion_sweep(named, motion))
 
-    # 4) 鈑金可製造性建議——有才列。這一列永遠是 ok:建議不擋匯出,只是把加工廠會提的事先說出來。
+    # 4) 可製造性建議(鈑金:折彎樹上的規則;切削:產生器宣告 MACHINED 的零件)——有才列。這一列永遠是 ok:建議不擋匯出,只是把加工廠會提的事先說出來。
     #    與快路徑(pipeline.designChecksFromMeta 讀 build sidecar)同一份資料、同一個列形狀。
     try:
         from cadpy.generation import _harvest_advisories
 
-        advisories = _harvest_advisories(payload, named)
+        advisories = _harvest_advisories(payload, named, gen_module)
     except Exception:  # noqa: BLE001
         advisories = []
     if advisories:
         checks.append({
             "id": "sheet_dfm",
-            "label": "鈑金可製造性(建議)",
+            "label": _advisory_label(advisories),
             "ok": True,
             "status": "advisory",
             "note": f"{len(advisories)} 項建議",

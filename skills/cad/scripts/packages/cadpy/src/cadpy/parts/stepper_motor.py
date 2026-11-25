@@ -10,8 +10,10 @@ from __future__ import annotations
 from typing import Any
 
 from cadpy.assembly import label_shape
+from cadpy.part_cache import cached_part
 
 
+@cached_part
 def stepper_motor(
     face: float,
     body_len: float,

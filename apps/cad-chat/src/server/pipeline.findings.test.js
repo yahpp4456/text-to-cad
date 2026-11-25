@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { checkView, decorateChecks, designChecksFromMeta, fullValidationOk, motionEvent } from "./cad/pipeline.mjs";
+import { advisoryLabel, checkView, decorateChecks, designChecksFromMeta, fullValidationOk, motionEvent } from "./cad/pipeline.mjs";
 import { verdictFor } from "../lib/validateVerdict.js";
 import { signatureForCheck } from "./lessons.mjs";
 
@@ -98,4 +98,18 @@ test("驗證卡標題:建議不算通過、不算未驗證,只在尾端提一句
   assert.deepEqual(verdictFor({ ok: true, checks: [{ skipped: true, status: "not_checked" }, advisory] }), { text: "未執行檢查 · 2 項建議", tone: "muted" });
   assert.deepEqual(verdictFor({ ok: true, checks: [{ status: "ok" }] }), { text: "全部通過", tone: "ok" });
   assert.deepEqual(verdictFor({ ok: false, checks: [{ ok: false, status: "failed" }, advisory] }), { text: "偵測到問題", tone: "danger" });
+});
+
+// 切削可製造性建議(藍圖 F3)與鈑金建議共用同一列;標題依規則種類決定(與 validate.py 逐字同步)。
+test("建議列的標題:鈑金、切削、兩者都有", () => {
+  const sheet = { rule: "sheet.hole_spacing", status: "warning", message: "x" };
+  const cnc = { rule: "cnc.sharp_internal_corner", status: "warning", message: "y", refs: ["plate"] };
+  assert.equal(advisoryLabel([sheet]), "鈑金可製造性(建議)");
+  assert.equal(advisoryLabel([cnc, cnc]), "切削可製造性(建議)");
+  assert.equal(advisoryLabel([sheet, cnc]), "可製造性(建議)");
+  assert.equal(advisoryLabel([]), "可製造性(建議)");
+
+  const meta = { name: "p", parts: ["plate"], partCount: 1, motion: null, motionErrs: [] };
+  const row = designChecksFromMeta({ ...meta, advisories: [cnc] }).find((r) => r.id === "sheet_dfm");
+  assert.deepEqual([row.label, row.status, row.ok, row.note], ["切削可製造性(建議)", "advisory", true, "1 項建議"]);
 });

@@ -61,6 +61,7 @@ export function useChatStream(dispatch, modeRef) {
               ? pickRefs.map((r) => ({
                   token: String(r.token || "").slice(0, 120),
                   label: String(r.label || "").slice(0, 120),
+                  ...(r.part ? { part: String(r.part).slice(0, 120) } : {}),
                 }))
               : undefined,
             params: params || undefined,

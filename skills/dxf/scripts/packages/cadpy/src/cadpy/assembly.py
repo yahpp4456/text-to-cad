@@ -1,7 +1,55 @@
 from __future__ import annotations
 
+import os
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
+
+# Where each labelled part was created: label -> {"file", "line", "func"}.
+# Filled by label_shape() from the first caller outside this package, so a part
+# built by a cadpy.parts generator points at the generator-script line that
+# asked for it. Process-wide and keyed by label; the build resets it before a
+# generator runs (workers are long-lived).
+_PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__)) + os.sep
+_MADE_BY: dict[str, dict[str, Any]] = {}
+MADE_BY_MAX = 400
+
+
+def reset_made_by() -> None:
+    _MADE_BY.clear()
+
+
+def made_by() -> dict[str, dict[str, Any]]:
+    """Return a copy of the label -> creation-site map recorded since the last reset."""
+
+    return {label: dict(site) for label, site in _MADE_BY.items()}
+
+
+def record_made_by(labels: Sequence[str]) -> None:
+    """Record ``labels`` as made at the caller's line -- the first frame outside this
+    package. For a part generator that hands back a shape it built earlier: the labels it
+    gave then belong to the line calling it now."""
+    for label in labels:
+        _record_made_by(str(label))
+
+
+def _record_made_by(label: str) -> None:
+    try:
+        frame = sys._getframe(2)
+        while frame is not None and os.path.abspath(frame.f_code.co_filename).startswith(_PACKAGE_DIR):
+            frame = frame.f_back
+        if frame is None or (label not in _MADE_BY and len(_MADE_BY) >= MADE_BY_MAX):
+            return
+        site: dict[str, Any] = {
+            "file": os.path.basename(frame.f_code.co_filename),
+            "line": int(frame.f_lineno),
+        }
+        func = frame.f_code.co_name
+        if func and not func.startswith("<"):
+            site["func"] = func
+        _MADE_BY[label] = site
+    except Exception:  # noqa: BLE001 - provenance is a convenience, never a build failure
+        pass
 
 
 @dataclass(frozen=True)
@@ -42,6 +90,7 @@ def label_shape(
     """Assign native build123d label/color metadata and return the shape."""
 
     shape.label = label_text(name, *details)
+    _record_made_by(shape.label)
     if color is not None:
         shape.color = color
     return shape

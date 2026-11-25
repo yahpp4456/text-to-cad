@@ -462,8 +462,8 @@ export default function App() {
     send({ text: "", params: state.params.values });
   }, [send, state.params.values]);
 
-  const bringToChat = useCallback((token, label) => {
-    dispatch({ type: "ADD_PICKREF", pickRef: { token, label } });
+  const bringToChat = useCallback((token, label, part) => {
+    dispatch({ type: "ADD_PICKREF", pickRef: part ? { token, label, part } : { token, label } });
   }, []);
 
   // 系統訊息進對話流(匯入/開專案的錯誤與提示)。

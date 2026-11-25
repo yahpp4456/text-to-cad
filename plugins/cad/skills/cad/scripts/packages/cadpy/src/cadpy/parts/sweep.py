@@ -60,6 +60,7 @@ import math
 from typing import Any
 
 from cadpy.assembly import label_shape
+from cadpy.part_cache import cached_part
 
 # KCL catalog constants (PDF p.8): plate thickness / depth / hole diameter.
 KCL_PLATE_T = 5.75
@@ -535,6 +536,7 @@ def _finish_swept(body, at, label: str):
     return solid
 
 
+@cached_part
 def swept_solid(
     profile: dict,
     path: dict,
@@ -772,6 +774,7 @@ def default_bend_r(pocket_w: float, *, factor: float = 10.0) -> float:
     return factor * pocket_w / 2.0
 
 
+@cached_part
 def cleanroom_sleeve(
     pockets: int,
     pocket_w: float | list[float] | tuple[float, ...],
@@ -812,6 +815,7 @@ def cleanroom_sleeve(
 # ---------------------------------------------------------------------------
 # KCL end clamps
 # ---------------------------------------------------------------------------
+@cached_part
 def kcl_clamp(
     size: str | None = None,
     *,

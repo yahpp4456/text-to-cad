@@ -14,8 +14,10 @@ from __future__ import annotations
 from typing import Any
 
 from cadpy.assembly import label_shape
+from cadpy.part_cache import cached_part
 
 
+@cached_part
 def deep_groove_bearing(
     bore: float,
     od: float,

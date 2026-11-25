@@ -23,12 +23,14 @@ from __future__ import annotations
 from typing import Any
 
 from cadpy.assembly import label_shape
+from cadpy.part_cache import cached_part
 
 # The rod stays engaged this far (x bore) inside the barrel even fully extended,
 # so the body~rod pair is always intended contact, never a separation defect.
 _ROD_ENGAGE = 0.4
 
 
+@cached_part
 def pneumatic_cylinder(
     bore: float,
     stroke: float,

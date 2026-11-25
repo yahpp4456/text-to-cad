@@ -858,6 +858,12 @@ def _normalize_label_name(raw_name: object) -> str | None:
 
 
 def _label_name(label: object) -> str | None:
+    # Ask first whether the label has a name at all. FindAttribute on a label without one
+    # is an access violation in OCP (7.9 and 8 both), not a False -- and an assembly whose
+    # root was never given a label has exactly such a label, so the whole build died
+    # natively with no message.
+    if label.IsNull() or not label.IsAttribute(TDataStd_Name.GetID_s()):
+        return None
     name = TDataStd_Name()
     if not label.FindAttribute(TDataStd_Name.GetID_s(), name):
         return None

@@ -147,7 +147,7 @@ export default function Composer({
       {pickRefs.length > 0 && (
         <div className="pick-chips">
           {pickRefs.map((r) => (
-            <span className="pick-chip" key={r.token}>
+            <span className="pick-chip" key={r.token} data-part={r.part || undefined}>
               ⊹ {r.label || r.token}
               <a className="pick-clear" onClick={() => onRemovePick?.(r.token)}>
                 ✕

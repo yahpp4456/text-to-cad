@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from cadpy.assembly import label_shape
+from cadpy.part_cache import cached_part
 
 
 def _resolve_dims(
@@ -73,6 +74,7 @@ def _check_body_hosts_jaws(body_l, stroke, jaw_t, min_gap):
         )
 
 
+@cached_part
 def gripper(
     bore: float,
     stroke: float,

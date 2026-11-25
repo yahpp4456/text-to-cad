@@ -348,3 +348,12 @@ export function engineeringRows(node) {
     { k: "數量 QTY", v: "N/A" },
   ];
 }
+
+// 點選 token(#o1.5.f2 / #o1.5)所屬的零件名:取 occurrence 前綴,找掛在它上面的零件節點。
+// 單件模型的 token 沒有 occurrence 前綴(#f3 / #s1)→ null,由 server 依「只有一個零件」補。
+export function partOfToken(nodes, token) {
+  const m = /^#?(o\d+(?:\.\d+)*)/.exec(String(token || ""));
+  if (!m || !Array.isArray(nodes)) return null;
+  const node = nodes.find((x) => x.kind === "shape" && String(x.row?.occurrenceId || "") === m[1]);
+  return node?.label || null;
+}

@@ -7,7 +7,7 @@ import { sequencePose } from "../../lib/cadMotionMath.js";
 
 const SEQUENCE_STEP_S = 1.2; // 動作序列播放:相鄰兩個姿態之間走幾秒
 import { measureBetween } from "../../lib/measureFacts.js";
-import { buildTopologyModel } from "../../lib/cadTopology.js";
+import { buildTopologyModel, partOfToken } from "../../lib/cadTopology.js";
 import {
   closestViewOrientationId,
   normalToFaceAvailability,
@@ -193,7 +193,8 @@ export default function Canvas3D({
   const bringToChat = useCallback(
     (token, label) => {
       if (flatView) return;
-      onBringToChat?.(token, label);
+      // 所屬零件名一起帶(server 據此告訴 agent 這個零件是哪一行建的)
+      onBringToChat?.(token, label, partOfToken(topoRef.current?.nodes, token) || undefined);
     },
     [flatView, onBringToChat],
   );

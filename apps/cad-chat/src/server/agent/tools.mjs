@@ -15,6 +15,7 @@ import {
   importStepIntoSession,
   inspectFacts,
   paramDefsFromGenerator,
+  readBuildMeta,
   runStep,
   runValidate,
   runValidateDesign,
@@ -22,7 +23,11 @@ import {
   sanitizeName,
   writeGenerator,
 } from "../cad/pipeline.mjs";
+import path from "node:path";
+
+import { readOccurrences } from "../cad/occurrences.mjs";
 import { condenseTraceback, spawnPython } from "../cad/python.mjs";
+import { isPartRef, resolveSelector } from "../../lib/partRefs.js";
 import { BASE_PATH, lessonsEnabled } from "../config.mjs";
 import { unescapeNewlines } from "../../lib/clarifyText.js";
 import { makeClarifyGate, makeUiTools, result, toolId } from "./tools.shared.mjs";
@@ -34,6 +39,24 @@ import {
   recordBuildFailure,
   recordCheckFailure,
 } from "../lessons.mjs";
+
+// 工具參數裡用零件名稱寫的參照(@arm / @bolt.2 / @arm#f3;藍圖 C3)→ 位置 token。
+// 沒有任何 @ 參照時不讀檔、原樣通過;對不上或不只一個 → ok:false + 候選,絕不代選。
+// 獨立 export 供 L1 直測。
+export function resolveSelectors(session, part, refs) {
+  const entries = Object.entries(refs);
+  if (!entries.some(([, v]) => isPartRef(v))) return { ok: true, tokens: refs };
+  const occurrences = readOccurrences(path.join(session.workdir, `.${part}.step.glb`));
+  // @零件#~穩定名稱 要查這次建置的名稱表(sidecar);其他寫法用不到,不讀
+  const names = entries.some(([, v]) => String(v).includes("#~")) ? readBuildMeta(session, part)?.names || null : null;
+  const tokens = {};
+  for (const [key, value] of entries) {
+    const r = resolveSelector(value, occurrences, names);
+    if (!r.ok) return { ok: false, error: `${key}: ${r.error}`, candidates: r.candidates };
+    tokens[key] = r.token;
+  }
+  return { ok: true, tokens };
+}
 
 export function buildCadchatServer({ session, emit, signal }) {
   const n = () => session.lastName || "part";
@@ -315,18 +338,24 @@ export function buildCadchatServer({ session, emit, signal }) {
       ),
       tool(
         "cad_measure",
-        "量測兩個幾何參考(selector token,如 #o1.2 / #o1.f3)間的有號距離(read-only)。無法推斷共同軸時會回錯誤,請帶 axis 重試。",
+        "量測兩個幾何參考間的有號距離(read-only)。參考可寫位置 token(#o1.2 / #o1.f3)或零件名稱(@arm、@gantry/arm、同名第 2 個 @bolt.2、arm 的第 3 個面 @arm#f3);名稱對不上或不只一個時會列出候選。使用者點選時附的穩定參照(@arm#~3fa9c2d1e0)也可直接用,它在重建後仍指同一個面。無法推斷共同軸時會回錯誤,請帶 axis 重試。",
         {
           from: z.string(),
           to: z.string(),
           axis: z.enum(["x", "y", "z"]).optional(),
           name: z.string().optional(),
         },
-        async ({ from, to, axis, name }) => {
+        async ({ from: fromRef, to: toRef, axis, name }) => {
           const gated = clarifyGate();
           if (gated) return gated;
           const part = sanitizeName(name || n());
           const id = toolId();
+          const sel = resolveSelectors(session, part, { from: fromRef, to: toRef });
+          if (!sel.ok) {
+            emit("tool", { id, name: `cad.measure(${fromRef} → ${toRef})`, label: "量測", status: "error", note: sel.error });
+            return result(sel);
+          }
+          const { from, to } = sel.tokens;
           emit("tool", { id, name: `cad.measure(${from} → ${to})`, label: "量測", status: "running" });
           const args = [
             "measure", `${session.workdirRel}/${part}.step`,
@@ -404,7 +433,7 @@ export function buildCadchatServer({ session, emit, signal }) {
       ),
       tool(
         "cad_align",
-        "計算對齊 delta(read-only,只算不動幾何):moving/target 為 selector token。mode ∈ flush|center|axis:flush/center 回平移;axis 回旋轉(axis-angle+pivot+eulerXYZDeg)加徑向對心平移,把 moving 的方向(圓柱軸/線/法向/occurrence frame)轉到 target 方向。把 delta 落到產生器定位常數(cad_build edits),勿手算座標;沿軸定位用 flush 補。",
+        "計算對齊 delta(read-only,只算不動幾何):moving/target 為 selector token 或零件名稱(@arm 這種,寫法同 cad_measure)。mode ∈ flush|center|axis:flush/center 回平移;axis 回旋轉(axis-angle+pivot+eulerXYZDeg)加徑向對心平移,把 moving 的方向(圓柱軸/線/法向/occurrence frame)轉到 target 方向。把 delta 落到產生器定位常數(cad_build edits),勿手算座標;沿軸定位用 flush 補。",
         {
           moving: z.string(),
           target: z.string(),
@@ -413,11 +442,17 @@ export function buildCadchatServer({ session, emit, signal }) {
           offset: z.number().optional(),
           name: z.string().optional(),
         },
-        async ({ moving, target, mode, axis, offset, name }) => {
+        async ({ moving: movingRef, target: targetRef, mode, axis, offset, name }) => {
           const gated = clarifyGate();
           if (gated) return gated;
           const part = sanitizeName(name || n());
           const id = toolId();
+          const sel = resolveSelectors(session, part, { moving: movingRef, target: targetRef });
+          if (!sel.ok) {
+            emit("tool", { id, name: `cad.align(${movingRef} → ${targetRef})`, label: "對齊計算", status: "error", note: sel.error });
+            return result(sel);
+          }
+          const { moving, target } = sel.tokens;
           emit("tool", { id, name: `cad.align(${moving} → ${target})`, label: "對齊計算", status: "running" });
           const args = [
             "align", `${session.workdirRel}/${part}.step`,

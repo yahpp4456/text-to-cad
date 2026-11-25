@@ -421,6 +421,27 @@ export function readBuildMeta(session, name) {
   return readBuildMetaFile(path.join(session.workdir, `.${sanitizeName(name)}.step.meta.json`));
 }
 
+// 零件 → 「由 <檔> 第 N 行 fn() 建立」(藍圖 C2 零件層級)。沒有紀錄回 ""。
+// 值來自產生器行程寫的 sidecar,逐欄白名單化後才進 prompt。
+export function madeByText(meta, part) {
+  const site = meta?.madeBy && Object.hasOwn(meta.madeBy, part) ? meta.madeBy[part] : null;
+  const line = Number(site?.line);
+  if (!site || !Number.isInteger(line) || line < 1) return "";
+  const file = String(site.file || "").replace(/[^\w.\-]/g, "").slice(0, 80);
+  if (!file) return "";
+  const func = /^[A-Za-z_]\w{0,60}$/.test(String(site.func || "")) ? ` 的 ${site.func}()` : "";
+  return `由 ${file} 第 ${line} 行${func} 建立`;
+}
+
+// 點選參照屬於哪個零件:前端帶的零件名優先(必須真的在這次建置的零件表裡);
+// 沒帶而模型只有一個零件時就是它。對不上回 null——不猜。
+export function partOfRef(meta, ref) {
+  const parts = Array.isArray(meta?.parts) ? meta.parts : [];
+  const named = String(ref?.part || "");
+  if (named && parts.includes(named)) return named;
+  return !named && parts.length === 1 ? parts[0] : null;
+}
+
 // 同上,直接給檔案路徑(版本快照裡的那一份也用這個讀)。
 function readBuildMetaFile(file) {
   try {
@@ -440,6 +461,13 @@ function readBuildMetaFile(file) {
       summary: meta.summary && typeof meta.summary === "object" ? meta.summary : null,
       // 鈑金可製造性建議(findings 的 dict;cadpy 收割時已轉好)。舊 sidecar 沒有 → 空陣列
       advisories: Array.isArray(meta.advisories) ? meta.advisories : [],
+      // 每個零件是產生器哪一行建的(cadpy.assembly.label_shape 記錄;藍圖 C2)。舊 sidecar 沒有 → {}
+      madeBy: meta.madeBy && typeof meta.madeBy === "object" ? meta.madeBy : {},
+      // 每個零件的面與邊的穩定名稱與建立行號(cadpy.kernel.naming;藍圖 C1)。沒有 → null
+      names:
+        meta.names?.schemaVersion === 1 && meta.names.parts && typeof meta.names.parts === "object"
+          ? meta.names
+          : null,
     };
   } catch {
     return null;
@@ -884,7 +912,7 @@ export function designChecksFromMeta(meta) {
   const advisoryRows = meta.advisories?.length
     ? [{
         id: "sheet_dfm",
-        label: "鈑金可製造性(建議)",
+        label: advisoryLabel(meta.advisories),
         ok: true,
         skipped: false,
         status: "advisory",
@@ -902,6 +930,14 @@ export function designChecksFromMeta(meta) {
     skip("facts", "拓撲 / 尺寸 topology", "設計模式:略過檢查(未驗證)"),
     ...advisoryRows,
   ];
+}
+
+// 建議列的標題:全是鈑金規則、全是切削規則,或兩者都有。與 validate.py 的 _advisory_label 逐字同步。
+export function advisoryLabel(advisories) {
+  const kinds = new Set((advisories || []).map((a) => String(a?.rule || "").split(".")[0]));
+  if (kinds.size === 1 && kinds.has("sheet")) return "鈑金可製造性(建議)";
+  if (kinds.size === 1 && kinds.has("cnc")) return "切削可製造性(建議)";
+  return "可製造性(建議)";
 }
 
 export async function runValidateDesign(session, name, { signal } = {}) {

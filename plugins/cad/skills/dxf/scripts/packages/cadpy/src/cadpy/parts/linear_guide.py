@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from cadpy.assembly import label_shape
+from cadpy.part_cache import cached_part
 
 _CLEARANCE = 0.4  # running clearance between carriage channel and rail (mm)
 
@@ -55,6 +56,7 @@ def _check_block_pos(rail_len, block_len, block_pos):
     return travel
 
 
+@cached_part
 def linear_guide(
     rail_width: float,
     rail_height: float,

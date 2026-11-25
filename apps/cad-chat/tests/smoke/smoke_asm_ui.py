@@ -79,6 +79,9 @@ with sync_playwright() as p:
         page.wait_for_timeout(250)
         chips = page.locator(".pick-chip").count()
         c.check("點菱形 → composer chip", chips >= 1, f"chips={chips}")
+        # 帶入的面知道自己屬於哪個零件(送出時 server 據此附上「產生器第幾行建的」)
+        owner = page.locator(".pick-chip").first.get_attribute("data-part")
+        c.check("帶入的面帶著所屬零件名", bool(owner), f"data-part={owner!r}")
         c.check("菱形高亮(已帶入)", page.locator('.pick-marker[data-cited="true"]').count() == 1)
         page.mouse.move(box["x"] + 4, box["y"] + box["height"] - 4)  # 移開 → hover 熄
         page.wait_for_timeout(250)

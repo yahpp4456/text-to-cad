@@ -25,6 +25,10 @@ RULES = {
     "sheet.hole_diameter": "孔徑小於板厚",
     "sheet.hole_spacing": "孔與孔太近",
     "sheet.flat_size": "展開尺寸超過板材",
+    "cnc.sharp_internal_corner": "內側尖角銑刀做不出來",
+    "cnc.deep_corner": "內圓角太小、太深",
+    "cnc.deep_hole": "孔太深",
+    "cnc.small_hole": "孔徑太小",
 }
 
 

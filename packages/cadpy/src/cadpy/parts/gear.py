@@ -26,6 +26,7 @@ import math
 from typing import Any
 
 from cadpy.assembly import label_shape
+from cadpy.part_cache import cached_part
 
 # Flank fuse inset: tooth bases reach this far past the root line so the
 # boolean fuse with the root cylinder / rack back never leaves a sliver.
@@ -117,6 +118,7 @@ def _prism(profile_pts, width):
     return extrude(Polygon(*poly, align=None), amount=width / 2.0, both=True)
 
 
+@cached_part
 def gear(
     module: float,
     teeth: int,
@@ -173,6 +175,7 @@ def gear(
     return body
 
 
+@cached_part
 def gear_rack(
     module: float,
     teeth: int,

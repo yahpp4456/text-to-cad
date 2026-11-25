@@ -8,6 +8,10 @@
 電纜件(解析側視成立時)側視右側再標兩個固定頭尺寸:固定頭高(上固定頭
 堆疊高)與固定頭安裝高度(上固定頭底面 − 下固定頭底面),數值取固定座實體
 bbox——客戶手繪規格(39.5 / 190)直接在圖上對得到。
+孔標註(藍圖 F5):從幾何找出整圈的孔(cadpy.holes),相同的孔合併成一則
+「4× ⌀6.6 THRU」「⌀5 ↧8」「⌀6.6 THRU  ⌴ ⌀11 ↧6.5」,標在正對孔口的那個視圖上方,每個孔畫中心
+記號。同一列放不下就排到下一列;視圖上方排不下、或三個視圖都看不到孔口的,列在
+「HOLES NOT SHOWN IN A VIEW」清單裡——不會默默少標。
 STEP 旁若有同名產生器 .py(或 --gen 指定),側視下方附 PARAMS 參數表
 (key = value,源碼順序):逐層電纜長 L1/L2/L3 這類「投影量不到」的輸入
 規格靠這張表回到圖面上。
@@ -43,6 +47,8 @@ LW_SHARP = 0.7      # 銳邊/輪廓線寬(pt)
 LW_SMOOTH = 0.3     # 平滑切線邊(圓管縱向線這類)
 EXACT_TRIES = 1     # 精確 HLR 子程序嘗試次數(崩潰非決定性;掃出件幾乎必崩,
                     # 多試只是燒時間——退路品質已夠,一次不過就退網格)
+HOLE_GROUPS_MAX = 24   # 一張圖最多處理幾則孔標註(超過的不標,圖上註明)
+HOLE_ROWS = {"top": 4, "front": 3, "side": 3}  # 每個視圖上方最多排幾列標註(前/側視上方是視圖間的空隙)
 WORKER_TIMEOUT = 90 # 秒(單次 worker;匯出端逾時 180s 內留退路時間)
 
 VIEWS = {
@@ -156,6 +162,27 @@ def _measure_cable_extras(shape):
     return {"outer_h": round(outer_h, 4), "rack_rects": rack_rects}
 
 
+def _measure_holes(shape):
+    """零件上的孔,已歸組並寫好標註文字(worker 內:需要 kernel)。"""
+    from cadpy.holes import callout_text, find_holes, group_holes
+
+    groups = group_holes(find_holes(shape))
+    return {
+        "omitted": max(0, len(groups) - HOLE_GROUPS_MAX),
+        "groups": [
+            {
+                # 沉頭符號 ⌴(U+2334)不在 matplotlib 內建字型裡,會印成方框;⊔(U+2294)字型有、形狀相同
+                "text": callout_text(g, cbore_sign="⊔"),
+                "direction": list(g.direction),
+                "sided": (not g.thru) or g.cbore is not None,  # 有方向性:只有從孔口那一側看得到
+                "diameter": g.diameter,
+                "tops": [list(h.top) for h in g.holes][:80],
+            }
+            for g in groups[:HOLE_GROUPS_MAX]
+        ],
+    }
+
+
 def _worker(step_path, mode, views_out):
     from build123d import import_step
 
@@ -179,6 +206,12 @@ def _worker(step_path, mode, views_out):
     out = {"mode": mode, "lwh": lwh, "views": views}
     if extras:
         out["cable"] = extras
+    try:
+        holes = _measure_holes(shape)
+    except Exception:  # noqa: BLE001 - 找不到孔不能讓整張圖出不來
+        holes = None
+    if holes:
+        out["holes"] = holes
     with open(views_out, "w", encoding="utf-8") as f:
         json.dump(out, f)
     return 0
@@ -370,6 +403,73 @@ class Sheet:
     def ext_lines(self, pts, lw=0.4):
         for (xa, ya), (xb, yb) in pts:
             self.ax.plot([xa, xb], [ya, yb], color="black", linewidth=lw)
+
+
+def _cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def _dot3(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _hole_view(group):
+    """這組孔該標在哪個視圖:視線正對孔軸,而且(有方向性的孔)孔口朝向觀察者。沒有就回 None。"""
+    d = group["direction"]
+    for name in ("top", "front", "side"):
+        n, _vx = VIEWS[name]
+        facing = _dot3(d, n)   # 孔的方向是「從孔口往料裡」;n 指向觀察者 → 孔口朝觀察者時為 -1
+        if abs(abs(facing) - 1.0) > 1e-3:
+            continue
+        if group["sided"] and facing > 0:
+            continue
+        return name
+    return None
+
+
+def _draw_holes(sheet, holes, placed, ts, off):
+    """畫中心記號與孔標註。placed: {視圖名: (圖紙上的包絡 (x0,y0,x1,y1), (dx,dy))}。
+    回 (已標在視圖上的則數, 沒標在視圖上的文字清單)。"""
+    ax = sheet.ax
+    rows = {name: [] for name in placed}   # 每個視圖:每一列已占用的 x 區間
+    shown, leftover = 0, []
+    for group in holes["groups"]:
+        name = _hole_view(group)
+        if name is None or name not in placed:
+            leftover.append(group["text"])
+            continue
+        n, vx = VIEWS[name]
+        vy = _cross(n, vx)
+        bbox, (dx, dy) = placed[name]
+        pts = [(_dot3(p, vx) + dx, _dot3(p, vy) + dy) for p in group["tops"]]
+        r = group["diameter"] / 2.0
+        arm = max(r * 1.5, ts * 0.5)
+        for x, y in pts:   # 中心記號
+            ax.plot([x - arm, x + arm], [y, y], color="black", linewidth=0.3)
+            ax.plot([x, x], [y - arm, y + arm], color="black", linewidth=0.3)
+        ax_pt = max(pts, key=lambda p: (p[1], p[0]))   # 最上面(再取最右)的那個孔拉引線
+        text = group["text"]
+        width = len(text) * ts * 0.62
+        x_text = ax_pt[0] + r * 0.5 + ts * 1.2
+        row = None
+        for i in range(HOLE_ROWS[name]):
+            taken = rows[name][i] if i < len(rows[name]) else []
+            if all(x_text + width + ts < a or x_text - ts > b for a, b in taken):
+                row = i
+                break
+        if row is None:
+            leftover.append(text)   # 這個視圖上方排不下了:改列在清單,不疊在別的標註上
+            continue
+        while len(rows[name]) <= row:
+            rows[name].append([])
+        rows[name][row].append((x_text, x_text + width))
+        y_text = bbox[3] + off * 0.25 + row * ts * 1.7
+        sx, sy = ax_pt[0] + r * 0.5, ax_pt[1] + r * 0.866   # 引線從孔緣 60° 處出發
+        ax.plot([sx, x_text - ts * 0.9, x_text - ts * 0.2], [sy, y_text, y_text], color="black", linewidth=0.4)
+        ax.text(x_text, y_text, text, ha="left", va="center", fontsize=7)
+        ax.update_datalim([[x_text + width, y_text + ts]])   # 文字不進 autoscale
+        shown += 1
+    return shown, leftover
 
 
 def _read_meta_sweep_paths(step_path):
@@ -579,10 +679,14 @@ def main():
     r2y = row2_h / 2.0
     r1y = row2_h + gap_v + row1_h / 2.0
     tbb = sheet.place(top, c1x, r1y)
+    placed = {"top": (tbb, sheet.last_offset)}
     fbb = sheet.place(front, c1x, r2y)
+    placed["front"] = (fbb, sheet.last_offset)
     sheet.place(iso, c2x, r1y)
     sbb = sheet.place(side, c2x, r2y)
     sdx, sdy = sheet.last_offset
+    if not side_analytical:
+        placed["side"] = (sbb, sheet.last_offset)   # 解析側視是電纜帶的示意輪廓,不在上面標孔
 
     ts = 0.02 * max(L, W, H)
     off = 0.07 * max(L, W, H)
@@ -612,15 +716,35 @@ def main():
             sheet.ext_lines([((y_tan + sdx, z_leg - cable["outer_h"] / 2.0 + sdy), (y_tan + sdx, y_dim - ts * 0.5)),
                              ((y_face + sdx, r1z0 + sdy), (y_face + sdx, y_dim - ts * 0.5))])
 
-    # 產生器 PARAMS 參數表(側視下方;逐層電纜長這類投影量不到的輸入規格回到圖面)
+    # 孔標註:中心記號 + 「4× ⌀6.6 THRU」;沒能標在視圖上的列成清單。
+    holes = data.get("holes")
+    holes_note = ""
+    hole_lines = []
+    if holes and holes.get("groups"):
+        shown, leftover = _draw_holes(sheet, holes, placed, ts, off)
+        if leftover:
+            hole_lines = ["HOLES NOT SHOWN IN A VIEW:"] + [f"  {t}" for t in leftover]
+        if holes.get("omitted"):
+            hole_lines.append(f"+ {holes['omitted']} MORE HOLE CALLOUTS OMITTED")
+        holes_note = f", holes: {shown} called out, {len(leftover)} listed, {holes.get('omitted', 0)} omitted"
+
+    # 產生器 PARAMS 參數表(側視下方;逐層電纜長這類投影量不到的輸入規格回到圖面)。
+    # 孔清單接在同一塊文字後面:字高以點計、圖的座標以 mm 計,兩塊字各自擺位事前算不準會不會
+    # 疊在一起;同一個文字物件就不可能疊。沒有參數表時,清單放前視下方、總寬尺寸之下。
     gen_params = _read_gen_params(gen_path)
     if gen_params:
         x_t = c2x - col2_w / 2.0
         y_t = min(sbb[1], fbb[1]) - off * 0.95  # 讓出側視下方 bottom_leg 尺寸線+數字的位置
         lines = ["PARAMS"] + [f"{k} = {_fmt(v)}" for k, v in gen_params]
+        if hole_lines:
+            lines += [""] + hole_lines
         ax.text(x_t, y_t, "\n".join(lines), ha="left", va="top", fontsize=7,
                 family="monospace", linespacing=1.4)
         ax.update_datalim([[x_t, y_t - ts * 0.9 * len(lines)]])  # 文字不進 autoscale
+    elif hole_lines:
+        x_n, y_n = fbb[0], fbb[1] - off * 1.7
+        ax.text(x_n, y_n, "\n".join(hole_lines), ha="left", va="top", fontsize=7, linespacing=1.4)
+        ax.update_datalim([[x_n, y_n - ts * 0.9 * len(hole_lines)]])
     xL = tbb[0] - off
     sheet.dim_v(tbb[1], tbb[3], xL, _fmt(L), ts)
     sheet.ext_lines([((tbb[0], tbb[1]), (xL - ts * 0.5, tbb[1])),
@@ -646,8 +770,10 @@ def main():
         fw = fh / ratio
     fig.set_size_inches(fw, fh)
     fig.savefig(out_path, format="pdf", bbox_inches="tight", pad_inches=0.3)
+    if "--png" in args:   # 檢查用:同一張圖另存 PNG(看圖比讀 PDF 位元組可靠)
+        fig.savefig(args[args.index("--png") + 1], format="png", dpi=130, bbox_inches="tight", pad_inches=0.3)
     print(f"[drawing_pdf] wrote {out_path} (L={_fmt(L)} W={_fmt(W)} H={_fmt(H)}, "
-          f"projection={data['mode']})")
+          f"projection={data['mode']}{holes_note})")
     return 0
 
 

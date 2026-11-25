@@ -1230,10 +1230,15 @@ def _harvest_sweep_view(module: object) -> dict[str, object] | None:
     }
 
 
-def _harvest_advisories(raw_payload: object, named: list) -> list[dict[str, object]]:
-    """鈑金可製造性建議(``SheetMetal.folded()`` 掛在形狀上的 ``sheet_advisories``),轉成 findings 的 dict。
+def _harvest_advisories(raw_payload: object, named: list, module: object = None) -> list[dict[str, object]]:
+    """可製造性建議,轉成 findings 的 dict。兩個來源:
 
-    從回傳的形狀本身與它的每個零件上找;沒有就是空清單。整段不拋例外:建議是附帶資訊,不能弄掛建置。
+    - 鈑金:``SheetMetal.folded()`` 掛在形狀上的 ``sheet_advisories``(從回傳的形狀本身與它的每個零件上找)。
+    - 切削:產生器模組層宣告 ``MACHINED = [零件名, ...]``(或 ``True`` = 全部)的零件,由
+      ``cadpy.dfm_cnc`` 在幾何上量(內側尖角、太深的內圓角、深孔)。沒宣告就不量——買來的馬達、
+      鈑金件、列印件套用切削規則只會是雜訊。
+
+    沒有就是空清單。整段不拋例外:建議是附帶資訊,不能弄掛建置。
     """
     try:
         from cadpy.findings import advisory_findings, to_dicts
@@ -1245,12 +1250,21 @@ def _harvest_advisories(raw_payload: object, named: list) -> list[dict[str, obje
             if items and id(items) not in seen:
                 seen.add(id(items))
                 collected.extend(items)
+        if module is not None:
+            try:
+                from cadpy.dfm_cnc import cnc_advisories, machined_parts
+
+                wanted = set(machined_parts(module, [name for name, _shape in named]))
+                if wanted:
+                    collected.extend(cnc_advisories([(name, shape) for name, shape in named if name in wanted]))
+            except Exception:  # noqa: BLE001
+                pass
         return to_dicts(advisory_findings(collected))
     except Exception:  # noqa: BLE001
         return []
 
 
-def _harvest_build_meta(module: object, raw_payload: object) -> dict[str, object]:
+def _harvest_build_meta(module: object, raw_payload: object, records: list | None = None) -> dict[str, object]:
     """從已執行過的 gen_step 收割模組層 MOTION + parts labels(cad-chat sidecar)。
 
     label 取法(``_as_named_parts``)與正規化(``cadpy.motion_decl``)都和 cad-chat 的
@@ -1259,6 +1273,9 @@ def _harvest_build_meta(module: object, raw_payload: object) -> dict[str, object
     ``summary`` 是每個零件的量測摘要(包絡、體積、面數、與位置無關的幾何鍵;
     ``cadpy.build_delta``),cad-chat 拿它與上一版比對出「這版改了什麼」。它是附加
     欄位:量不到的零件各自帶 error,整份摘要算不出來時為 None,都不影響其餘欄位。
+
+    ``names`` 是每個零件的面與邊的穩定名稱(``cadpy.kernel.naming``;``records`` 是這次
+    建置錄到的 kernel maker)。沒有錄、算不出來或超過時間預算時為 None。
     """
     from cadpy.build_delta import build_summary
     from cadpy.geometry_checks import _as_named_parts
@@ -1274,13 +1291,30 @@ def _harvest_build_meta(module: object, raw_payload: object) -> dict[str, object
         summary = build_summary(named)
     except Exception:  # noqa: BLE001 — build_summary 本身不拋;這層只防意外
         summary = None
-    advisories = _harvest_advisories(raw_payload, named)
+    advisories = _harvest_advisories(raw_payload, named, module)
+    try:
+        from cadpy.assembly import made_by
+
+        sites = made_by()
+        made = {name: sites[name] for name in labels if name in sites}
+    except Exception:  # noqa: BLE001
+        made = {}
+    names = None
+    if records:
+        try:
+            from cadpy.kernel.naming import name_parts
+
+            names = name_parts(named, records)
+        except Exception:  # noqa: BLE001
+            names = None
     return {
         "schemaVersion": BUILD_META_SCHEMA_VERSION,
         "parts": labels,
         "partCount": len(labels),
         "summary": summary,
         "advisories": advisories,
+        "madeBy": made,
+        "names": names,
         "motion": playback_motion(motion),
         "motionErrs": errs,
         "sweepPaths": _harvest_sweep_paths(module),
@@ -1294,12 +1328,13 @@ def _write_build_meta_sidecar(
     *,
     step_path: Path,
     logger: CliLogger,
+    records: list | None = None,
 ) -> None:
     """best-effort 寫 `.{name}.step.meta.json` sidecar。絕不 raise:sidecar 失敗
     不能弄掛一個好的 build(消費端會退回 spawn validate harness)。tmp +
     Path.replace 原子寫,被中斷也不會留半寫 JSON。"""
     try:
-        meta = _harvest_build_meta(module, raw_payload)
+        meta = _harvest_build_meta(module, raw_payload, records)
         target = hidden_meta_path_for_step_path(step_path)
         tmp = target.with_name(target.name + ".tmp")
         tmp.write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -1317,7 +1352,49 @@ def _run_script_generator_inner(
     load_current_scene: bool = True,
     skip_step_write: bool = False,
 ) -> LoadedStepScene | None:
+    # Stable element names (cadpy.kernel.naming): record the kernel makers the build runs,
+    # from before the generator module loads until its sidecar is written. Optional in
+    # every way -- a kernel it cannot patch, or any failure, just means no names.
+    recorder = None
+    records = None
+    if generator_name == "gen_step":
+        try:
+            from cadpy.kernel import naming
+
+            if naming.ensure_installed():
+                recorder = naming.recording()
+                records = recorder.__enter__()
+        except Exception:  # noqa: BLE001
+            recorder, records = None, None
+    try:
+        return _run_script_generator_recorded(
+            spec,
+            generator_name,
+            logger=logger,
+            force=force,
+            load_current_scene=load_current_scene,
+            skip_step_write=skip_step_write,
+            records=records,
+        )
+    finally:
+        if recorder is not None:
+            recorder.__exit__(None, None, None)
+
+
+def _run_script_generator_recorded(
+    spec: EntrySpec,
+    generator_name: str,
+    *,
+    logger: CliLogger,
+    force: bool = False,
+    load_current_scene: bool = True,
+    skip_step_write: bool = False,
+    records: list | None = None,
+) -> LoadedStepScene | None:
     generated_scene: LoadedStepScene | None = None
+    from cadpy.assembly import reset_made_by
+
+    reset_made_by()
     with logger.timed(f"load generator {spec.source_ref}"):
         module = _load_generator_module(spec.script_path)
     generator = getattr(module, generator_name, None)
@@ -1387,7 +1464,7 @@ def _run_script_generator_inner(
     if generator_name == "gen_step" and spec.step_path is not None:
         # 收割 MOTION+parts sidecar(cad-chat 設計模式零 spawn 的資料來源);
         # 放在 STEP existence check 之後 = 只有真的產出成功才寫。no-throw。
-        _write_build_meta_sidecar(module, raw_payload, step_path=spec.step_path, logger=logger)
+        _write_build_meta_sidecar(module, raw_payload, step_path=spec.step_path, logger=logger, records=records)
     return generated_scene if generator_name == "gen_step" else None
 
 

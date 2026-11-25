@@ -641,6 +641,24 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   規定「英文思考、使用者輸出一律繁中」——改 prompt 措辭別動掉這段(design 模式曾因
   無語言指示被英文工具輸出帶跑);驗證=真生成一回合目測回覆語言(L4 輕量)。
 
+- **穩定名稱 / 零件快取 / 孔與切削建議(2026-11-25,藍圖 C1 / A7 / F5 / F3)**:
+  - 動 `cadpy/kernel/naming.py` → `test_naming.py`(兩個 kernel)+ `apps/cad-chat/tests/test_stable_names.py`
+    (留存率 ≥90% 的閘、名稱與可點選的面逐面對應)。**量測命名耗時不要用 cProfile**——它幾乎看不到
+    pybind 那一側的時間(實測回報 0.2 秒、實際 1.2 秒),用 `time.perf_counter` 分段量。
+  - 動 `cadpy/part_cache.py` 或替某個產生器加 `@cached_part` → `test_part_cache.py` 的「命中 / 部分命中 /
+    關閉快取三種情況名稱逐一相同」是關鍵那一條。會讓它紅的三種改法都踩過:命名範圍的鍵帶引數(改尺寸
+    就改名)、帶「第幾次呼叫」(命中與重做不同名)、把放置過的形狀追溯回原形(陣列特徵全部同名=沒有名稱)。
+  - 探針腳本要 `from cadpy.kernel import naming`,**不要**用 `importlib` 另外載一份 `naming.py`:那是第二個模組,
+    有自己的錄製狀態,`part_cache` 看的是正本那一份,量出來的留存率會是假的(實測 111/111 變 84/111)。
+  - 動 `cadpy/holes.py` → `test_holes.py` + `apps/cad-chat/tests/test_drawing_holes.py`;圖面長相用
+    `drawing_pdf.py <step> --out x.pdf --png x.png` 另存 PNG 再 Read 看(字型缺字會印成方框,只有看圖抓得到)。
+  - 動 `cadpy/dfm_cnc.py` → `test_dfm_cnc.py` + `tests/test_build_meta.py` 的 `MachinedAdvisoriesE2E`。
+  - 組合件的根沒有 label 曾經讓建置原生當掉(`step_scene._label_name`);`MachinedAdvisoriesE2E` 的範例
+    刻意不給根 label 當回歸。建置「無聲失敗、exit 139」時先 `python -X faulthandler skills/cad/scripts/step …`。
+- **修補腳本不要經 Bash heredoc 寫含反斜線的內容**:`\n`、`\\`、`\d` 會被 shell 吃掉一層(症狀:測試檔出現
+  真的換行造成 SyntaxError、regex 少一個反斜線、`assert s.count(old) == 1` 對不上)。含跳脫字元的內容用
+  Write 工具落檔,或直接用 Edit。
+
 ## 新需求 → 驗證擴充決策樹
 
 新功能落地時,照改動的「形狀」決定加什麼測試(可複選;由上而下問):
