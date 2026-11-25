@@ -63,6 +63,8 @@ LLM_GATED = [
     "smoke_delta_live.py",  # 建置差異摘要在真回合裡說實話(加一個孔 → 只說那塊板改了)
     "smoke_snapshot_live.py",  # 組合件:agent 在呈現前自己看圖(cad_snapshot),圖真的畫出來
     "smoke_poses_live.py",  # 兩軸機構:agent 宣告姿態與序列,精算查到「同時到位」的組合
+    "smoke_machined_live.py",  # 使用者說是銑削件 → agent 宣告 MACHINED,切削建議出現且不為它重試
+    "smoke_stable_ref_live.py",  # 點了面、改了模型之後,再量同一個面用的是穩定參照
     "smoke_plate_dxf_live.py",  # 不折彎的平板件出切割圖:圓角與長孔是真圓弧(cadpy.flatten.plate_dxf)
     "smoke_canvas_context_live.py",
     "smoke_lesson_offer_live.py",

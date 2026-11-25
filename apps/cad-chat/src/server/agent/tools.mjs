@@ -356,7 +356,7 @@ export function buildCadchatServer({ session, emit, signal }) {
             return result(sel);
           }
           const { from, to } = sel.tokens;
-          emit("tool", { id, name: `cad.measure(${from} → ${to})`, label: "量測", status: "running" });
+          emit("tool", { id, name: `cad.measure(${fromRef} → ${toRef})`, label: "量測", status: "running" });
           const args = [
             "measure", `${session.workdirRel}/${part}.step`,
             "--from", from, "--to", to, "--format", "json",
@@ -453,7 +453,7 @@ export function buildCadchatServer({ session, emit, signal }) {
             return result(sel);
           }
           const { moving, target } = sel.tokens;
-          emit("tool", { id, name: `cad.align(${moving} → ${target})`, label: "對齊計算", status: "running" });
+          emit("tool", { id, name: `cad.align(${movingRef} → ${targetRef})`, label: "對齊計算", status: "running" });
           const args = [
             "align", `${session.workdirRel}/${part}.step`,
             "--moving", moving, "--target", target,
