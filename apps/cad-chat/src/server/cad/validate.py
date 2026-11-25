@@ -100,6 +100,12 @@ def _pair_list(pairs, fmt, limit=3):
     return shown + (f" 等 {len(pairs)} 對" if len(pairs) > limit else "")
 _MOTION_AABB_MARGIN = 2.0          # 自動配對的 AABB 外擴 (mm)
 _POSE_SAMPLES_PER_STEP = 6         # 序列裡相鄰兩個姿態之間取幾幀
+_MARGIN_STEP = 0.1                 # 行程餘量的搜尋步距(行程的比例)
+_MARGIN_TOLERANCE = 1.0 / 320.0    # 擋點夾到多準(行程的比例;30 mm 行程約 0.09 mm)
+_MARGIN_BUDGET_S = 10.0            # 行程餘量最多花多久(它是附加資訊;多軸機構不該為它多等半分鐘)
+_MARGIN_EXTENT = 0.5               # 行程兩端之外各找多遠(行程的比例)
+_MARGIN_TIGHT_MM = 1.0             # 餘量小於這個就提醒(線性 mm;旋轉用同樣的數字當度)
+_MARGIN_MIN_TIME_LEFT_S = 8.0      # 掃掠的時間預算剩不到這麼多就不找餘量(它是附加資訊)
 _POSE_MAX_CROSS_PAIRS = 24         # 不同群的運動件兩兩配對的上限(各自往復時互不相干,同時動才可能相撞)
 _MOTION_LABEL = "運動掃掠干涉 motion-sweep"
 
@@ -266,6 +272,71 @@ def _sweep_poses(base_map, motion, plan, deadline, state):
     stat = (f"{len(states)} 個姿態 · {len(sequences)} 條序列 · {state['pose_done']}/{len(frames)} 幀 · "
             f"{len(pairs)} 對{note}")
     return hits, stat, True
+
+
+class _OutOfTime(Exception):
+    pass
+
+
+def _travel_margins(base_map, plan, deadline):
+    """行程端點之外的餘量(藍圖 B6):掃掠只查宣告的行程;這裡往兩端之外找第一個擋點。
+
+    每個群(主動 dof + 它的從動)各找一次,只找「沒有 profile」的群——profile 只定義在行程之內,
+    外推沒有意義。回 findings(每個群最多兩筆:行程終點之後、建成姿態之前)。時間用完就停,已經找完的群照樣回報。
+    """
+    from cadpy.findings import Finding
+    from cadpy.geometry_checks import sweep_interference
+    from cadpy.joint_ranges import free_travel
+
+    found = []
+    for g in plan:
+        if not g["pairs"] or any(m.get("profile") for m in g["members"]):
+            continue
+        master = g["members"][0]
+        revolute = master.get("type") == "revolute"
+        stroke = abs(float(master["angle_deg"] if revolute else master["travel"]))
+        if stroke <= 0:
+            continue
+        unit = "°" if revolute else "mm"
+        involved = {n for pair in g["pairs"] for n in pair}
+        member_moving = [(m, set(m["moving"]) & involved) for m in g["members"]]
+        moving = set().union(*(mv for _, mv in member_moving))
+        static_src = {n: base_map[n] for n in involved - moving}
+        baseline = [(n, base_map[n]) for n in involved] if g["baseline"] == "seated" else None
+
+        def collides(u, g=g, member_moving=member_moving, static_src=static_src, baseline=baseline):
+            if time.monotonic() > deadline:
+                raise _OutOfTime()
+            frame = dict(static_src)
+            for m, mv in member_moving:
+                for n in mv:
+                    frame[n] = _dof_frame_shape(frame.get(n, base_map[n]), m, u)
+            hits = sweep_interference([(f"u={u:.4f}", frame)], g["pairs"], baseline=baseline, tol=0.05)
+            return (hits[0].a, hits[0].b) if hits else None
+
+        try:
+            result = free_travel(collides, step=_MARGIN_STEP, max_extent=_MARGIN_EXTENT, tolerance=_MARGIN_TOLERANCE)
+        except _OutOfTime:
+            break  # 這個群沒找完:不報它,前面找完的群保留
+        for side, limit, margin_u in (("行程終點之後", result.upper, result.margin_after),
+                                     ("建成姿態之前", result.lower, result.margin_before)):
+            if limit.blocked:
+                continue  # 端點本身就撞到:那是掃掠的失敗,不在這裡重複報
+            margin = margin_u * stroke
+            if limit.hit is None:
+                found.append(Finding(
+                    "motion.margin", "ok",
+                    f"{g['gid']}: {side} {margin:.1f} {unit} 內沒有擋點(沒有機械止點)",
+                    value=margin, unit=unit))
+                continue
+            a, b = limit.hit
+            tight = margin < _MARGIN_TIGHT_MM
+            found.append(Finding(
+                "motion.margin", "warning" if tight else "ok",
+                (f"{g['gid']}: {side}只剩 {margin:.2f} {unit} 就會碰到 {a}~{b}" if tight
+                 else f"{g['gid']}: {side}還有 {margin:.1f} {unit} 才會碰到 {a}~{b}"),
+                value=margin, limit=_MARGIN_TIGHT_MM, unit=unit, refs=(a, b)))
+    return found
 
 
 def _run_motion_sweep(named, motion):
@@ -455,6 +526,13 @@ def _run_motion_sweep(named, motion):
                          f"共 {len(all_hits)} pair-frame 穿透(掃 {stat})"),
                 # 每一對零件一筆(取穿透最深的那一幀),不是每一幀一筆
                 "findings": to_dicts(sweep_findings([h for _, h in all_hits], tol=0.05))}
+    # 掃掠乾淨、時間也還夠:往行程兩端之外找第一個擋點(行程餘量;附加資訊,找不完就不報)
+    margins = []
+    if not state["timeout"] and deadline - time.monotonic() > _MARGIN_MIN_TIME_LEFT_S:
+        try:
+            margins = _travel_margins(base_map, plan, min(deadline, time.monotonic() + _MARGIN_BUDGET_S))
+        except Exception:  # noqa: BLE001 - 餘量是附加資訊,算不出來不影響掃掠的結論
+            margins = []
     if state["timeout"]:
         # 沒掃完 = 沒量到。已掃的部分沒有穿透,但剩下的幀沒有任何證據,不能說通過。
         return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": True, "skipped": True,
@@ -464,8 +542,14 @@ def _run_motion_sweep(named, motion):
                     "motion.unmeasured", "not_checked",
                     f"行程掃掠逾時,只掃了 {state['done'] + state['pose_done']} 幀"
                     f"(逐群 {state['done']}/{frames_total})")])}
-    return {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": True,
-            "note": f"全程無穿透(掃 {stat})"}
+    row = {"id": "motion_sweep", "label": _MOTION_LABEL, "ok": True,
+           "note": f"全程無穿透(掃 {stat})"}
+    if margins:
+        tight = [f for f in margins if f.status == "warning"]
+        if tight:
+            row["note"] += f" · {len(tight)} 處行程餘量不足 {_MARGIN_TIGHT_MM:g}"
+        row["findings"] = to_dicts(margins)
+    return row
 
 
 def _status_of(check: dict) -> str:

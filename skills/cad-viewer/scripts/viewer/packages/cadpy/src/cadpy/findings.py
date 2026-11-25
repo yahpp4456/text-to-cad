@@ -16,6 +16,7 @@ RULES = {
     "motion.sweep_error": "行程掃掠執行失敗",
     "motion.penetration": "行程中兩個零件穿透",
     "motion.unmeasured": "行程沒有掃完",
+    "motion.margin": "行程端點之外的餘量(離第一個擋點多遠)",
     # 鈑金可製造性建議(cadpy.parts.SheetMetal.advisories):做得出來,但加工廠會提出的事
     "sheet.thickness": "板厚超出建議範圍",
     "sheet.bend_radius": "內折彎半徑小於板厚",

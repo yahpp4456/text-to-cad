@@ -164,9 +164,10 @@ class CoupledSweepIntegration(unittest.TestCase):
         self.assertIn("@u=", f["where"])
         self.assertIn("穿透", f["message"])
 
-    def test_clean_sweep_has_no_findings(self):
+    def test_clean_sweep_has_no_failures_only_margins(self):
         check = validate._run_motion_sweep(self.named, self._motion())
-        self.assertNotIn("findings", check)
+        self.assertEqual({f["rule"] for f in check.get("findings", [])} - {"motion.margin"}, set())
+        self.assertEqual([f for f in check.get("findings", []) if f["status"] in ("failed", "not_checked")], [])
 
 
 class NamedPoseIntegration(unittest.TestCase):
@@ -241,7 +242,7 @@ class NamedPoseIntegration(unittest.TestCase):
         self.assertEqual(errs, [])
         check = validate._run_motion_sweep(self.named, motion)
         self.assertTrue(check["ok"], check)
-        self.assertNotIn("findings", check)
+        self.assertEqual([f for f in check.get("findings", []) if f["status"] in ("failed", "not_checked")], [])
         self.assertIn("3 個姿態 · 1 條序列", check["note"])
 
     def test_invalid_state_is_a_declaration_error(self):
@@ -259,6 +260,76 @@ class NamedPoseIntegration(unittest.TestCase):
         # 沒宣告時不多出這兩個鍵(舊的播放資料形狀不變)
         plain, _ = self._motion()
         self.assertNotIn("states", playback_motion(plain))
+
+
+class TravelMarginIntegration(unittest.TestCase):
+    """行程餘量(藍圖 B6,需 build123d):掃掠乾淨之後,往行程兩端之外找第一個擋點。"""
+
+    def _case(self, stop_gap):
+        """滑塊沿 +X 走 30;行程終點之後 stop_gap mm 有一個擋塊(None = 沒有擋塊)。"""
+        from build123d import Box, Pos
+
+        from cadpy.assembly import label_shape
+
+        def part(name, shape):
+            label_shape(shape, name)
+            return (name, shape)
+
+        named = [
+            part("rail", Pos(40, 0, -7) * Box(160, 20, 4)),
+            part("slider", Pos(0, 0, 0) * Box(10, 10, 10)),
+        ]
+        pairs = [["slider", "rail"]]
+        if stop_gap is not None:
+            # 滑塊右緣在 x=5,走完 30 到 x=35;擋塊左緣放在 35 + stop_gap
+            named.append(part("stop", Pos(35 + stop_gap + 5, 0, 0) * Box(10, 10, 10)))
+            pairs.append(["slider", "stop"])
+        motion, errs = validate._read_motion(SimpleNamespace(MOTION={"dofs": [
+            {"id": "x", "axis": [1, 0, 0], "travel": 30.0, "moving": ["slider"], "pairs": pairs, "samples": 6},
+        ]}), named)
+        self.assertEqual(errs, [])
+        return validate._run_motion_sweep(named, motion)
+
+    def _margins(self, check):
+        return [f for f in check.get("findings", []) if f["rule"] == "motion.margin"]
+
+    def test_reports_how_far_past_the_end_the_first_stop_is(self):
+        check = self._case(stop_gap=6.0)
+        self.assertTrue(check["ok"], check)
+        after = next(f for f in self._margins(check) if "行程終點之後" in f["message"])
+        self.assertEqual((after["status"], after["unit"]), ("ok", "mm"))
+        self.assertEqual(sorted(after["refs"]), ["slider", "stop"])
+        self.assertAlmostEqual(after["value"], 6.0, delta=0.12)    # 擋點夾到行程的 1/320(30 mm 行程約 0.09 mm)
+        self.assertIn("才會碰到", after["message"])
+        self.assertNotIn("行程餘量不足", check["note"])
+
+    def test_a_stop_within_a_millimetre_of_the_end_is_a_warning(self):
+        check = self._case(stop_gap=0.4)
+        self.assertTrue(check["ok"], check)                         # 行程內沒有穿透:掃掠仍是通過
+        after = next(f for f in self._margins(check) if "行程終點之後" in f["message"])
+        self.assertEqual(after["status"], "warning")
+        self.assertAlmostEqual(after["value"], 0.4, delta=0.12)
+        self.assertIn("只剩", after["message"])
+        self.assertIn("1 處行程餘量不足", check["note"])
+
+    def test_no_stop_at_all_is_reported_as_open(self):
+        check = self._case(stop_gap=None)
+        sides = self._margins(check)
+        self.assertEqual(len(sides), 2)                            # 行程終點之後、建成姿態之前
+        for side in sides:
+            self.assertEqual(side["status"], "ok")
+            self.assertIn("沒有擋點", side["message"])
+            self.assertAlmostEqual(side["value"], 15.0, delta=1e-6)  # 各找半個行程
+
+    def test_margins_are_skipped_when_time_is_short(self):
+        saved = validate._MARGIN_MIN_TIME_LEFT_S
+        validate._MARGIN_MIN_TIME_LEFT_S = 10 ** 6
+        try:
+            check = self._case(stop_gap=6.0)
+        finally:
+            validate._MARGIN_MIN_TIME_LEFT_S = saved
+        self.assertTrue(check["ok"], check)
+        self.assertEqual(self._margins(check), [])
 
 
 class ClosedChainProfileIntegration(unittest.TestCase):

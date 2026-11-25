@@ -134,6 +134,11 @@ cd apps/cad-chat/tests/smoke && PYTHONUTF8=1 <venv-python> smoke_asm_ui.py
   `PYTHONUTF8=1 .venv/Scripts/python.exe scripts/dev/regress_fixtures.py --pipeline --jobs 6 --out tmp/regress/<名>.json [--compare tmp/regress/<基準>.json]`
   (~15 分;`--python` 可指定另一個 venv 的直譯器)。**`smc_cg1_cylinder` 與
   `smc_cq2_cylinder` 的 validate 原本就不通過**,不是你弄壞的。
+- **行程餘量(2026-11-25,藍圖 B6)**:`validate.py` 的 `_travel_margins` 在掃掠乾淨後,用 `cadpy.joint_ranges.free_travel`
+  往行程兩端之外找第一個擋點,結果是掃掠列的 `motion.margin` findings(`ok` = 附帶資訊,`warning` = 餘量不到
+  1 mm)。所以**乾淨的掃掠列現在也可能帶 findings**——測試要斷「沒有 failed / not_checked 的發現」,不要斷
+  「沒有 findings」。動它 → sync-vendored → `test_joint_ranges.py` + `tests/test_validate_motion.py`
+  (`TravelMarginIntegration`)+ `regress_fixtures.py`(看完整驗證的耗時有沒有明顯變長)。
 - **鈑金可製造性建議(2026-11-25,藍圖 F1)**:`SheetMetal.advisories()` → `folded()` 掛在實體上 → build 收割
   寫進 sidecar 的 `advisories` → 快路徑與 `validate.py` 各加一列 `sheet_dfm`,狀態 `advisory`(不算通過、
   不算失敗、**不擋匯出**;`fullValidationOk` 與 `verdictFor` 都特別處理這個狀態)。加一條規則要動三處:
