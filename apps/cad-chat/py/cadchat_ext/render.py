@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -118,14 +119,24 @@ def render_views(
     if not parsed:
         raise ValueError("至少要一個視角")
 
-    driver = OpenGl_GraphicDriver(Aspect_DisplayConnection(), False)
+    display = Aspect_DisplayConnection()
+    driver = OpenGl_GraphicDriver(display, False)
     viewer = V3d_Viewer(driver)
     viewer.SetDefaultLights()
     viewer.SetLightOn()
     context = AIS_InteractiveContext(viewer)
     view = viewer.CreateView()
-    window = Aspect_NeutralWindow()
-    window.SetSize(width, height)
+    if sys.platform.startswith("linux"):
+        # Linux 的 OCCT 走 GLX:GL context 必須綁在真的 X 視窗上,NeutralWindow(視窗 id 0)會讓
+        # X 回 BadWindow,Xlib 預設的錯誤處理直接結束行程。改開一個不映射到螢幕的 Xw_Window
+        # (無顯示環境的伺服器配 Xvfb + Mesa 軟體渲染即可)。
+        from OCP.Xw import Xw_Window
+
+        window = Xw_Window(display, "cadchat-render", 0, 0, width, height)
+        window.SetVirtual(True)
+    else:
+        window = Aspect_NeutralWindow()
+        window.SetSize(width, height)
     view.SetWindow(window)
     view.SetBackgroundColor(Quantity_Color(1.0, 1.0, 1.0, Quantity_TOC_RGB))
 
