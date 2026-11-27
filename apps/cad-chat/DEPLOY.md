@@ -109,25 +109,42 @@ test -f dist/index.html && echo BUILD-OK
 ### 4c. Python 環境(釘版對齊 dev 機;**這是生死線,煙測沒過後面全白做**)
 
 ```bash
+# 2026-11-27 起 VM 與 dev 機同為 build123d 0.13 / OCP 8(README「Kernel 版本」章)。
+# 版本以 repo 的 dev 鎖定檔為準(-c 只當上限用,不會把 playwright 等開發工具裝進來)。
 python3 -m venv /opt/cadchat/pyenv
 sudo tee /opt/cadchat/constraints.txt >/dev/null <<'EOF'
-build123d==0.11.0
-ezdxf==1.4.4
-numpy==2.5.0
-scipy==1.18.0
-ocpsvg==0.6.0
+build123d==0.13.0
+cadquery-ocp-novtk==8.0.1.1.0
+cadquery-ocp-proxy==8.0.1.1.0
+ezdxf==1.4.5
+numpy==2.5.5
+scipy==1.18.1
+ocpsvg==0.7.0
 trianglesolver==1.2
 EOF
-# 優先:novtk 鏈(dev 機同款,省 ~300MB;若這組在 linux 解析失敗,退路見下)
-/opt/cadchat/pyenv/bin/pip install "cadquery-ocp-novtk==7.9.3.1.1" "cadquery-ocp-proxy==7.9.3.1.1" || true
-/opt/cadchat/pyenv/bin/pip install -c /opt/cadchat/constraints.txt build123d ezdxf
-# 退路(novtk 在 linux 裝不起來時):直接 pip install -c constraints build123d ezdxf,
-# 接受 vtk 進來(只肥不壞,功能不受影響)。
+LOCK=/opt/cadchat/repo/apps/cad-chat/requirements-dev.lock.txt
+/opt/cadchat/pyenv/bin/pip install -c /opt/cadchat/constraints.txt -c $LOCK \
+  cadquery-ocp-novtk cadquery-ocp-proxy build123d ezdxf ocpsvg trianglesolver scipy matplotlib
 /opt/cadchat/pyenv/bin/pip install --no-deps /opt/cadchat/repo/packages/cadpy   # 非-editable、路徑無關
+# pip check 會說「cadpy requires cadquery-ocp」:預期內(novtk 版也提供 OCP,兩包不能並存)。
 
 # 出口閘(必過):
 /opt/cadchat/pyenv/bin/python -c "import OCP, build123d, ezdxf, cadpy.geometry_checks, cadpy.glb, cadpy.parts, cadpy.motion_decl; print('PY-OK')"
 ```
+
+**既有 VM 換 kernel 版本**(2026-11-27 由 0.11 / OCP 7.9 升 0.13 / OCP 8 的做法):不要原地升級。
+另建 `/opt/cadchat/pyenv-<名>` 裝好新版本,用測試環境跑 `scripts/dev/run-python-suites.sh`、
+`regress_fixtures.py --python <新環境> --compare <舊基準>` 與看圖渲染,過了才切:
+
+```bash
+sudo systemctl stop cadchat
+sudo mv /opt/cadchat/pyenv /opt/cadchat/pyenv-ocp79      # 舊環境留著當退路
+sudo ln -s pyenv-ocp8 /opt/cadchat/pyenv                  # 路徑不變,/etc/cadchat/env 免改
+sudo systemctl start cadchat
+# 退回:stop → sudo rm /opt/cadchat/pyenv → sudo mv /opt/cadchat/pyenv-ocp79 /opt/cadchat/pyenv → start
+```
+
+舊環境的 `bin/pip` 等腳本開頭寫死原路徑,改名期間要用 `bin/python -m pip`;改回原名就恢復正常。
 
 ## 5. 祕密與設定 `/etc/cadchat/env`(🤖 建骨架、👤 填 key)
 

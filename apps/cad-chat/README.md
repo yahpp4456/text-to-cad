@@ -560,9 +560,16 @@ Python,不會同時升級。實測 0.13 / OCP 8 的 `import build123d` 約
 |---|---|---|
 | 開發 `.venv`(Sam 的 Windows 機) | build123d 0.13.0 / OCP 8.0.1.1 | 2026-11-25 切換;切換後整套驗證全過 |
 | 舊開發環境 `.venv-ocp79` | build123d 0.11.0 / OCP 7.9.3.1 | 保留作退路與對照;不進版控 |
-| Linux VM 部署 | 0.11 / 7.9 | 未動 |
+| Linux VM 部署 `/opt/cadchat/pyenv` | build123d 0.13.0 / OCP 8.0.1.1 | 2026-11-27 切換;`pyenv` 是指向 `pyenv-ocp8` 的連結 |
+| 舊 VM 環境 `/opt/cadchat/pyenv-ocp79` | build123d 0.11.0 / OCP 7.9.3.1 | 保留作退路;確認穩定後可刪 |
 
 退回舊環境:關掉 cad-chat,`mv .venv .venv-b13 && mv .venv-ocp79 .venv`。
+
+VM 切換前的驗證(2026-11-27,與 OCP 7.9 的 VM 基準比):Python 測試 13 組全過(`cadpy` 522 項);
+`regress_fixtures.py` 29 個 fixture 幾何全同;`cable_x_per_layer`、`cable_x_v4`、`scara_arm_base`
+的干涉從「未量測」(OCP 7.9 取不到快篩結果、精算逾時)變成實際量測且通過;
+`cable_y_per_layer` 量不到的組合從 80 對降到 27 對,**仍會逾時**;多數 fixture 的建模與驗證快 20–60%;
+看圖渲染新舊相同;worker 就緒記憶體 460 → 397 MiB。VM 退回舊環境見 [DEPLOY.md](DEPLOY.md) §4c。
 
 重建開發環境(repo 根,Git Bash;base 直譯器換成你機器上的 Python 3.13):
 
