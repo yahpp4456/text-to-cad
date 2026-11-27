@@ -43,9 +43,9 @@ API key,寫進 `.env.local` 的 `ANTHROPIC_API_KEY=`。按量計費(Commercial T
 
 Codex 使用本機 CLI 的 ChatGPT 登入，模型固定為 `gpt-6.2-astra`，所有模式皆為 `high`。Claude 使用原有的模型與 effort 設定。確認主代理可看頁首或 `/api/health`。教訓蒸餾沿用 Claude，需要 Claude 認證，可獨立於主對話使用。
 
-網站可設 `CADCHAT_DEMO_PROVIDER=codex` 讓 DEMO 訪客使用 Codex，團隊帳號仍用 Claude。`CADCHAT_PROVIDER` 獨立控制本機桌面版。`CADCHAT_CODEX_BIN` 可指定 Codex 執行檔路徑。
+網站可設 `CADCHAT_DEMO_PROVIDER=codex` 讓 DEMO 訪客使用 Codex、`CADCHAT_TEAM_PROVIDER=codex` 讓團隊帳號使用 Codex；兩者各自獨立，未設的一方仍用 Claude。`CADCHAT_PROVIDER` 獨立控制本機桌面版。`CADCHAT_CODEX_BIN` 可指定 Codex 執行檔路徑。
 
-`CADCHAT_CODEX_STATE_FILE` 指向訂閱狀態檔。到期、登入失效或狀態檔過舊時，DEMO 自動改走 Claude；續訂後，檢查腳本更新狀態即可自動切回。`CADCHAT_CODEX_MAX_TURNS` 限制網站訪客同時進行的 Codex 回合數（預設 2），名額已滿的請求走 Claude。若訪客的 Codex 回合在產出任何內容前失敗，同一請求會改用 Claude 重跑一次。安裝方式見[訂閱到期檢查](deploy/codex-sub-check/README.md)。
+`CADCHAT_CODEX_STATE_FILE` 指向訂閱狀態檔。到期、登入失效或狀態檔過舊時，DEMO 與團隊帳號都自動改走 Claude；續訂後，檢查腳本更新狀態即可自動切回。`CADCHAT_CODEX_MAX_TURNS` 限制網站訪客同時進行的 Codex 回合數（預設 2），名額已滿的請求走 Claude。若訪客的 Codex 回合在產出任何內容前失敗，同一請求會改用 Claude 重跑一次。安裝方式見[訂閱到期檢查](deploy/codex-sub-check/README.md)。
 
 開啟舊對話會還原紀錄及模型。跨代理時，下次操作會帶入工作區、最近對話及模型資訊；同代理可續用原生對話。若回合遭中斷，可點「繼續上次工作」重試上次的需求。
 

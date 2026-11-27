@@ -138,8 +138,9 @@ ANTHROPIC_API_KEY=REPLACE_ME_SAM
 # ── 模型 ──
 CADCHAT_MODEL=claude-sonnet-5
 CADCHAT_EFFORT=xhigh
-# ── DEMO 走 Codex（選用，依部署需要取消註解）──
+# ── DEMO／團隊帳號走 Codex（選用，依部署需要取消註解）──
 # CADCHAT_DEMO_PROVIDER=codex
+# CADCHAT_TEAM_PROVIDER=codex   # 團隊帳號也走 Codex（與 DEMO 各自獨立）
 # CADCHAT_CODEX_BIN=/opt/codex/current/bin/codex
 # CADCHAT_CODEX_STATE_FILE=/var/lib/codex-sub/cadchat.json
 # CADCHAT_CODEX_MAX_TURNS=2

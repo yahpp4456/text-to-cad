@@ -17,16 +17,22 @@ export function demoProvider(env = process.env) {
     : "claude";
 }
 
+// 團隊帳號要不要走 Codex:CADCHAT_TEAM_PROVIDER=codex 才開(預設 Claude)。與 DEMO 各自獨立。
+export function teamProvider(env = process.env) {
+  return String(env.CADCHAT_TEAM_PROVIDER || "").trim().toLowerCase() === "codex"
+    ? "codex"
+    : "claude";
+}
+
 // 這個請求該用哪個代理(同步、不碰外部程序;登入狀態另由 pickProvider 把關)。
 //   無身分(本機桌面版) → 照 CADCHAT_PROVIDER,行為不變。
 //   DEMO 訪客           → CADCHAT_DEMO_PROVIDER=codex 且訂閱未到期(codexState)才是 Codex。
-//   團隊帳號            → 一律 Claude。
+//   團隊帳號            → CADCHAT_TEAM_PROVIDER=codex 且訂閱未到期才是 Codex;未設 = Claude。
 export function providerFor({ user = false, demo = false } = {}) {
   if (!user && !demo)
     return process.env.CADCHAT_PROVIDER === "codex" ? "codex" : "claude";
-  return demo && demoProvider() === "codex" && codexUsable().usable
-    ? "codex"
-    : "claude";
+  const wanted = demo ? demoProvider() : teamProvider();
+  return wanted === "codex" && codexUsable().usable ? "codex" : "claude";
 }
 
 // ── 同時進行的 Codex 回合上限(只管網站訪客;桌面版單人不設限)──

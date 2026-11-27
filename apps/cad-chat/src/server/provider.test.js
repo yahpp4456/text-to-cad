@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { prepareHandoff, importHistory, remember } from "./handoff.mjs";
 import fs from "node:fs";
 import os from "node:os";
-import { acquireCodexSlot, CODEX_EFFORT, demoProvider, providerFor, resolveCodexMaxTurns } from "./provider.mjs";
+import { acquireCodexSlot, CODEX_EFFORT, demoProvider, providerFor, resolveCodexMaxTurns, teamProvider } from "./provider.mjs";
 import { queryFiles } from "./agent/codexFiles.mjs";
 import { REPO_ROOT } from "./config.mjs";
 import path from "node:path";
@@ -32,7 +32,7 @@ test("legacy Claude resume, Codex → Claude → Codex uses latest work", () => 
 
 test("provider selection: desktop, team, demo", () => {
   function withProviderEnv(values, check) {
-    const keys = ["CADCHAT_PROVIDER", "CADCHAT_DEMO_PROVIDER", "CADCHAT_CODEX_STATE_FILE"];
+    const keys = ["CADCHAT_PROVIDER", "CADCHAT_DEMO_PROVIDER", "CADCHAT_TEAM_PROVIDER", "CADCHAT_CODEX_STATE_FILE"];
     const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
     try {
       for (const key of keys) {
@@ -58,12 +58,25 @@ test("provider selection: desktop, team, demo", () => {
     assert.equal(providerFor({ user: true }), "claude");
     assert.equal(providerFor(), "claude");
   });
+  // 團隊帳號:CADCHAT_TEAM_PROVIDER 獨立於 DEMO 與桌面版旗標
+  withProviderEnv({ CADCHAT_TEAM_PROVIDER: "codex" }, () => {
+    assert.equal(providerFor({ user: true }), "codex");
+    assert.equal(providerFor({ user: true, demo: true }), "claude");
+    assert.equal(providerFor(), "claude");
+  });
+  withProviderEnv({ CADCHAT_TEAM_PROVIDER: "codex", CADCHAT_DEMO_PROVIDER: "codex" }, () => {
+    assert.equal(providerFor({ user: true }), "codex");
+    assert.equal(providerFor({ user: true, demo: true }), "codex");
+  });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-provider-"));
   try {
     const file = path.join(dir, "state.json");
     fs.writeFileSync(file, JSON.stringify({ status: "expired" }));
     withProviderEnv({ CADCHAT_DEMO_PROVIDER: "codex", CADCHAT_CODEX_STATE_FILE: file }, () => {
       assert.equal(providerFor({ user: true, demo: true }), "claude");
+    });
+    withProviderEnv({ CADCHAT_TEAM_PROVIDER: "codex", CADCHAT_CODEX_STATE_FILE: file }, () => {
+      assert.equal(providerFor({ user: true }), "claude");
     });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -97,6 +110,9 @@ test("demoProvider / resolveCodexMaxTurns parsing", () => {
   assert.equal(demoProvider({}), "claude");
   for (const value of ["claude", "other"])
     assert.equal(demoProvider({ CADCHAT_DEMO_PROVIDER: value }), "claude");
+  assert.equal(teamProvider({ CADCHAT_TEAM_PROVIDER: " Codex " }), "codex");
+  assert.equal(teamProvider({}), "claude");
+  assert.equal(teamProvider({ CADCHAT_DEMO_PROVIDER: "codex" }), "claude");
   assert.equal(resolveCodexMaxTurns({}), 2);
   assert.equal(resolveCodexMaxTurns({ CADCHAT_CODEX_MAX_TURNS: "5" }), 5);
   for (const value of ["0", "-1", "abc", "1.5"])
