@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# 安裝到 /usr/local/sbin/codex-sub-check，由 root 更新各服務帳號的訂閱狀態檔。
+set -uo pipefail
+
+if (( EUID != 0 )); then
+  echo "codex-sub-check 需要 root 身分" >&2
+  exit 1
+fi
+
+CODEX_BIN=${CODEX_BIN:-/opt/codex/current/bin/codex}
+STATE_DIR=/var/lib/codex-sub
+PROBE=${PROBE:-/usr/local/lib/codex-sub-check/probe.py}
+accounts=(
+  "cadchat:cadchat:/opt/cadchat/data"
+  "suiyaoee:suiyaoee:/opt/suiyaoee-wt"
+)
+
+install -d -m 755 -o root -g root "$STATE_DIR" || exit 1
+cd / || exit 1
+# 排程與手動執行若重疊，同一時間只讓一個程序使用固定的 .tmp 路徑。
+exec 9<"$STATE_DIR" || exit 1
+flock -x 9 || exit 1
+
+sanitize() {
+  python3 -I -c '
+from datetime import datetime, timezone
+import json, re, sys
+
+def timestamp(value, fallback=None):
+    if isinstance(value, str):
+        try:
+            date = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+            return date.isoformat().replace("+00:00", "Z")
+        except ValueError:
+            pass
+    return fallback
+
+try:
+    raw = sys.stdin.buffer.read(65537)
+    data = json.loads(raw) if len(raw) <= 65536 else {}
+except (ValueError, UnicodeError, RecursionError):
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+status = data.get("status")
+plan = data.get("planType")
+now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+print(json.dumps({
+    "status": status if status in ("ok", "expired", "login_invalid", "unknown") else "unknown",
+    "activeUntil": timestamp(data.get("activeUntil")),
+    "planType": plan if isinstance(plan, str) and re.fullmatch(r"[a-zA-Z0-9_-]{1,40}", plan) else None,
+    "checkedAt": timestamp(data.get("checkedAt"), now),
+}))
+'
+}
+
+for entry in "${accounts[@]}"; do
+  IFS=: read -r name account account_home <<< "$entry"
+  if ! id -u "$account" >/dev/null 2>&1; then
+    logger -t codex-sub-check "$name: account missing, skipping"
+    continue
+  fi
+
+  dest="$STATE_DIR/$name.json"
+  if { runuser -u "$account" -- env -i HOME="$account_home" PATH=/usr/bin:/bin \
+      timeout 150 python3 -I "$PROBE" "$CODEX_BIN" 9<&- || :; } | sanitize > "$dest.tmp" &&
+      chmod 644 "$dest.tmp" && chown root:root "$dest.tmp" && mv -f "$dest.tmp" "$dest"; then
+    summary=$(python3 -I -c '
+import json, sys
+data = json.load(sys.stdin)
+print("status={status} activeUntil={activeUntil} planType={planType}".format(
+    **{k: "null" if v is None else v for k, v in data.items()}))
+' < "$dest") || continue
+    logger -t codex-sub-check "$name: $summary"
+    echo "$name: $summary"
+  else
+    rm -f "$dest.tmp"
+    logger -t codex-sub-check "$name: state write failed"
+  fi
+done
+exit 0

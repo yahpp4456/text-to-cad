@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { prepareHandoff, importHistory, remember } from "./handoff.mjs";
-import { CODEX_EFFORT, providerFor } from "./provider.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import { acquireCodexSlot, CODEX_EFFORT, demoProvider, providerFor, resolveCodexMaxTurns } from "./provider.mjs";
 import { queryFiles } from "./agent/codexFiles.mjs";
 import { REPO_ROOT } from "./config.mjs";
 import path from "node:path";
@@ -28,17 +30,77 @@ test("legacy Claude resume, Codex → Claude → Codex uses latest work", () => 
   assert.equal(s.sdkSessionId, null);
 });
 
-test("Codex effort is high for every local mode and demo uses Claude", () => {
-  const previous = process.env.CADCHAT_PROVIDER;
-  try {
-    process.env.CADCHAT_PROVIDER = "codex";
+test("provider selection: desktop, team, demo", () => {
+  function withProviderEnv(values, check) {
+    const keys = ["CADCHAT_PROVIDER", "CADCHAT_DEMO_PROVIDER", "CADCHAT_CODEX_STATE_FILE"];
+    const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+    try {
+      for (const key of keys) {
+        if (values[key] === undefined) delete process.env[key];
+        else process.env[key] = values[key];
+      }
+      check();
+    } finally {
+      for (const key of keys) {
+        if (previous[key] === undefined) delete process.env[key];
+        else process.env[key] = previous[key];
+      }
+    }
+  }
+  withProviderEnv({ CADCHAT_PROVIDER: "codex" }, () => {
     assert.equal(providerFor(), "codex");
     assert.equal(CODEX_EFFORT, "high");
-    assert.equal(providerFor(true), "claude");
+    assert.equal(providerFor({ user: true }), "claude");
+    assert.equal(providerFor({ user: true, demo: true }), "claude");
+  });
+  withProviderEnv({ CADCHAT_DEMO_PROVIDER: "codex" }, () => {
+    assert.equal(providerFor({ user: true, demo: true }), "codex");
+    assert.equal(providerFor({ user: true }), "claude");
+    assert.equal(providerFor(), "claude");
+  });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-provider-"));
+  try {
+    const file = path.join(dir, "state.json");
+    fs.writeFileSync(file, JSON.stringify({ status: "expired" }));
+    withProviderEnv({ CADCHAT_DEMO_PROVIDER: "codex", CADCHAT_CODEX_STATE_FILE: file }, () => {
+      assert.equal(providerFor({ user: true, demo: true }), "claude");
+    });
   } finally {
-    if (previous === undefined) delete process.env.CADCHAT_PROVIDER;
-    else process.env.CADCHAT_PROVIDER = previous;
+    fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("codex turn slots cap concurrent remote turns", () => {
+  const env = { CADCHAT_CODEX_MAX_TURNS: "2" };
+  const releases = [];
+  function acquire() {
+    const release = acquireCodexSlot(env);
+    if (typeof release === "function") releases.push(release);
+    return release;
+  }
+  try {
+    const first = acquire();
+    assert.equal(typeof first, "function");
+    assert.equal(typeof acquire(), "function");
+    assert.equal(acquire(), null);
+    first();
+    assert.equal(typeof acquire(), "function");
+    first();
+    assert.equal(acquire(), null);
+  } finally {
+    for (const release of releases) release();
+  }
+});
+
+test("demoProvider / resolveCodexMaxTurns parsing", () => {
+  assert.equal(demoProvider({ CADCHAT_DEMO_PROVIDER: " Codex " }), "codex");
+  assert.equal(demoProvider({}), "claude");
+  for (const value of ["claude", "other"])
+    assert.equal(demoProvider({ CADCHAT_DEMO_PROVIDER: value }), "claude");
+  assert.equal(resolveCodexMaxTurns({}), 2);
+  assert.equal(resolveCodexMaxTurns({ CADCHAT_CODEX_MAX_TURNS: "5" }), 5);
+  for (const value of ["0", "-1", "abc", "1.5"])
+    assert.equal(resolveCodexMaxTurns({ CADCHAT_CODEX_MAX_TURNS: value }), 2);
 });
 
 test("Codex text tools can read skills and reject other sessions or repo configuration", async () => {

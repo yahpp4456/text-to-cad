@@ -42,7 +42,7 @@ export function healthMiddleware() {
     }
     if (url.pathname !== "/api/health") return next();
     const demo = !!req.cadchat?.demo;
-    const auth = await providerHealth(demo,!!req.cadchat?.user || demo);
+    const auth = await providerHealth({ user: !!req.cadchat?.user, demo });
     sendJson(res, 200, {
       ok: true,
       agentReady: auth.agentReady,

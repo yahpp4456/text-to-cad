@@ -126,7 +126,10 @@ function debugMsg(msg) {
   }
 }
 
-export async function runTurn({ session, emit, message, imageBlocks = [], orch = false, locale = "zh-Hant" }) {
+// provider:由 chat.mjs 決定後傳入(單一決策點);未傳才自己算(保留給測試 / 其他呼叫端)。
+// claudeFallback:Codex 回合在產出任何內容前失敗時,不發 error、回 { ok:false, fallback:true, error },
+// 交給呼叫端改用 Claude 重跑。
+export async function runTurn({ session, emit, message, imageBlocks = [], orch = false, locale = "zh-Hant", provider, claudeFallback = false }) {
   const abort = new AbortController();
   session.currentAbort = abort;
   session._valAttempt = 0;
@@ -139,7 +142,8 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
   // 介面文字系統(chat.mjs resolveLocale):prompt 的語言規則段讀 session._locale(transient,不落盤)。
   session._locale = locale === "zh-Hans" ? "zh-Hans" : "zh-Hant";
   // 回合遙測:SDK 訊息逐則餵入(no-throw),finally 發 metrics 事件 + 落 metrics.jsonl。
-  const usingCodex = providerFor(!!session.user) === "codex";
+  const usingCodex =
+    (provider ?? providerFor({ user: !!session.user, demo: isDemoUser(session.user) })) === "codex";
   const tm = usingCodex ? null : beginTurnMetrics(session, { variant: orch ? "orch" : "single" });
   const orchDebug = process.env.CADCHAT_ORCH_DEBUG === "1";
 
@@ -188,8 +192,14 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
     : mode === "library" ? buildLibrarySystemPrompt(session)
     : mode === "cable" ? buildCableSystemPrompt(session) : buildSystemPrompt(session);
   if (usingCodex) {
+    // 這個回合有沒有產出過內容(AI 文字或任何工具呼叫);沒有才允許無痕改用 Claude。
+    let produced = false;
+    const codexEmit = (event, data) => {
+      if (event === "ai_start" || event === "ai_delta" || event === "ai") produced = true;
+      emit(event, data);
+    };
     try {
-      await codexTurn({mcp, allowed, session, instructions, content, abort, emit,
+      await codexTurn({mcp, allowed, session, instructions, content, abort, emit: codexEmit,
         onThread(id) {
           session.sdkSessionId = id;
           session._rehydrateNote = null;
@@ -197,6 +207,7 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
           emit("session", {sessionId:session.sessionId, sdkSessionId:id, mode});
         },
         onTool(name) {
+          produced = true;
           emit("busy", {what:name});
           const stage = autoStage ? nextStage(session._stageCur, "mcp__cadchat__"+name) : null;
           if (stage != null) {
@@ -209,6 +220,7 @@ export async function runTurn({ session, emit, message, imageBlocks = [], orch =
     } catch (err) {
       if (!abort.signal.aborted) {
         recordTurnError(session, err, "exception");
+        if (claudeFallback && !produced) return {ok:false, fallback:true, error:err};
         emit("error", {message:scrubPaths(err.message)});
       }
       return {ok:false};

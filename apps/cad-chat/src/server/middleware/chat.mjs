@@ -2,7 +2,7 @@
 // body: { message?, sessionId?, pickRef?, params?, imageRefs?, orch? }
 import fs from "node:fs";
 import { markLocalSession } from "../localRecovery.mjs";
-import { providerFor, providerHealth } from "../provider.mjs";
+import { acquireCodexSlot, forgetCodexLogin, providerHealth } from "../provider.mjs";
 import { importHistory, remember, prepareHandoff } from "../handoff.mjs";
 import path from "node:path";
 
@@ -10,7 +10,7 @@ import { isDemoAllowedMode, isDesignLike, isMode } from "../../lib/chatModes.js"
 import { isLocale } from "../../lib/locale.js";
 import { elementProvenance } from "../../lib/partRefs.js";
 import { toHans, warmHans } from "../agent/hans.mjs";
-import { demoReady, orchDefault, resolveAuth, resolveDemoQuota } from "../config.mjs";
+import { demoReady, orchDefault, resolveDemoQuota } from "../config.mjs";
 import { demoEventFilter } from "../demoEvents.mjs";
 import { parseUrl, readJsonBody, sendJson } from "../httpUtil.mjs";
 import { acquireBusy, getOrCreateSession, persistSession, releaseBusy } from "../sessions.mjs";
@@ -51,8 +51,11 @@ export function chatMiddleware() {
       sendJson(res, 405, { error: "method not allowed" });
       return;
     }
-    const provider = providerFor(!!req.cadchat?.user || req.cadchat?.demo);
-    const auth = provider === "claude" ? resolveAuth() : await providerHealth();
+    // 代理只在這裡決定一次,之後一路傳給 runTurn(runner 不再自己重算)。
+    // 網站訪客選到 Codex 但 Codex 不能用(到期 / 沒登入)時,providerHealth 已改回 Claude。
+    const remote = !!req.cadchat?.user || !!req.cadchat?.demo;
+    const auth = await providerHealth({ user: !!req.cadchat?.user, demo: !!req.cadchat?.demo });
+    let provider = auth.provider;
     if (!auth.agentReady) {
       sendJson(res, 503, { error: "agent_not_ready", warnings: auth.warnings });
       return;
@@ -138,6 +141,13 @@ export function chatMiddleware() {
       }
     }
 
+    // 網站訪客的 Codex 回合有同時上限:滿了這個請求就走 Claude(桌面版不設限)。
+    let releaseCodexSlot = null;
+    if (provider === "codex" && remote && willRunLlm) {
+      releaseCodexSlot = acquireCodexSlot();
+      if (!releaseCodexSlot) provider = "claude";
+    }
+
     // busy 鎖領 token:interrupt 提早放行後新 turn 可能先 begin,本 turn 的
     // finally 只准釋放自己領的鎖(見 sessions.mjs acquireBusy 註解)。
     const busyToken = acquireBusy(session);
@@ -209,14 +219,34 @@ export function chatMiddleware() {
       } else {
         const locale = resolveLocale(body);
         if (locale === "zh-Hans") await warmHans(); // 括註簡中化要 converter 就緒(第一次載 ~100KB 字典)
-        const { ok } = await runTurn({
+        const userText = (resumingWork ? `接續上次中斷的工作。請先核對目前產物與最新已呈現版本 v${session.version}，從尚未完成的步驟繼續。\n` : "") + buildUserText(body, session, img, steps, locale);
+        let result = await runTurn({
           session,
           emit,
-          message: context + (resumingWork ? `接續上次中斷的工作。請先核對目前產物與最新已呈現版本 v${session.version}，從尚未完成的步驟繼續。\n` : "") + buildUserText(body, session, img, steps, locale),
+          message: context + userText,
           imageBlocks: img.blocks,
           orch,
           locale,
+          provider,
+          // 網站訪客的 Codex 回合若在產出任何內容前就失敗,下面改用 Claude 重跑一次。
+          claudeFallback: provider === "codex" && remote,
         });
+        if (result.fallback && session._busyToken === busyToken) {
+          console.warn(`[chat] Codex 回合未產出即失敗,改用 Claude 重跑:${scrubPaths(String(result.error?.message || result.error))}`);
+          forgetCodexLogin();
+          releaseCodexSlot?.();
+          // prepareHandoff 會清掉 Codex 的 thread id,並帶上歷史與目前版本給 Claude 接續。
+          result = await runTurn({
+            session,
+            emit,
+            message: prepareHandoff(session, "claude") + userText,
+            imageBlocks: img.blocks,
+            orch,
+            locale,
+            provider: "claude",
+          });
+        }
+        const { ok } = result;
         if (ok && session._busyToken === busyToken) session.pendingRequest = null;
         sse.end({ ok, version: session.version });
       }
@@ -226,6 +256,7 @@ export function chatMiddleware() {
       emit("error", { message: scrubPaths(String(err?.message || err)) });
       sse.end({ ok: false });
     } finally {
+      releaseCodexSlot?.();
       // 鎖已被 interrupt 放行 / 新 turn 接手 → emit 也已是別人的,一併不動
       if (releaseBusy(session, busyToken)) {
         session.emit = null;

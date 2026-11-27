@@ -24,9 +24,12 @@ export async function codexTurn({
   onThread,
   onTool,
 }) {
-  const cwd = path.join(os.tmpdir(), "cadchat-codex-workspace");
-  await fs.mkdir(cwd, { recursive: true });
-  abort.signal.throwIfAborted();
+  // 每回合獨立的空工作目錄(不同使用者的回合不共用),回合結束即刪。
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "cadchat-codex-"));
+  if (abort.signal.aborted) {
+    await fs.rm(cwd, { recursive: true, force: true }).catch(() => {});
+    abort.signal.throwIfAborted();
+  }
   const disabled = [
     "shell_tool",
     "unified_exec",
@@ -40,6 +43,12 @@ export async function codexTurn({
     "image_generation",
     "view_image",
     "skill_search",
+    // 預設開啟但這裡用不到的:跨回合狀態與額外工具一律關(未知的鍵 Codex 只會忽略)。
+    "goals",
+    "sleep_tool",
+    "tool_suggest",
+    "remote_plugin",
+    "shell_snapshot",
   ];
   const config = [
     'forced_login_method="chatgpt"',
@@ -261,5 +270,6 @@ export async function codexTurn({
     stop();
     await client.close();
     await mcp.instance.close();
+    await fs.rm(cwd, { recursive: true, force: true }).catch(() => {});
   }
 }

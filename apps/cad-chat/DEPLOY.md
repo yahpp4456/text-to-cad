@@ -138,6 +138,11 @@ ANTHROPIC_API_KEY=REPLACE_ME_SAM
 # ── 模型 ──
 CADCHAT_MODEL=claude-sonnet-5
 CADCHAT_EFFORT=xhigh
+# ── DEMO 走 Codex（選用，依部署需要取消註解）──
+# CADCHAT_DEMO_PROVIDER=codex
+# CADCHAT_CODEX_BIN=/opt/codex/current/bin/codex
+# CADCHAT_CODEX_STATE_FILE=/var/lib/codex-sub/cadchat.json
+# CADCHAT_CODEX_MAX_TURNS=2
 # ── 路徑(config.mjs env 覆寫;設 RUNTIME_ROOT 也順便讓 transcripts 隔離到 DATA_ROOT/.claude)──
 CADCHAT_RUNTIME_ROOT=/opt/cadchat/repo
 CADCHAT_DATA_ROOT=/srv/cadchat/data
@@ -149,6 +154,8 @@ HOME=/srv/cadchat/data
 EOF
 sudo chmod 600 /etc/cadchat/env && sudo chown root:root /etc/cadchat/env
 ```
+
+DEMO 可獨立選用 Codex，團隊帳號仍走 Claude。上例使用 `cadchat` 的狀態檔，其他服務請換成對應帳號的檔名。每日檢查與續訂後立即更新的步驟見[訂閱到期檢查](deploy/codex-sub-check/README.md)。
 
 **👤 Sam:** `sudoedit /etc/cadchat/env` 把 `REPLACE_ME_SAM` 換成**專屬 key**(不是主 key),
 並確認 Anthropic Console 已設**花費上限**。檔案 root:600 + systemd 以 root 讀後注入

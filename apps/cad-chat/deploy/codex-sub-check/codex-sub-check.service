@@ -1,0 +1,8 @@
+[Unit]
+Description=Check Codex (ChatGPT subscription) expiry for service accounts and write state files
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/codex-sub-check
